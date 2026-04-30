@@ -96,6 +96,32 @@ public class SedpLoopbackTests
     }
 
     [Fact]
+    public async Task Publisher_endpoint_は_msg型の_DdsTypeName_を既定で広告する()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        var writerSeenByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        pB.DiscoveryDb.WriterDiscovered += ep =>
+        {
+            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix))
+            {
+                writerSeenByB.TrySetResult(ep);
+            }
+        };
+
+        using var pub = pA.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance);
+
+        pA.Start();
+        pB.Start();
+
+        var ep = await writerSeenByB.Task.WaitAsync(DiscoveryTimeout);
+        ep.Data.TypeName.Should().Be(StringMessage.DdsTypeName);
+    }
+
+    [Fact]
     public async Task pA_の_Subscription_endpoint_を_pB_が_SEDP_で発見()
     {
         var env = CreatePair();

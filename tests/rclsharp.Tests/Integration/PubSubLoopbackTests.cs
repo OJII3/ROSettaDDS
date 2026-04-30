@@ -1,7 +1,11 @@
 using System.Net;
+using Rclsharp.Cdr;
 using Rclsharp.Common;
 using Rclsharp.Dds;
+using Rclsharp.Discovery;
 using Rclsharp.Msgs.Std;
+using Rclsharp.Rtps;
+using Rclsharp.Rtps.Submessages;
 using Rclsharp.Transport;
 
 namespace Rclsharp.Tests.Integration;
@@ -15,6 +19,7 @@ public class PubSubLoopbackTests
         public required LoopbackHub Hub { get; init; }
         public required DomainParticipant ParticipantA { get; init; }
         public required DomainParticipant ParticipantB { get; init; }
+        public required Locator UserUnicastBLocator { get; init; }
     }
 
     private static TestEnv CreatePair()
@@ -31,7 +36,8 @@ public class PubSubLoopbackTests
         var userMcA = hub.Create(userMcLoc);
         var userMcB = hub.Create(userMcLoc);
         var userUcA = hub.Create(Locator.FromUdpV4(IPAddress.Parse("10.0.0.1"), 7412u));
-        var userUcB = hub.Create(Locator.FromUdpV4(IPAddress.Parse("10.0.0.2"), 7414u));
+        var userUcBLoc = Locator.FromUdpV4(IPAddress.Parse("10.0.0.2"), 7414u);
+        var userUcB = hub.Create(userUcBLoc);
 
         var optionsA = new DomainParticipantOptions
         {
@@ -56,7 +62,7 @@ public class PubSubLoopbackTests
 
         var pA = new DomainParticipant(optionsA);
         var pB = new DomainParticipant(optionsB);
-        return new TestEnv { Hub = hub, ParticipantA = pA, ParticipantB = pB };
+        return new TestEnv { Hub = hub, ParticipantA = pA, ParticipantB = pB, UserUnicastBLocator = userUcBLoc };
     }
 
     [Fact]
@@ -165,5 +171,69 @@ public class PubSubLoopbackTests
         await pub.PublishAsync(new StringMessage("self-pub"));
         var received = await receivedTcs.Task.WaitAsync(ReceiveTimeout);
         received.Data.Should().Be("self-pub");
+    }
+
+    [Fact]
+    public async Task SEDP_で発見した_remote_writer_の_unicast_DATA_を受信できる()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        var receivedTcs = new TaskCompletionSource<StringMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = pB.CreateSubscription<StringMessage>(
+            "chatter",
+            StringMessageSerializer.Instance,
+            (msg, _) => receivedTcs.TrySetResult(msg),
+            StringMessage.DdsTypeName);
+
+        pB.Start();
+
+        var remotePrefix = GuidPrefix.CreateForCurrentProcess(VendorId.EProsimaFastDds);
+        var remoteWriterId = new EntityId(0x123456u, EntityKind.UserDefinedWriterNoKey);
+        var remoteWriterGuid = new Rclsharp.Common.Guid(remotePrefix, remoteWriterId);
+        pB.DiscoveryDb.UpsertEndpoint(new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Writer,
+            EndpointGuid = remoteWriterGuid,
+            ParticipantGuid = new Rclsharp.Common.Guid(remotePrefix, EntityId.Participant),
+            TopicName = "rt/chatter",
+            TypeName = StringMessage.DdsTypeName,
+        }, DateTime.UtcNow);
+
+        using var remoteTransport = env.Hub.Create(Locator.FromUdpV4(IPAddress.Parse("10.0.0.10"), 9000u));
+        var payload = SerializeStringPayload(new StringMessage("fastdds-style unicast"));
+        var packet = BuildDataPacket(remotePrefix, remoteWriterId, EntityId.Unknown, payload);
+        await remoteTransport.SendAsync(packet, env.UserUnicastBLocator);
+
+        var received = await receivedTcs.Task.WaitAsync(ReceiveTimeout);
+        received.Data.Should().Be("fastdds-style unicast");
+    }
+
+    private static byte[] SerializeStringPayload(StringMessage value)
+    {
+        var buffer = new byte[128];
+        CdrEncapsulation.Write(buffer, CdrEncapsulation.CdrLittleEndian);
+        var writer = new CdrWriter(buffer, CdrEndianness.LittleEndian, cdrOrigin: CdrEncapsulation.Size);
+        StringMessageSerializer.Instance.Serialize(ref writer, in value);
+        return buffer[..writer.Position];
+    }
+
+    private static byte[] BuildDataPacket(
+        GuidPrefix sourcePrefix,
+        EntityId writerId,
+        EntityId readerId,
+        ReadOnlyMemory<byte> payload)
+    {
+        var buffer = new byte[1500];
+        var writer = new RtpsMessageWriter(buffer, ProtocolVersion.V2_4, VendorId.EProsimaFastDds, sourcePrefix);
+        writer.WriteInfoTimestamp(new InfoTimestampSubmessage(Rclsharp.Common.Time.Now()));
+        writer.WriteData(new DataSubmessage(
+            readerEntityId: readerId,
+            writerEntityId: writerId,
+            writerSn: new SequenceNumber(1),
+            serializedPayload: payload,
+            dataPresent: true));
+        return writer.WrittenSpan.ToArray();
     }
 }
