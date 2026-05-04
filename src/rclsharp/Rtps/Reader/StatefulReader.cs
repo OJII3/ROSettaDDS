@@ -1,3 +1,4 @@
+using Rclsharp.Cdr;
 using Rclsharp.Common;
 using Rclsharp.Common.Logging;
 using Rclsharp.Rtps.HistoryCache;
@@ -119,8 +120,9 @@ public sealed class StatefulReader : IDisposable
                         bool isNew = proxy.MarkReceived(data.WriterSequenceNumber);
                         if (isNew)
                         {
+                            var kind = ToChangeKind(data, hdr.Endianness);
                             var change = new CacheChange(
-                                ChangeKind.Alive,
+                                kind,
                                 writerGuid,
                                 data.WriterSequenceNumber,
                                 Time.Zero, // INFO_TS は今回参照しない (Phase 7 簡易)
@@ -164,6 +166,25 @@ public sealed class StatefulReader : IDisposable
                 _ = _replyTransport.SendAsync(packetBytes, dest, CancellationToken.None);
             }
         }
+    }
+
+    private static ChangeKind ToChangeKind(DataSubmessage data, CdrEndianness endianness)
+    {
+        if (!DataSubmessage.TryReadStatusInfo(data.InlineQos.Span, endianness, out var statusInfo))
+        {
+            return ChangeKind.Alive;
+        }
+        bool disposed = (statusInfo & DataSubmessage.StatusInfoDisposed) != 0;
+        bool unregistered = (statusInfo & DataSubmessage.StatusInfoUnregistered) != 0;
+        if (disposed && unregistered)
+        {
+            return ChangeKind.NotAliveDisposedUnregistered;
+        }
+        if (disposed)
+        {
+            return ChangeKind.NotAliveDisposed;
+        }
+        return unregistered ? ChangeKind.NotAliveUnregistered : ChangeKind.Alive;
     }
 
     private byte[] BuildAckNackPacket(WriterProxy proxy)

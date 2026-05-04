@@ -14,17 +14,23 @@ public sealed class Publisher<T> : IDisposable
 {
     private readonly StatefulWriter _writer;
     private readonly ICdrSerializer<T> _serializer;
+    private readonly Action<Guid>? _unregisterEndpoint;
     private bool _disposed;
 
     public string TopicName { get; }
     public Guid Guid => _writer.Guid;
     internal StatefulWriter Writer => _writer;
 
-    public Publisher(string topicName, StatefulWriter writer, ICdrSerializer<T> serializer)
+    public Publisher(
+        string topicName,
+        StatefulWriter writer,
+        ICdrSerializer<T> serializer,
+        Action<Guid>? unregisterEndpoint = null)
     {
         TopicName = topicName;
         _writer = writer;
         _serializer = serializer;
+        _unregisterEndpoint = unregisterEndpoint;
     }
 
     /// <summary>値をシリアライズ (encap header CDR_LE 付き) して 1 件送信する。</summary>
@@ -57,6 +63,7 @@ public sealed class Publisher<T> : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _unregisterEndpoint?.Invoke(Guid);
         _writer.Dispose();
     }
 

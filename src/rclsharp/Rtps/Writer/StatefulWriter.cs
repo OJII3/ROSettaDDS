@@ -101,9 +101,15 @@ public sealed class StatefulWriter : IDisposable
     /// (HEARTBEAT は周期送信に任せる)
     /// </summary>
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> serializedPayload, CancellationToken cancellationToken = default)
+        => await WriteAsync(serializedPayload, ChangeKind.Alive, cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask WriteAsync(
+        ReadOnlyMemory<byte> serializedPayload,
+        ChangeKind kind,
+        CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var change = _history.Add(ChangeKind.Alive, serializedPayload, Time.Now());
+        var change = _history.Add(kind, serializedPayload, Time.Now());
         await SendDataAsync(change, cancellationToken).ConfigureAwait(false);
     }
 
@@ -305,17 +311,35 @@ public sealed class StatefulWriter : IDisposable
         var buffer = new byte[SendBufferSize];
         var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
         writer.WriteInfoTimestamp(new InfoTimestampSubmessage(change.SourceTimestamp));
+        bool isAlive = change.Kind == ChangeKind.Alive;
+        ReadOnlyMemory<byte> inlineQos = isAlive
+            ? default
+            : DataSubmessage.BuildStatusInfoInlineQos(ToStatusInfo(change.Kind), CdrEndianness.LittleEndian);
         var data = new DataSubmessage(
             readerEntityId: readerEntityId,
             writerEntityId: _writerEntityId,
             writerSn: change.SequenceNumber,
             serializedPayload: change.SerializedPayload,
-            dataPresent: true);
+            inlineQos: inlineQos,
+            dataPresent: isAlive,
+            keyPresent: !isAlive);
         writer.WriteData(data);
 
         var packet = new byte[writer.BytesWritten];
         writer.WrittenSpan.CopyTo(packet);
         return packet;
+    }
+
+    private static uint ToStatusInfo(ChangeKind kind)
+    {
+        return kind switch
+        {
+            ChangeKind.NotAliveDisposed => DataSubmessage.StatusInfoDisposed,
+            ChangeKind.NotAliveUnregistered => DataSubmessage.StatusInfoUnregistered,
+            ChangeKind.NotAliveDisposedUnregistered =>
+                DataSubmessage.StatusInfoDisposed | DataSubmessage.StatusInfoUnregistered,
+            _ => 0u,
+        };
     }
 
     private async Task ResendRequestedAsync(ReaderProxy proxy, CancellationToken cancellationToken)

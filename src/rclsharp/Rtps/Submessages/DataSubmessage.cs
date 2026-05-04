@@ -21,6 +21,10 @@ namespace Rclsharp.Rtps.Submessages;
 /// </summary>
 public sealed class DataSubmessage
 {
+    public const uint StatusInfoDisposed = 0x00000001u;
+    public const uint StatusInfoUnregistered = 0x00000002u;
+    public const uint StatusInfoFiltered = 0x00000004u;
+
     /// <summary>標準レイアウト時の octetsToInlineQos の値 (16)。</summary>
     public const ushort StandardOctetsToInlineQos = 16;
 
@@ -112,6 +116,54 @@ public sealed class DataSubmessage
         {
             SerializedPayload.Span.CopyTo(destination[offset..]);
         }
+    }
+
+    public static byte[] BuildStatusInfoInlineQos(uint statusInfo, CdrEndianness endianness)
+    {
+        Span<byte> buffer = stackalloc byte[16];
+        var writer = new CdrWriter(buffer, endianness);
+        var pl = new ParameterListWriter(writer);
+        pl.BeginParameter(ParameterId.StatusInfo);
+        pl.WriteUInt32(statusInfo);
+        pl.EndParameter();
+        pl.WriteSentinel();
+
+        var current = pl.CurrentWriter;
+        var copy = new byte[current.Position];
+        current.WrittenSpan.CopyTo(copy);
+        return copy;
+    }
+
+    public static bool TryReadStatusInfo(
+        ReadOnlySpan<byte> inlineQos,
+        CdrEndianness endianness,
+        out uint statusInfo)
+    {
+        statusInfo = 0;
+        if (inlineQos.IsEmpty)
+        {
+            return false;
+        }
+
+        var reader = new CdrReader(inlineQos, endianness);
+        var pl = new ParameterListReader(reader);
+        while (pl.MoveNext(out var pid, out _))
+        {
+            if (ParameterId.StripFlags(pid) != ParameterId.StatusInfo)
+            {
+                continue;
+            }
+            var raw = pl.CurrentValueRaw();
+            if (raw.Length < sizeof(uint))
+            {
+                return false;
+            }
+            statusInfo = endianness == CdrEndianness.LittleEndian
+                ? BinaryPrimitives.ReadUInt32LittleEndian(raw)
+                : BinaryPrimitives.ReadUInt32BigEndian(raw);
+            return true;
+        }
+        return false;
     }
 
     /// <summary>

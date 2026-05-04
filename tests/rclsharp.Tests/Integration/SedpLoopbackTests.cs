@@ -151,6 +151,84 @@ public class SedpLoopbackTests
     }
 
     [Fact]
+    public async Task Publisher_Dispose_で_SEDP_unregister_が送られ_remote_writer_が消える()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        var writerSeenByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writerLostByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        pB.DiscoveryDb.WriterDiscovered += ep =>
+        {
+            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix))
+            {
+                writerSeenByB.TrySetResult(ep);
+            }
+        };
+        pB.DiscoveryDb.WriterLost += ep =>
+        {
+            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix))
+            {
+                writerLostByB.TrySetResult(ep);
+            }
+        };
+
+        var pub = pA.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, typeName: StringMessage.DdsTypeName);
+
+        pA.Start();
+        pB.Start();
+
+        var seen = await writerSeenByB.Task.WaitAsync(DiscoveryTimeout);
+        pub.Dispose();
+
+        var lost = await writerLostByB.Task.WaitAsync(DiscoveryTimeout);
+        lost.Data.EndpointGuid.Should().Be(seen.Data.EndpointGuid);
+        pB.DiscoveryDb.WriterSnapshot().Should().NotContain(ep => ep.Data.EndpointGuid.Equals(seen.Data.EndpointGuid));
+    }
+
+    [Fact]
+    public async Task Subscription_Dispose_で_SEDP_unregister_が送られ_remote_reader_が消える()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        var readerSeenByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readerLostByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        pB.DiscoveryDb.ReaderDiscovered += ep =>
+        {
+            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix))
+            {
+                readerSeenByB.TrySetResult(ep);
+            }
+        };
+        pB.DiscoveryDb.ReaderLost += ep =>
+        {
+            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix))
+            {
+                readerLostByB.TrySetResult(ep);
+            }
+        };
+
+        var sub = pA.CreateSubscription<StringMessage>(
+            "chatter", StringMessageSerializer.Instance,
+            (_, _) => { },
+            typeName: StringMessage.DdsTypeName);
+
+        pA.Start();
+        pB.Start();
+
+        var seen = await readerSeenByB.Task.WaitAsync(DiscoveryTimeout);
+        sub.Dispose();
+
+        var lost = await readerLostByB.Task.WaitAsync(DiscoveryTimeout);
+        lost.Data.EndpointGuid.Should().Be(seen.Data.EndpointGuid);
+        pB.DiscoveryDb.ReaderSnapshot().Should().NotContain(ep => ep.Data.EndpointGuid.Equals(seen.Data.EndpointGuid));
+    }
+
+    [Fact]
     public async Task 双方の_Pub_Sub_を_互いに_発見()
     {
         var env = CreatePair();

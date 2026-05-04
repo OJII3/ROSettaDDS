@@ -34,6 +34,12 @@ Unity 2022.3 の C# コンパイラは C# 11 の `required` members に対応し
 ライブラリ本体では `required` を使わず、Unity 同梱の .NET Standard 2.1 参照アセンブリで
 コンパイルできる API に留めます。
 
+## 終了時の discovery lifecycle
+
+Participant は DDSI-RTPS の lease timeout で remote から消えることを前提にします。
+Publisher / Subscription の endpoint は Dispose 時に SEDP の built-in Topic へ
+`PID_STATUS_INFO` 付き unregister DATA を送信し、remote の graph から早めに消えるようにします。
+
 ## サンプル: SPDP Demo
 
 指定ドメインの SPDP マルチキャストに参加し、他の Participant (rclsharp 同士 / ROS 2 ノード) を検出します。
