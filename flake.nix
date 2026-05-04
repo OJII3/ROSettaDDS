@@ -27,7 +27,7 @@
         };
       in
       {
-        devShells.default = pkgs.mkShell {
+        devShells.default = pkgs.mkShell ({
           name = "rclsharp";
           packages = [
             rosEnv
@@ -37,7 +37,10 @@
           RMW_IMPLEMENTATION = "rmw_fastrtps_cpp";
           DOTNET_CLI_TELEMETRY_OPTOUT = "1";
           DOTNET_NOLOGO = "1";
-        };
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+          # Work around Nix dotnet aborting during ICU globalization init on macOS.
+          DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
+        });
       }
     );
 
