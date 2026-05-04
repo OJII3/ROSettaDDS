@@ -2,6 +2,8 @@ using Rclsharp.Cdr;
 using Rclsharp.Common;
 using Rclsharp.Rtps.Reader;
 
+using Guid = Rclsharp.Common.Guid;
+
 namespace Rclsharp.Dds;
 
 /// <summary>
@@ -13,22 +15,28 @@ public sealed class Subscription<T> : IDisposable
     private readonly StatelessReader _reader;
     private readonly ICdrSerializer<T> _serializer;
     private readonly Action<T, GuidPrefix> _handler;
+    private readonly Action<Guid, StatelessReader>? _unregisterEndpoint;
     private bool _disposed;
 
     public string TopicName { get; }
+    public Guid Guid { get; }
     public EntityId WriterEntityId => _reader.WriterEntityId;
 
     public Subscription(
         string topicName,
+        Guid guid,
         StatelessReader reader,
         ICdrSerializer<T> serializer,
         Action<T, GuidPrefix> handler,
+        Action<Guid, StatelessReader>? unregisterEndpoint = null,
         bool autoStart = true)
     {
         TopicName = topicName;
+        Guid = guid;
         _reader = reader;
         _serializer = serializer;
         _handler = handler;
+        _unregisterEndpoint = unregisterEndpoint;
         _reader.PayloadReceived += OnPayloadReceived;
         if (autoStart)
         {
@@ -72,6 +80,7 @@ public sealed class Subscription<T> : IDisposable
         }
         _disposed = true;
         _reader.PayloadReceived -= OnPayloadReceived;
+        _unregisterEndpoint?.Invoke(Guid, _reader);
         _reader.Dispose();
     }
 }

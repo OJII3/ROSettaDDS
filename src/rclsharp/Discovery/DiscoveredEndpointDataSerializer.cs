@@ -132,6 +132,28 @@ public static class DiscoveredEndpointDataSerializer
         writer = pl.CurrentWriter;
     }
 
+    /// <summary>
+    /// SEDP unregister/dispose 用の key payload を書き込む。
+    /// Built-in endpoint instance の key は endpoint GUID として扱う。
+    /// </summary>
+    public static void WriteKey(ref CdrWriter writer, DiscoveredEndpointData data)
+    {
+        var pl = new ParameterListWriter(writer);
+        var egBytes = new byte[Guid.Size];
+        data.EndpointGuid.WriteTo(egBytes);
+
+        pl.BeginParameter(ParameterId.EndpointGuid);
+        pl.WriteRawBytes(egBytes);
+        pl.EndParameter();
+
+        pl.BeginParameter(ParameterId.KeyHash);
+        pl.WriteRawBytes(egBytes);
+        pl.EndParameter();
+
+        pl.WriteSentinel();
+        writer = pl.CurrentWriter;
+    }
+
     /// <summary>PL_CDR ParameterList を読み出して <see cref="DiscoveredEndpointData"/> を生成する。</summary>
     public static DiscoveredEndpointData Read(ref CdrReader reader, EndpointKind kind)
     {
@@ -230,8 +252,15 @@ public static class DiscoveredEndpointDataSerializer
                         break;
                     }
                 case ParameterId.KeyHash:
-                    // EndpointGuid と冗長なため明示的に消費 (skip)
-                    break;
+                    {
+                        var raw = pl.CurrentValueRaw();
+                        if (data.EndpointGuid.Equals(default) && raw.Length >= Guid.Size)
+                        {
+                            data.EndpointGuid = Guid.Read(raw[..Guid.Size]);
+                            data.ParticipantGuid = new Guid(data.EndpointGuid.Prefix, data.ParticipantGuid.EntityId);
+                        }
+                        break;
+                    }
                 case ParameterId.UnicastLocator:
                     {
                         var raw = pl.CurrentValueRaw();

@@ -33,6 +33,12 @@ public sealed class DiscoveryDb
     /// <summary>endpoint が更新されたとき (Writer/Reader 共通)。</summary>
     public event Action<RemoteEndpoint>? EndpointUpdated;
 
+    /// <summary>remote Writer が unregister/dispose されたとき。</summary>
+    public event Action<RemoteEndpoint>? WriterLost;
+
+    /// <summary>remote Reader が unregister/dispose されたとき。</summary>
+    public event Action<RemoteEndpoint>? ReaderLost;
+
     /// <summary>現在登録されている Participant 数。</summary>
     public int Count
     {
@@ -183,6 +189,37 @@ public sealed class DiscoveryDb
         {
             EndpointUpdated?.Invoke(endpoint);
         }
+    }
+
+    public bool TryRemoveEndpoint(EndpointKind kind, Guid endpointGuid, GuidPrefix? ignorePrefix = null)
+    {
+        if (ignorePrefix.HasValue && endpointGuid.Prefix.Equals(ignorePrefix.Value))
+        {
+            return false;
+        }
+
+        var dict = kind == EndpointKind.Writer ? _writers : _readers;
+        RemoteEndpoint? removed;
+        lock (_lock)
+        {
+            if (!dict.Remove(endpointGuid, out removed))
+            {
+                return false;
+            }
+        }
+
+        if (removed is not null)
+        {
+            if (kind == EndpointKind.Writer)
+            {
+                WriterLost?.Invoke(removed);
+            }
+            else
+            {
+                ReaderLost?.Invoke(removed);
+            }
+        }
+        return true;
     }
 
     /// <summary>登録されている Writer 数。</summary>

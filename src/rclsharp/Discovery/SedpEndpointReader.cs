@@ -102,7 +102,14 @@ public sealed class SedpEndpointReader : IDisposable
             var endpointData = DiscoveredEndpointDataSerializer.Read(ref cdrReader, _producedEndpointKind);
 
             EndpointDataReceived?.Invoke(endpointData);
-            _discoveryDb.UpsertEndpoint(endpointData, _clock(), ignorePrefix: _localPrefix);
+            if (change.Kind == Rclsharp.Rtps.HistoryCache.ChangeKind.Alive)
+            {
+                _discoveryDb.UpsertEndpoint(endpointData, _clock(), ignorePrefix: _localPrefix);
+            }
+            else
+            {
+                _discoveryDb.TryRemoveEndpoint(_producedEndpointKind, endpointData.EndpointGuid, _localPrefix);
+            }
         }
         catch (Exception ex)
         {

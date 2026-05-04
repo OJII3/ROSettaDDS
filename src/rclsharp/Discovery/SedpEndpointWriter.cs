@@ -77,6 +77,15 @@ public sealed class SedpEndpointWriter : IDisposable
         await _stateful.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
     }
 
+    public async ValueTask UnregisterEndpointAsync(
+        DiscoveredEndpointData endpoint,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var payload = SerializeEndpointKey(endpoint);
+        await _stateful.WriteAsync(payload, ChangeKind.NotAliveUnregistered, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>WriterHistoryCache 上の累積件数 (テスト/デバッグ用)。</summary>
     public int PublishedCount => (int)_stateful.History.LastSequenceNumber.Value;
 
@@ -100,6 +109,25 @@ public sealed class SedpEndpointWriter : IDisposable
             CdrEncapsulation.Write(buf, CdrEncapsulation.PlCdrLittleEndian);
             var inner = new CdrWriter(buf, CdrEndianness.LittleEndian, cdrOrigin: CdrEncapsulation.Size);
             DiscoveredEndpointDataSerializer.Write(ref inner, endpoint);
+            int length = inner.Position;
+            var copy = new byte[length];
+            Buffer.BlockCopy(buf, 0, copy, 0, length);
+            return copy;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buf);
+        }
+    }
+
+    private static byte[] SerializeEndpointKey(DiscoveredEndpointData endpoint)
+    {
+        var buf = ArrayPool<byte>.Shared.Rent(128);
+        try
+        {
+            CdrEncapsulation.Write(buf, CdrEncapsulation.PlCdrLittleEndian);
+            var inner = new CdrWriter(buf, CdrEndianness.LittleEndian, cdrOrigin: CdrEncapsulation.Size);
+            DiscoveredEndpointDataSerializer.WriteKey(ref inner, endpoint);
             int length = inner.Position;
             var copy = new byte[length];
             Buffer.BlockCopy(buf, 0, copy, 0, length);
