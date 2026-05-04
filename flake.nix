@@ -22,6 +22,7 @@
         rosEnv = pkgs.rosPackages.humble.buildEnv {
           paths = with pkgs.rosPackages.humble; [
             ros-base
+            rmw-fastrtps-cpp
           ];
         };
       in
@@ -33,6 +34,7 @@
             pkgs.colcon
             pkgs.dotnet-sdk_8
           ];
+          RMW_IMPLEMENTATION = "rmw_fastrtps_cpp";
           DOTNET_CLI_TELEMETRY_OPTOUT = "1";
           DOTNET_NOLOGO = "1";
         };
