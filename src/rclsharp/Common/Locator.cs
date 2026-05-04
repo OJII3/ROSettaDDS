@@ -1,7 +1,5 @@
 using System.Buffers.Binary;
-using System.Diagnostics.CodeAnalysis;
 using System.Net;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Rclsharp.Common;
@@ -83,7 +81,7 @@ public struct Locator : IEquatable<Locator>
     public byte[] AddressBytes()
     {
         var arr = new byte[AddressSize];
-        _address.AsReadOnlySpan().CopyTo(arr);
+        _address.AsSpan().CopyTo(arr);
         return arr;
     }
 
@@ -166,7 +164,7 @@ public struct Locator : IEquatable<Locator>
             LocatorKind.UdpV4 => $"UDPv4://{ToIPAddress()}:{Port}",
             LocatorKind.UdpV6 => $"UDPv6://[{ToIPAddress()}]:{Port}",
             LocatorKind.Invalid => "INVALID",
-            _ => $"{Kind}://{HexUtil.ToHexString(_address.AsReadOnlySpan())}:{Port}",
+            _ => $"{Kind}://{HexUtil.ToHexString(_address.AsSpan())}:{Port}",
         };
     }
 
@@ -189,10 +187,6 @@ internal static class LocatorAddressStorageExtensions
     public static Span<byte> AsSpan(ref this LocatorAddressStorage storage)
         => MemoryMarshal.CreateSpan(ref storage.First, Locator.AddressSize);
 
-    public static ReadOnlySpan<byte> AsReadOnlySpan(in this LocatorAddressStorage storage)
-        => MemoryMarshal.CreateReadOnlySpan(
-            ref Unsafe.AsRef(in storage).First, Locator.AddressSize);
-
-    public static byte ElementAt(in this LocatorAddressStorage storage, int index)
-        => storage.AsReadOnlySpan()[index];
+    public static byte ElementAt(ref this LocatorAddressStorage storage, int index)
+        => storage.AsSpan()[index];
 }

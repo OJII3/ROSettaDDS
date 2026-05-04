@@ -50,6 +50,9 @@ public sealed class DomainParticipant : IDisposable
     // ローカル StatefulWriter をトピック名でルックアップ (remote reader マッチング用)
     private readonly Dictionary<string, StatefulWriter> _localUserWriters = new();
 
+    // ローカル StatelessReader をトピック名でルックアップ (remote writer マッチング用)
+    private readonly Dictionary<string, List<LocalUserReader>> _localUserReaders = new();
+
     private bool _started;
     private bool _disposed;
 
@@ -66,6 +69,18 @@ public sealed class DomainParticipant : IDisposable
 
     /// <summary>ユーザートピックの multicast 送信先 Locator (Phase 5)。</summary>
     public Locator UserMulticastDestination => _userMulticastDestination;
+
+    private sealed class LocalUserReader
+    {
+        public LocalUserReader(DiscoveredEndpointData endpointData, StatelessReader reader)
+        {
+            EndpointData = endpointData ?? throw new ArgumentNullException(nameof(endpointData));
+            Reader = reader ?? throw new ArgumentNullException(nameof(reader));
+        }
+
+        public DiscoveredEndpointData EndpointData { get; }
+        public StatelessReader Reader { get; }
+    }
 
     public DomainParticipant(DomainParticipantOptions options)
     {
@@ -216,6 +231,9 @@ public sealed class DomainParticipant : IDisposable
 
         // SEDP で remote reader を発見したらローカル writer にユニキャストロケータを追加
         _discoveryDb.ReaderDiscovered += OnRemoteReaderDiscovered;
+
+        // SEDP で remote writer を発見したらローカル subscription の受信対象に追加
+        _discoveryDb.WriterDiscovered += OnRemoteWriterDiscovered;
     }
 
     private void OnRemoteParticipantDiscovered(RemoteParticipant participant)
@@ -274,19 +292,53 @@ public sealed class DomainParticipant : IDisposable
         _options.Logger.Debug($"DomainParticipant: matched local writer with remote reader on topic={topicName} reader={remoteReader.Data.EndpointGuid}");
     }
 
+    private void OnRemoteWriterDiscovered(RemoteEndpoint remoteWriter)
+    {
+        LocalUserReader[] readers;
+        lock (_localEndpointsLock)
+        {
+            if (!_localUserReaders.TryGetValue(remoteWriter.TopicName, out var list))
+            {
+                return;
+            }
+            readers = list.ToArray();
+        }
+
+        foreach (var local in readers)
+        {
+            if (!TypeMatches(local.EndpointData.TypeName, remoteWriter.TypeName))
+            {
+                continue;
+            }
+            local.Reader.MatchWriter(remoteWriter.Data.EndpointGuid);
+            _options.Logger.Debug($"DomainParticipant: matched local reader with remote writer on topic={remoteWriter.TopicName} writer={remoteWriter.Data.EndpointGuid}");
+        }
+    }
+
     private void OnUserUnicastPacketReceived(ReadOnlyMemory<byte> packet, Locator source)
     {
         // 全ローカル user writer に ACKNACK を渡す (entity ID で内部フィルタされる)
         StatefulWriter[] writers;
+        StatelessReader[] readers;
         lock (_localEndpointsLock)
         {
             writers = _localUserWriters.Values.ToArray();
+            readers = _localUserReaders.Values.SelectMany(static list => list).Select(static r => r.Reader).ToArray();
         }
         foreach (var w in writers)
         {
             w.OnPacketReceived(packet, source);
         }
+        foreach (var r in readers)
+        {
+            r.OnPacketReceived(packet, source);
+        }
     }
+
+    private static bool TypeMatches(string localTypeName, string remoteTypeName)
+        => string.IsNullOrEmpty(localTypeName)
+        || string.IsNullOrEmpty(remoteTypeName)
+        || string.Equals(localTypeName, remoteTypeName, StringComparison.Ordinal);
 
     private static bool IsUdpLocator(Locator loc)
         => loc.Kind == LocatorKind.UdpV4 || loc.Kind == LocatorKind.UdpV6;
@@ -388,6 +440,7 @@ public sealed class DomainParticipant : IDisposable
         if (serializer is null) throw new ArgumentNullException(nameof(serializer));
 
         var ddsTopic = TopicNameMangler.MangleTopic(topicName);
+        var ddsTypeName = ResolveDdsTypeName<T>(typeName);
         var writerEntityId = UserEntityIdAllocator.WriterFor(ddsTopic);
         var writerGuid = new Guid(GuidPrefix, writerEntityId);
         var history = new Rtps.HistoryCache.WriterHistoryCache(writerGuid, maxSamples: 1000);
@@ -409,7 +462,7 @@ public sealed class DomainParticipant : IDisposable
             EndpointGuid = writerGuid,
             ParticipantGuid = Guid,
             TopicName = ddsTopic,
-            TypeName = typeName ?? "",
+            TypeName = ddsTypeName,
             Reliability = ReliabilityQos.Reliable,
             Durability = DurabilityQos.Volatile,
         };
@@ -444,6 +497,7 @@ public sealed class DomainParticipant : IDisposable
         if (handler is null) throw new ArgumentNullException(nameof(handler));
 
         var ddsTopic = TopicNameMangler.MangleTopic(topicName);
+        var ddsTypeName = ResolveDdsTypeName<T>(typeName);
         var writerEntityId = UserEntityIdAllocator.WriterFor(ddsTopic);
         var readerEntityId = UserEntityIdAllocator.ReaderFor(ddsTopic);
         var reader = new StatelessReader(_userMulticastTransport, writerEntityId, _options.Logger);
@@ -456,13 +510,30 @@ public sealed class DomainParticipant : IDisposable
             EndpointGuid = endpointGuid,
             ParticipantGuid = Guid,
             TopicName = ddsTopic,
-            TypeName = typeName ?? "",
+            TypeName = ddsTypeName,
             Reliability = ReliabilityQos.BestEffort,
             Durability = DurabilityQos.Volatile,
         };
         endpointData.UnicastLocators.Add(_defaultUnicastLocator);
         endpointData.MulticastLocators.Add(_defaultMulticastLocator);
-        lock (_localEndpointsLock) { _localReaders.Add(endpointData); }
+        var localReader = new LocalUserReader(endpointData, reader);
+        lock (_localEndpointsLock)
+        {
+            _localReaders.Add(endpointData);
+            if (!_localUserReaders.TryGetValue(ddsTopic, out var readers))
+            {
+                readers = new List<LocalUserReader>();
+                _localUserReaders[ddsTopic] = readers;
+            }
+            readers.Add(localReader);
+        }
+        foreach (var remoteWriter in _discoveryDb.WriterSnapshot())
+        {
+            if (remoteWriter.TopicName == ddsTopic && TypeMatches(endpointData.TypeName, remoteWriter.TypeName))
+            {
+                reader.MatchWriter(remoteWriter.Data.EndpointGuid);
+            }
+        }
         _ = _sedpSubscriptionsWriter.AddEndpointAsync(endpointData);
 
         return new Subscription<T>(topicName, reader, serializer, handler);
@@ -510,5 +581,18 @@ public sealed class DomainParticipant : IDisposable
     private void ThrowIfDisposed()
     {
         if (_disposed) throw new ObjectDisposedException(GetType().Name);
+    }
+
+    private static string ResolveDdsTypeName<T>(string? explicitTypeName)
+    {
+        if (!string.IsNullOrEmpty(explicitTypeName))
+        {
+            return explicitTypeName;
+        }
+
+        var field = typeof(T).GetField(
+            "DdsTypeName",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        return field?.GetRawConstantValue() as string ?? "";
     }
 }

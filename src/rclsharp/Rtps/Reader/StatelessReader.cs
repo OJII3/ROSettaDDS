@@ -3,6 +3,8 @@ using Rclsharp.Common.Logging;
 using Rclsharp.Rtps.Submessages;
 using Rclsharp.Transport;
 
+using Guid = Rclsharp.Common.Guid;
+
 namespace Rclsharp.Rtps.Reader;
 
 /// <summary>
@@ -15,6 +17,8 @@ public sealed class StatelessReader : IDisposable
     private readonly IRtpsTransport _transport;
     private readonly EntityId _writerEntityId;
     private readonly ILogger _logger;
+    private readonly object _matchedLock = new();
+    private readonly HashSet<Guid> _matchedWriters = new();
 
     private bool _started;
     private bool _disposed;
@@ -29,6 +33,24 @@ public sealed class StatelessReader : IDisposable
         _transport = transport;
         _writerEntityId = writerEntityId;
         _logger = logger ?? NullLogger.Instance;
+    }
+
+    /// <summary>SEDP で発見した remote Writer を、この Reader の受信対象に追加する。</summary>
+    public void MatchWriter(Guid writerGuid)
+    {
+        ThrowIfDisposed();
+        lock (_matchedLock)
+        {
+            _matchedWriters.Add(writerGuid);
+        }
+    }
+
+    public void UnmatchWriter(Guid writerGuid)
+    {
+        lock (_matchedLock)
+        {
+            _matchedWriters.Remove(writerGuid);
+        }
     }
 
     public void Start()
@@ -62,8 +84,12 @@ public sealed class StatelessReader : IDisposable
         Stop();
     }
 
-    private void OnPacket(ReadOnlyMemory<byte> packet, Locator source)
+    public void OnPacketReceived(ReadOnlyMemory<byte> packet, Locator source)
     {
+        if (_disposed)
+        {
+            return;
+        }
         try
         {
             ProcessPacket(packet.Span);
@@ -74,9 +100,16 @@ public sealed class StatelessReader : IDisposable
         }
     }
 
+    private void OnPacket(ReadOnlyMemory<byte> packet, Locator source)
+        => OnPacketReceived(packet, source);
+
     /// <summary>パケットを RTPS message として解釈し、マッチする DATA を上位へ転送する。</summary>
     public void ProcessPacket(ReadOnlySpan<byte> packet)
     {
+        if (_disposed)
+        {
+            return;
+        }
         if (!RtpsHeader.TryRead(packet, out _, out _, out var sourcePrefix))
         {
             return;
@@ -89,7 +122,7 @@ public sealed class StatelessReader : IDisposable
                 continue;
             }
             var data = DataSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
-            if (!data.WriterEntityId.Equals(_writerEntityId))
+            if (!IsMatchedWriter(sourcePrefix, data.WriterEntityId))
             {
                 continue;
             }
@@ -99,6 +132,20 @@ public sealed class StatelessReader : IDisposable
             }
             PayloadReceived?.Invoke(data.SerializedPayload, sourcePrefix);
         }
+    }
+
+    private bool IsMatchedWriter(GuidPrefix sourcePrefix, EntityId writerEntityId)
+    {
+        lock (_matchedLock)
+        {
+            if (_matchedWriters.Contains(new Guid(sourcePrefix, writerEntityId)))
+            {
+                return true;
+            }
+        }
+
+        // SEDP がまだ届いていない rclsharp 同士の旧経路では、topic hash 由来の writer EntityId を使う。
+        return writerEntityId.Equals(_writerEntityId);
     }
 
     private void ThrowIfDisposed()

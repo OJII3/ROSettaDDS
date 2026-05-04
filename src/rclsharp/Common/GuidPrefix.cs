@@ -1,6 +1,4 @@
 using System.Buffers.Binary;
-using System.Diagnostics.CodeAnalysis;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Rclsharp.Common;
@@ -133,10 +131,6 @@ internal static class GuidPrefixStorageExtensions
     public static Span<byte> AsSpan(ref this GuidPrefixStorage storage)
         => MemoryMarshal.CreateSpan(ref storage.First, GuidPrefix.Size);
 
-    public static ReadOnlySpan<byte> AsReadOnlySpan(in this GuidPrefixStorage storage)
-        => MemoryMarshal.CreateReadOnlySpan(
-            ref Unsafe.AsRef(in storage).First, GuidPrefix.Size);
-
-    public static byte ElementAt(in this GuidPrefixStorage storage, int index)
-        => storage.AsReadOnlySpan()[index];
+    public static byte ElementAt(ref this GuidPrefixStorage storage, int index)
+        => storage.AsSpan()[index];
 }
