@@ -32,6 +32,7 @@ public sealed class StatefulWriter : IDisposable
     private readonly TimeSpan _heartbeatPeriod;
     private readonly WriterHistoryCache _history;
     private readonly ILogger _logger;
+    private readonly bool _purgeAckedSamples;
 
     private readonly object _matchedLock = new();
     private readonly Dictionary<Guid, ReaderProxy> _matched = new();
@@ -55,7 +56,8 @@ public sealed class StatefulWriter : IDisposable
         EntityId writerEntityId,
         TimeSpan heartbeatPeriod,
         WriterHistoryCache history,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        bool purgeAckedSamples = true)
     {
         _transport = sendTransport;
         _multicastDestination = multicastDestination;
@@ -65,6 +67,7 @@ public sealed class StatefulWriter : IDisposable
         _writerEntityId = writerEntityId;
         _heartbeatPeriod = heartbeatPeriod;
         _history = history;
+        _purgeAckedSamples = purgeAckedSamples;
         _logger = logger ?? NullLogger.Instance;
         Guid = new Guid(localPrefix, writerEntityId);
     }
@@ -172,8 +175,11 @@ public sealed class StatefulWriter : IDisposable
 
             proxy.ProcessAckNack(ack.ReaderSnState);
 
-            // ack 済みサンプルを history から削除 (全 reader の最小 ack を基準)
-            PurgeAckedSamples();
+            if (_purgeAckedSamples)
+            {
+                // ack 済みサンプルを history から削除 (全 reader の最小 ack を基準)
+                PurgeAckedSamples();
+            }
 
             // 再送
             _ = ResendRequestedAsync(proxy, CancellationToken.None);
@@ -351,7 +357,11 @@ public sealed class StatefulWriter : IDisposable
             var change = _history.Get(sn);
             if (change is null)
             {
-                // history から消えている (RemoveBelowOrEqual された) → GAP を返すべきだが Phase 7 では skip
+                await SendGapToDestinationAsync(
+                    sn,
+                    proxy.ReaderGuid.EntityId,
+                    proxy.UnicastLocator ?? _multicastDestination,
+                    cancellationToken).ConfigureAwait(false);
                 proxy.ClearRequested(sn);
                 continue;
             }
@@ -359,6 +369,40 @@ public sealed class StatefulWriter : IDisposable
             await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);
             proxy.ClearRequested(sn);
         }
+    }
+
+    private async ValueTask SendGapToDestinationAsync(
+        SequenceNumber missingSequenceNumber,
+        EntityId readerEntityId,
+        Locator destination,
+        CancellationToken cancellationToken)
+    {
+        var packet = BuildGapPacket(missingSequenceNumber, readerEntityId);
+        try
+        {
+            await _transport.SendAsync(packet, destination, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Error("StatefulWriter GAP send failed", ex);
+        }
+    }
+
+    private byte[] BuildGapPacket(SequenceNumber missingSequenceNumber, EntityId readerEntityId)
+    {
+        var gap = new GapSubmessage(
+            readerEntityId: readerEntityId,
+            writerEntityId: _writerEntityId,
+            gapStart: missingSequenceNumber,
+            gapList: new SequenceNumberSet(missingSequenceNumber + 1, 0, Array.Empty<uint>()));
+
+        var buffer = new byte[SendBufferSize];
+        var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
+        writer.WriteGap(gap);
+        var packet = new byte[writer.BytesWritten];
+        writer.WrittenSpan.CopyTo(packet);
+        return packet;
     }
 
     private void ThrowIfDisposed()
