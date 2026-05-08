@@ -357,7 +357,11 @@ public sealed class StatefulWriter : IDisposable
             var change = _history.Get(sn);
             if (change is null)
             {
-                // history から消えている (RemoveBelowOrEqual された) → GAP を返すべきだが Phase 7 では skip
+                await SendGapToDestinationAsync(
+                    sn,
+                    proxy.ReaderGuid.EntityId,
+                    proxy.UnicastLocator ?? _multicastDestination,
+                    cancellationToken).ConfigureAwait(false);
                 proxy.ClearRequested(sn);
                 continue;
             }
@@ -365,6 +369,40 @@ public sealed class StatefulWriter : IDisposable
             await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);
             proxy.ClearRequested(sn);
         }
+    }
+
+    private async ValueTask SendGapToDestinationAsync(
+        SequenceNumber missingSequenceNumber,
+        EntityId readerEntityId,
+        Locator destination,
+        CancellationToken cancellationToken)
+    {
+        var packet = BuildGapPacket(missingSequenceNumber, readerEntityId);
+        try
+        {
+            await _transport.SendAsync(packet, destination, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Error("StatefulWriter GAP send failed", ex);
+        }
+    }
+
+    private byte[] BuildGapPacket(SequenceNumber missingSequenceNumber, EntityId readerEntityId)
+    {
+        var gap = new GapSubmessage(
+            readerEntityId: readerEntityId,
+            writerEntityId: _writerEntityId,
+            gapStart: missingSequenceNumber,
+            gapList: new SequenceNumberSet(missingSequenceNumber + 1, 0, Array.Empty<uint>()));
+
+        var buffer = new byte[SendBufferSize];
+        var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
+        writer.WriteGap(gap);
+        var packet = new byte[writer.BytesWritten];
+        writer.WrittenSpan.CopyTo(packet);
+        return packet;
     }
 
     private void ThrowIfDisposed()

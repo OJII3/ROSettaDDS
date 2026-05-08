@@ -220,4 +220,78 @@ public class StatefulHandshakeTests
         proxy.HighestAcked.Value.Should().Be(4L);
         proxy.RequestedSequenceNumbers().Select(s => s.Value).Should().Equal(5L);
     }
+
+    [Fact]
+    public async Task Writer_は_history_に無い要求SNへ_GAP_を返す()
+    {
+        var s = CreateSetup();
+        var writerGuid = new Guid(s.WriterPrefix, s.WriterEntityId);
+        var readerGuid = new Guid(s.ReaderPrefix, s.ReaderEntityId);
+        var history = new WriterHistoryCache(writerGuid);
+        var writer = new StatefulWriter(
+            sendTransport: s.WriterTransport,
+            multicastDestination: s.ReaderLocator,
+            version: ProtocolVersion.V2_4,
+            vendorId: VendorId.Rclsharp,
+            localPrefix: s.WriterPrefix,
+            writerEntityId: s.WriterEntityId,
+            heartbeatPeriod: TimeSpan.FromMilliseconds(50),
+            history: history);
+        using (writer)
+        {
+            writer.MatchReader(readerGuid, s.ReaderLocator);
+
+            var gapTcs = new TaskCompletionSource<GapSubmessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            s.ReaderTransport.Received += (packet, _) =>
+            {
+                if (!RtpsHeader.TryRead(packet.Span, out _, out _, out _))
+                {
+                    return;
+                }
+
+                var reader = new RtpsMessageReader(packet.Span);
+                while (reader.TryReadNext(out var header, out var body))
+                {
+                    if (header.Kind != SubmessageKind.Gap)
+                    {
+                        continue;
+                    }
+
+                    gapTcs.TrySetResult(GapSubmessage.ReadBody(body, header.Endianness, header.Flags));
+                }
+            };
+
+            var ackPacket = BuildAckNackPacket(
+                s.ReaderPrefix,
+                s.ReaderEntityId,
+                s.WriterEntityId,
+                new SequenceNumberSet(new SequenceNumber(1L), 1, new[] { 0x80000000u }));
+
+            writer.ProcessPacket(ackPacket);
+
+            var gap = await gapTcs.Task.WaitAsync(ReceiveTimeout);
+            gap.ReaderEntityId.Should().Be(s.ReaderEntityId);
+            gap.WriterEntityId.Should().Be(s.WriterEntityId);
+            gap.GapStart.Value.Should().Be(1L);
+            gap.GapList.BitmapBase.Value.Should().Be(2L);
+            gap.GapList.NumBits.Should().Be(0);
+        }
+    }
+
+    private static byte[] BuildAckNackPacket(
+        GuidPrefix sourcePrefix,
+        EntityId readerEntityId,
+        EntityId writerEntityId,
+        SequenceNumberSet readerSnState)
+    {
+        var buffer = new byte[1500];
+        var writer = new RtpsMessageWriter(buffer, ProtocolVersion.V2_4, VendorId.Rclsharp, sourcePrefix);
+        writer.WriteAckNack(new AckNackSubmessage(
+            readerEntityId,
+            writerEntityId,
+            readerSnState,
+            count: 1,
+            final: false));
+        return writer.WrittenSpan.ToArray();
+    }
 }
