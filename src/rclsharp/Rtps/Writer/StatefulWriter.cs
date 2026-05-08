@@ -32,6 +32,7 @@ public sealed class StatefulWriter : IDisposable
     private readonly TimeSpan _heartbeatPeriod;
     private readonly WriterHistoryCache _history;
     private readonly ILogger _logger;
+    private readonly bool _purgeAckedSamples;
 
     private readonly object _matchedLock = new();
     private readonly Dictionary<Guid, ReaderProxy> _matched = new();
@@ -55,7 +56,8 @@ public sealed class StatefulWriter : IDisposable
         EntityId writerEntityId,
         TimeSpan heartbeatPeriod,
         WriterHistoryCache history,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        bool purgeAckedSamples = true)
     {
         _transport = sendTransport;
         _multicastDestination = multicastDestination;
@@ -65,6 +67,7 @@ public sealed class StatefulWriter : IDisposable
         _writerEntityId = writerEntityId;
         _heartbeatPeriod = heartbeatPeriod;
         _history = history;
+        _purgeAckedSamples = purgeAckedSamples;
         _logger = logger ?? NullLogger.Instance;
         Guid = new Guid(localPrefix, writerEntityId);
     }
@@ -172,8 +175,11 @@ public sealed class StatefulWriter : IDisposable
 
             proxy.ProcessAckNack(ack.ReaderSnState);
 
-            // ack 済みサンプルを history から削除 (全 reader の最小 ack を基準)
-            PurgeAckedSamples();
+            if (_purgeAckedSamples)
+            {
+                // ack 済みサンプルを history から削除 (全 reader の最小 ack を基準)
+                PurgeAckedSamples();
+            }
 
             // 再送
             _ = ResendRequestedAsync(proxy, CancellationToken.None);

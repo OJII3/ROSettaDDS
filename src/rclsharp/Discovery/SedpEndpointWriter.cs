@@ -50,7 +50,8 @@ public sealed class SedpEndpointWriter : IDisposable
             writerEntityId: writerEntityId,
             heartbeatPeriod: heartbeatPeriod,
             history: history,
-            logger: _logger);
+            logger: _logger,
+            purgeAckedSamples: false);
     }
 
     public void Start() => _stateful.Start();

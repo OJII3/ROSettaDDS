@@ -3,6 +3,7 @@ using Rclsharp.Common;
 using Rclsharp.Dds;
 using Rclsharp.Discovery;
 using Rclsharp.Msgs.Std;
+using Rclsharp.Rtps.Writer;
 using Rclsharp.Transport;
 
 using Guid = Rclsharp.Common.Guid;
@@ -170,11 +171,103 @@ public class SedpReliableLoopbackTests
         found.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task ACK_後も_SEDP_endpoint_history_を保持して_late_participant_へ再送する()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        var multicastIp = IPAddress.Parse("239.255.0.1");
+        var spdpLoc = Locator.FromUdpV4(multicastIp, 7400u);
+        var userMcLoc = Locator.FromUdpV4(multicastIp, 7401u);
+        using var pC = new DomainParticipant(new DomainParticipantOptions
+        {
+            DomainId = 0, ParticipantId = 3, EntityName = "node_c",
+            MulticastGroup = multicastIp,
+            SpdpInterval = TimeSpan.FromMilliseconds(50),
+            SedpInterval = TimeSpan.FromMilliseconds(50),
+            CustomMulticastTransport = env.Hub.Create(spdpLoc),
+            CustomUnicastTransport = env.Hub.Create(Locator.FromUdpV4(IPAddress.Parse("10.0.0.3"), 7415u)),
+            CustomUserMulticastTransport = env.Hub.Create(userMcLoc),
+            CustomUserUnicastTransport = env.Hub.Create(Locator.FromUdpV4(IPAddress.Parse("10.0.0.3"), 7416u)),
+        });
+
+        pA.Start();
+        pB.Start();
+
+        using var pubA = pA.CreatePublisher<StringMessage>(
+            "retained_topic", StringMessageSerializer.Instance, typeName: StringMessage.DdsTypeName);
+
+        await WaitUntilAsync(() =>
+            pB.DiscoveryDb.WriterSnapshot().Any(ep => ep.Data.TopicName == "rt/retained_topic"));
+
+        var pubsWriter = GetSedpPublicationsWriter(pA);
+        await WaitUntilAsync(() =>
+            pubsWriter!.Stateful.MatchedReaders.Any(proxy => proxy.HighestAcked.Value >= 1L));
+
+        pC.Start();
+
+        await WaitUntilAsync(() =>
+            pC.DiscoveryDb.WriterSnapshot().Any(ep => ep.Data.TopicName == "rt/retained_topic"),
+            because: "ACK 済みでも SEDP endpoint sample は late participant 向けに残るべき");
+    }
+
+    [Fact]
+    public async Task 既存_remote_reader_発見後に作った_local_publisher_を即時_matchする()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        using var subB = pB.CreateSubscription<StringMessage>(
+            "reader_first_topic",
+            StringMessageSerializer.Instance,
+            (_, _) => { },
+            typeName: StringMessage.DdsTypeName);
+
+        pA.Start();
+        pB.Start();
+
+        await WaitUntilAsync(() =>
+            pA.DiscoveryDb.ReaderSnapshot().Any(ep => ep.Data.TopicName == "rt/reader_first_topic"));
+
+        using var pubA = pA.CreatePublisher<StringMessage>(
+            "reader_first_topic", StringMessageSerializer.Instance, typeName: StringMessage.DdsTypeName);
+
+        var userWriter = GetUserWriter(pubA);
+        await WaitUntilAsync(() =>
+            userWriter!.MatchedReaders.Any(proxy => proxy.ReaderGuid.Prefix.Equals(pB.GuidPrefix)),
+            because: "local publisher 作成時に既存 remote reader と match するべき");
+    }
+
     private static SedpEndpointWriter? GetSedpPublicationsWriter(DomainParticipant p)
     {
         // private field にアクセスするため reflection
         var field = typeof(DomainParticipant).GetField("_sedpPublicationsWriter",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
         return field?.GetValue(p) as SedpEndpointWriter;
+    }
+
+    private static StatefulWriter? GetUserWriter<T>(Publisher<T> publisher)
+    {
+        var field = typeof(Publisher<T>).GetField("_writer",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        return field?.GetValue(publisher) as StatefulWriter;
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, string because = "")
+    {
+        var deadline = DateTime.UtcNow + DiscoveryTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition())
+            {
+                return;
+            }
+            await Task.Delay(50);
+        }
+
+        condition().Should().BeTrue(because);
     }
 }

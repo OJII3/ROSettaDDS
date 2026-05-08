@@ -239,8 +239,9 @@ public sealed class DomainParticipant : IDisposable
             producedEndpointKind: EndpointKind.Reader,
             logger: _options.Logger);
 
-        // SPDP で remote participant を発見したら SEDP endpoint を auto-match
+        // SPDP で remote participant を発見/更新したら SEDP endpoint を auto-match
         _discoveryDb.ParticipantDiscovered += OnRemoteParticipantDiscovered;
+        _discoveryDb.ParticipantUpdated += OnRemoteParticipantDiscovered;
 
         // SEDP で remote reader を発見したらローカル writer にユニキャストロケータを追加
         _discoveryDb.ReaderDiscovered += OnRemoteReaderDiscovered;
@@ -248,6 +249,7 @@ public sealed class DomainParticipant : IDisposable
         // SEDP で remote writer を発見したらローカル subscription の受信対象に追加
         _discoveryDb.WriterDiscovered += OnRemoteWriterDiscovered;
 
+        _discoveryDb.EndpointUpdated += OnRemoteEndpointUpdated;
         _discoveryDb.ReaderLost += OnRemoteReaderLost;
         _discoveryDb.WriterLost += OnRemoteWriterLost;
     }
@@ -279,42 +281,19 @@ public sealed class DomainParticipant : IDisposable
 
     private void OnRemoteReaderDiscovered(RemoteEndpoint remoteReader)
     {
-        var topicName = remoteReader.TopicName;
         LocalUserWriter[] writers;
         lock (_localEndpointsLock)
         {
-            if (!_localUserWriters.TryGetValue(topicName, out var list))
+            if (!_localUserWriters.TryGetValue(remoteReader.TopicName, out var list))
             {
                 return;
             }
             writers = list.ToArray();
         }
 
-        // remote reader のユニキャストロケータを解決
-        Locator? unicastLocator = FirstUdpLocator(remoteReader.Data.UnicastLocators);
-
-        if (unicastLocator is null)
-        {
-            // endpoint にロケータがない場合は participant の DEFAULT_UNICAST_LOCATOR にフォールバック
-            var participants = _discoveryDb.Snapshot();
-            foreach (var p in participants)
-            {
-                if (p.GuidPrefix.Equals(remoteReader.Data.EndpointGuid.Prefix))
-                {
-                    unicastLocator = FirstUdpLocator(p.Data.DefaultUnicastLocators);
-                    break;
-                }
-            }
-        }
-
         foreach (var local in writers)
         {
-            if (!TypeMatches(local.EndpointData.TypeName, remoteReader.TypeName))
-            {
-                continue;
-            }
-            local.Writer.MatchReader(remoteReader.Data.EndpointGuid, unicastLocator);
-            _options.Logger.Debug($"DomainParticipant: matched local writer with remote reader on topic={topicName} reader={remoteReader.Data.EndpointGuid}");
+            MatchLocalWriterWithRemoteReader(local, remoteReader);
         }
     }
 
@@ -332,13 +311,63 @@ public sealed class DomainParticipant : IDisposable
 
         foreach (var local in readers)
         {
-            if (!TypeMatches(local.EndpointData.TypeName, remoteWriter.TypeName))
-            {
-                continue;
-            }
-            local.Reader.MatchWriter(remoteWriter.Data.EndpointGuid);
-            _options.Logger.Debug($"DomainParticipant: matched local reader with remote writer on topic={remoteWriter.TopicName} writer={remoteWriter.Data.EndpointGuid}");
+            MatchLocalReaderWithRemoteWriter(local, remoteWriter);
         }
+    }
+
+    private void OnRemoteEndpointUpdated(RemoteEndpoint remoteEndpoint)
+    {
+        if (remoteEndpoint.Kind == EndpointKind.Reader)
+        {
+            OnRemoteReaderDiscovered(remoteEndpoint);
+        }
+        else
+        {
+            OnRemoteWriterDiscovered(remoteEndpoint);
+        }
+    }
+
+    private void MatchLocalWriterWithRemoteReader(LocalUserWriter local, RemoteEndpoint remoteReader)
+    {
+        if (!TypeMatches(local.EndpointData.TypeName, remoteReader.TypeName))
+        {
+            return;
+        }
+
+        var unicastLocator = ResolveRemoteReaderUnicastLocator(remoteReader);
+        local.Writer.MatchReader(remoteReader.Data.EndpointGuid, unicastLocator);
+        _options.Logger.Debug($"DomainParticipant: matched local writer with remote reader on topic={remoteReader.TopicName} reader={remoteReader.Data.EndpointGuid}");
+    }
+
+    private void MatchLocalReaderWithRemoteWriter(LocalUserReader local, RemoteEndpoint remoteWriter)
+    {
+        if (!TypeMatches(local.EndpointData.TypeName, remoteWriter.TypeName))
+        {
+            return;
+        }
+
+        local.Reader.MatchWriter(remoteWriter.Data.EndpointGuid);
+        _options.Logger.Debug($"DomainParticipant: matched local reader with remote writer on topic={remoteWriter.TopicName} writer={remoteWriter.Data.EndpointGuid}");
+    }
+
+    private Locator? ResolveRemoteReaderUnicastLocator(RemoteEndpoint remoteReader)
+    {
+        var unicastLocator = FirstUdpLocator(remoteReader.Data.UnicastLocators);
+        if (unicastLocator is not null)
+        {
+            return unicastLocator;
+        }
+
+        var participants = _discoveryDb.Snapshot();
+        foreach (var p in participants)
+        {
+            if (p.GuidPrefix.Equals(remoteReader.Data.EndpointGuid.Prefix))
+            {
+                return FirstUdpLocator(p.Data.DefaultUnicastLocators);
+            }
+        }
+
+        return null;
     }
 
     private void OnRemoteReaderLost(RemoteEndpoint remoteReader)
@@ -528,6 +557,7 @@ public sealed class DomainParticipant : IDisposable
         };
         endpointData.UnicastLocators.Add(_defaultUnicastLocator);
         endpointData.MulticastLocators.Add(_defaultMulticastLocator);
+        var localWriter = new LocalUserWriter(endpointData, writer);
         lock (_localEndpointsLock)
         {
             _localWriters.Add(endpointData);
@@ -536,7 +566,14 @@ public sealed class DomainParticipant : IDisposable
                 writers = new List<LocalUserWriter>();
                 _localUserWriters[ddsTopic] = writers;
             }
-            writers.Add(new LocalUserWriter(endpointData, writer));
+            writers.Add(localWriter);
+        }
+        foreach (var remoteReader in _discoveryDb.ReaderSnapshot())
+        {
+            if (remoteReader.TopicName == ddsTopic)
+            {
+                MatchLocalWriterWithRemoteReader(localWriter, remoteReader);
+            }
         }
         _ = _sedpPublicationsWriter.AddEndpointAsync(endpointData);
 
