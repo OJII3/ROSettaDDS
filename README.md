@@ -27,6 +27,144 @@ dotnet build
 dotnet test
 ```
 
+## 使い方
+
+### 新規コンソールアプリから使う
+
+このリポジトリを clone した状態で、別の .NET アプリから `rclsharp` を参照して試せます。
+
+```sh
+dotnet new console -n MyRclsharpApp
+dotnet add MyRclsharpApp/MyRclsharpApp.csproj reference src/rclsharp/rclsharp.csproj
+```
+
+`Program.cs` を次の内容に置き換えると、`std_msgs/msg/String` の talker / listener として動作します。
+
+```csharp
+using System;
+using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
+using Rclsharp.Common.Logging;
+using Rclsharp.Dds;
+using Rclsharp.Msgs.Std;
+
+if (args.Length != 1 || (args[0] != "talker" && args[0] != "listener"))
+{
+    Console.Error.WriteLine("Usage: dotnet run -- <talker|listener>");
+    return;
+}
+
+var mode = args[0];
+var logger = new ConsoleLogger(mode, LogLevel.Info);
+
+var options = new DomainParticipantOptions
+{
+    DomainId = 0,
+    ParticipantId = mode == "talker" ? 1 : 2,
+    EntityName = $"rclsharp_{mode}",
+    Logger = logger,
+
+    // ROS_LOCALHOST_ONLY=1 の ROS 2 ノードとローカルで通信する設定。
+    LocalUnicastAddress = IPAddress.Loopback,
+    MulticastInterface = IPAddress.Loopback,
+};
+
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) =>
+{
+    e.Cancel = true;
+    cts.Cancel();
+};
+
+using var participant = new DomainParticipant(options);
+participant.Start();
+
+try
+{
+    if (mode == "talker")
+    {
+        using var pub = participant.CreatePublisher<StringMessage>(
+            "chatter",
+            StringMessageSerializer.Instance,
+            StringMessage.DdsTypeName);
+
+        var count = 0;
+        while (!cts.IsCancellationRequested)
+        {
+            var message = new StringMessage($"Hello rclsharp: {++count}");
+            await pub.PublishAsync(message, cts.Token);
+            logger.Info($"Publishing: '{message.Data}'");
+            await Task.Delay(TimeSpan.FromSeconds(1), cts.Token);
+        }
+    }
+    else
+    {
+        using var sub = participant.CreateSubscription<StringMessage>(
+            "chatter",
+            StringMessageSerializer.Instance,
+            (message, source) => logger.Info($"I heard: '{message.Data}' from {source}"),
+            StringMessage.DdsTypeName);
+
+        await Task.Delay(Timeout.Infinite, cts.Token);
+    }
+}
+catch (OperationCanceledException) when (cts.IsCancellationRequested)
+{
+    logger.Info("Stopping...");
+}
+```
+
+2 つのシェルで listener と talker を起動します。
+
+```sh
+dotnet run --project MyRclsharpApp -- listener
+dotnet run --project MyRclsharpApp -- talker
+```
+
+listener 側に `I heard: 'Hello rclsharp: N'` が出れば送受信できています。
+
+### ROS 2 ノードと通信する
+
+ローカル PC 内で ROS 2 と疎通する場合は、ROS 2 側も同じ domain と localhost 設定にします。
+
+```sh
+export ROS_DOMAIN_ID=0
+export ROS_LOCALHOST_ONLY=1
+```
+
+ROS 2 の listener に rclsharp から送信する例:
+
+```sh
+ros2 run demo_nodes_cpp listener
+dotnet run --project MyRclsharpApp -- talker
+```
+
+ROS 2 の talker を rclsharp で購読する例:
+
+```sh
+ros2 run demo_nodes_cpp talker
+dotnet run --project MyRclsharpApp -- listener
+```
+
+別ホストと通信する場合は `ROS_LOCALHOST_ONLY` を無効にし、`LocalUnicastAddress` と
+`MulticastInterface` に実際に使う NIC の IPv4 アドレスを指定してください。
+
+### QoS を指定して publish する
+
+`CreatePublisher` は既定で Reliable publisher を作ります。ROS 2 の sensor-data 相当の
+Best Effort subscriber へ送る場合は、publisher 作成時に QoS を明示します。
+
+```csharp
+using Rclsharp.Dds.QoS;
+
+using var pub = participant.CreatePublisher<StringMessage>(
+    "chatter",
+    StringMessageSerializer.Instance,
+    ReliabilityQos.BestEffort,
+    StringMessage.DdsTypeName);
+```
+
 ## Unity 互換性
 
 Unity では API Compatibility Level を .NET Standard 2.1 に設定して利用します。
@@ -39,12 +177,6 @@ Unity 2022.3 の C# コンパイラは C# 11 の `required` members に対応し
 Participant は DDSI-RTPS の lease timeout で remote から消えることを前提にします。
 Publisher / Subscription の endpoint は Dispose 時に SEDP の built-in Topic へ
 `PID_STATUS_INFO` 付き unregister DATA を送信し、remote の graph から早めに消えるようにします。
-
-## Publisher QoS
-
-`DomainParticipant.CreatePublisher` は既定で Reliable publisher を作成します。
-ROS 2 の sensor-data 相当の購読者へ送る場合は、`ReliabilityQos.BestEffort` を指定して
-SEDP の endpoint reliability QoS を BestEffort として広告できます。
 
 ## サンプル: SPDP Demo
 
