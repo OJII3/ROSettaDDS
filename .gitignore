@@ -13,6 +13,7 @@ obj/
 !**/[Pp]ackages/build/
 
 ## Build results
+artifacts/
 [Dd]ebug/
 [Rr]elease/
 x64/

@@ -22,6 +22,7 @@
         rosEnv = pkgs.rosPackages.humble.buildEnv {
           paths = with pkgs.rosPackages.humble; [
             ros-base
+            demo-nodes-cpp
             rmw-fastrtps-cpp
           ];
         };
@@ -40,6 +41,8 @@
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
           # Work around Nix dotnet aborting during ICU globalization init on macOS.
           DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
+          # Some ROS 2 Humble binaries in nix-ros-overlay reference libyaml via @rpath.
+          DYLD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.libyaml ];
         });
       }
     );

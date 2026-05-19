@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+
+jobs:
+  dotnet:
+    name: .NET
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore rclsharp.sln
+
+      - name: Build
+        run: dotnet build rclsharp.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test tests/rclsharp.Tests/rclsharp.Tests.csproj --configuration Release --no-build --verbosity normal
+
+      - name: Pack
+        run: dotnet pack src/rclsharp/rclsharp.csproj --configuration Release --no-build --output artifacts/packages

@@ -27,6 +27,9 @@ dotnet build
 dotnet test
 ```
 
+互換性の対象範囲と検証方針は [docs/compatibility.md](docs/compatibility.md) にまとめています。
+ROS 2 実装との相互運用確認は [docs/interop.md](docs/interop.md) を参照してください。
+
 ## 使い方
 
 ### 新規コンソールアプリから使う
