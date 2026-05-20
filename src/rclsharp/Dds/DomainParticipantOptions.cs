@@ -1,6 +1,7 @@
 using System.Net;
 using Rclsharp.Common;
 using Rclsharp.Common.Logging;
+using Rclsharp.Rtps.Reader;
 using Rclsharp.Transport;
 
 namespace Rclsharp.Dds;
@@ -41,6 +42,9 @@ public sealed class DomainParticipantOptions
     public ProtocolVersion ProtocolVersion { get; init; } = ProtocolVersion.V2_4;
 
     public ILogger Logger { get; init; } = NullLogger.Instance;
+
+    /// <summary>DATA_FRAG 再構成バッファの制限値。</summary>
+    public DataFragReassemblyOptions DataFragReassembly { get; init; } = DataFragReassemblyOptions.Default;
 
     /// <summary>
     /// テスト用の差し替えポイント。null なら <see cref="UdpTransport.CreateMulticast"/> で作る。

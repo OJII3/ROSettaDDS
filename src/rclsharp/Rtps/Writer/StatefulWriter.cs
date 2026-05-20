@@ -75,12 +75,18 @@ public sealed class StatefulWriter : IDisposable
     public void MatchReader(Guid readerGuid, Locator? unicastLocator = null)
     {
         ThrowIfDisposed();
+        ReaderProxy? addedProxy = null;
         lock (_matchedLock)
         {
             if (!_matched.ContainsKey(readerGuid))
             {
-                _matched[readerGuid] = new ReaderProxy(readerGuid, unicastLocator);
+                addedProxy = new ReaderProxy(readerGuid, unicastLocator);
+                _matched[readerGuid] = addedProxy;
             }
+        }
+        if (addedProxy is not null)
+        {
+            _ = SendHistoricalDataToReaderAsync(addedProxy, CancellationToken.None);
         }
     }
 
@@ -291,6 +297,23 @@ public sealed class StatefulWriter : IDisposable
             return;
         }
         foreach (var proxy in proxies)
+        {
+            var dest = proxy.UnicastLocator ?? _multicastDestination;
+            await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task SendHistoricalDataToReaderAsync(ReaderProxy proxy, CancellationToken cancellationToken)
+    {
+        var first = _history.FirstSequenceNumber;
+        var last = _history.LastSequenceNumber;
+        if (first.Value == 0 || last.Value == 0 || first > last)
+        {
+            return;
+        }
+
+        var changes = _history.EnumerateRange(first, last);
+        foreach (var change in changes)
         {
             var dest = proxy.UnicastLocator ?? _multicastDestination;
             await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);

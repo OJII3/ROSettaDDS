@@ -53,36 +53,51 @@ public class TypeNameManglerTests
 public class UserEntityIdAllocatorTests
 {
     [Fact]
-    public void 同じ_topic_名は_常に同じ_writer_id()
+    public void 最初の_writer_id_は_FastDDS_互換の小さい連番()
     {
-        var a = UserEntityIdAllocator.WriterFor("rt/chatter");
-        var b = UserEntityIdAllocator.WriterFor("rt/chatter");
-        a.Should().Be(b);
-        a.Kind.Should().Be(EntityKind.UserDefinedWriterNoKey);
+        var allocator = new UserEntityIdAllocator();
+
+        var id = allocator.AllocateWriter();
+
+        id.Should().Be(new EntityId(0x000005u, EntityKind.UserDefinedWriterNoKey));
+        id.Value.Should().Be(0x0000_0503u);
     }
 
     [Fact]
-    public void Reader_は_kind_が_異なる()
+    public void 最初の_reader_id_は_FastDDS_互換の小さい連番()
     {
-        var w = UserEntityIdAllocator.WriterFor("rt/chatter");
-        var r = UserEntityIdAllocator.ReaderFor("rt/chatter");
-        w.Key.Should().Be(r.Key); // same topic → same key
-        w.Kind.Should().Be(EntityKind.UserDefinedWriterNoKey);
-        r.Kind.Should().Be(EntityKind.UserDefinedReaderNoKey);
+        var allocator = new UserEntityIdAllocator();
+
+        var id = allocator.AllocateReader();
+
+        id.Should().Be(new EntityId(0x000005u, EntityKind.UserDefinedReaderNoKey));
+        id.Value.Should().Be(0x0000_0504u);
     }
 
     [Fact]
-    public void 異なる_topic_名は_異なる_id()
+    public void writer_と_reader_は別々に連番を進める()
     {
-        var a = UserEntityIdAllocator.WriterFor("rt/foo");
-        var b = UserEntityIdAllocator.WriterFor("rt/bar");
-        a.Should().NotBe(b);
+        var allocator = new UserEntityIdAllocator();
+
+        var writer1 = allocator.AllocateWriter();
+        var writer2 = allocator.AllocateWriter();
+        var reader1 = allocator.AllocateReader();
+        var reader2 = allocator.AllocateReader();
+
+        writer1.Should().Be(new EntityId(0x000005u, EntityKind.UserDefinedWriterNoKey));
+        writer2.Should().Be(new EntityId(0x000006u, EntityKind.UserDefinedWriterNoKey));
+        reader1.Should().Be(new EntityId(0x000005u, EntityKind.UserDefinedReaderNoKey));
+        reader2.Should().Be(new EntityId(0x000006u, EntityKind.UserDefinedReaderNoKey));
     }
 
     [Fact]
-    public void Key_は_24bit_に収まる()
+    public void key_上限を超えると例外()
     {
-        var id = UserEntityIdAllocator.WriterFor("some/very/long/topic/name");
-        id.Key.Should().BeLessOrEqualTo(0x00FF_FFFFu);
+        var allocator = new UserEntityIdAllocator(0x00FF_FFFFu);
+        allocator.AllocateReader().Key.Should().Be(0x00FF_FFFFu);
+
+        Action act = () => allocator.AllocateReader();
+
+        act.Should().Throw<InvalidOperationException>();
     }
 }

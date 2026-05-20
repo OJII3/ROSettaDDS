@@ -231,7 +231,7 @@ public sealed class DataSubmessage
     /// <summary>
     /// PL_CDR ParameterList の終端 (SENTINEL) までを走査して長さを返す。SENTINEL を含む長さ。
     /// </summary>
-    private static int ScanParameterListLength(ReadOnlySpan<byte> source, bool littleEndian)
+    internal static int ScanParameterListLength(ReadOnlySpan<byte> source, bool littleEndian)
     {
         int offset = 0;
         while (offset + 4 <= source.Length)

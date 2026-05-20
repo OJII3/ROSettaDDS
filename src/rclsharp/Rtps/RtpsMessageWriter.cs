@@ -59,6 +59,10 @@ public ref struct RtpsMessageWriter
         => WriteSubmessage(SubmessageKind.Data, submessage.ExtraFlags, submessage.BodySize, endianness,
             (b, e) => submessage.WriteBody(b, e));
 
+    public void WriteDataFrag(DataFragSubmessage submessage, CdrEndianness endianness = CdrEndianness.LittleEndian)
+        => WriteSubmessage(SubmessageKind.DataFrag, submessage.ExtraFlags, submessage.BodySize, endianness,
+            (b, e) => submessage.WriteBody(b, e));
+
     private delegate void BodyWriter(Span<byte> body, CdrEndianness endianness);
 
     private void WriteSubmessage(

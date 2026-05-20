@@ -94,6 +94,7 @@ public class SedpLoopbackTests
         ep.Data.TypeName.Should().Be(StringMessage.DdsTypeName);
         ep.Data.Kind.Should().Be(EndpointKind.Writer);
         ep.Data.ParticipantGuid.Prefix.Should().Be(pA.GuidPrefix);
+        ep.Data.EndpointGuid.EntityId.Should().Be(new EntityId(0x000005u, EntityKind.UserDefinedWriterNoKey));
     }
 
     [Fact]
@@ -178,6 +179,7 @@ public class SedpLoopbackTests
         var ep = await readerSeenByB.Task.WaitAsync(DiscoveryTimeout);
         ep.Data.TopicName.Should().Be("rt/chatter");
         ep.Data.Kind.Should().Be(EndpointKind.Reader);
+        ep.Data.EndpointGuid.EntityId.Should().Be(new EntityId(0x000005u, EntityKind.UserDefinedReaderNoKey));
     }
 
     [Fact]
@@ -259,26 +261,39 @@ public class SedpLoopbackTests
     }
 
     [Fact]
-    public async Task 同じ_endpointGuid_を共有する最後の_Subscription_Dispose_まで_unregister_しない()
+    public async Task 同じ_topic_の複数_Subscription_は別endpointとして_unregister_される()
     {
         var env = CreatePair();
         using var pA = env.ParticipantA;
         using var pB = env.ParticipantB;
 
-        var readerSeenByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var readerLostByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readersSeenByB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstReaderLostByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondReaderLostByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int seenCount = 0;
+        int lostCount = 0;
         pB.DiscoveryDb.ReaderDiscovered += ep =>
         {
-            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix))
+            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix)
+                && ep.Data.TopicName == "rt/chatter"
+                && Interlocked.Increment(ref seenCount) == 2)
             {
-                readerSeenByB.TrySetResult(ep);
+                readersSeenByB.TrySetResult();
             }
         };
         pB.DiscoveryDb.ReaderLost += ep =>
         {
-            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix))
+            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix)
+                && ep.Data.TopicName == "rt/chatter")
             {
-                readerLostByB.TrySetResult(ep);
+                if (Interlocked.Increment(ref lostCount) == 1)
+                {
+                    firstReaderLostByB.TrySetResult(ep);
+                }
+                else
+                {
+                    secondReaderLostByB.TrySetResult(ep);
+                }
             }
         };
 
@@ -294,41 +309,56 @@ public class SedpLoopbackTests
         pA.Start();
         pB.Start();
 
-        var seen = await readerSeenByB.Task.WaitAsync(DiscoveryTimeout);
-        sub1.Guid.Should().Be(sub2.Guid);
+        await readersSeenByB.Task.WaitAsync(DiscoveryTimeout);
+        sub1.Guid.Should().NotBe(sub2.Guid);
+        pB.DiscoveryDb.ReaderSnapshot().Should().Contain(ep => ep.Data.EndpointGuid.Equals(sub1.Guid));
+        pB.DiscoveryDb.ReaderSnapshot().Should().Contain(ep => ep.Data.EndpointGuid.Equals(sub2.Guid));
 
         sub1.Dispose();
-        await Task.Delay(300);
-
-        readerLostByB.Task.IsCompleted.Should().BeFalse();
-        pB.DiscoveryDb.ReaderSnapshot().Should().Contain(ep => ep.Data.EndpointGuid.Equals(seen.Data.EndpointGuid));
+        var lost1 = await firstReaderLostByB.Task.WaitAsync(DiscoveryTimeout);
+        lost1.Data.EndpointGuid.Should().Be(sub1.Guid);
+        pB.DiscoveryDb.ReaderSnapshot().Should().NotContain(ep => ep.Data.EndpointGuid.Equals(sub1.Guid));
+        pB.DiscoveryDb.ReaderSnapshot().Should().Contain(ep => ep.Data.EndpointGuid.Equals(sub2.Guid));
 
         sub2.Dispose();
-        var lost = await readerLostByB.Task.WaitAsync(DiscoveryTimeout);
-        lost.Data.EndpointGuid.Should().Be(seen.Data.EndpointGuid);
+        var lost2 = await secondReaderLostByB.Task.WaitAsync(DiscoveryTimeout);
+        lost2.Data.EndpointGuid.Should().Be(sub2.Guid);
     }
 
     [Fact]
-    public async Task 同じ_endpointGuid_を共有する最後の_Publisher_Dispose_まで_unregister_しない()
+    public async Task 同じ_topic_の複数_Publisher_は別endpointとして_unregister_される()
     {
         var env = CreatePair();
         using var pA = env.ParticipantA;
         using var pB = env.ParticipantB;
 
-        var writerSeenByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var writerLostByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writersSeenByB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstWriterLostByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondWriterLostByB = new TaskCompletionSource<RemoteEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int seenCount = 0;
+        int lostCount = 0;
         pB.DiscoveryDb.WriterDiscovered += ep =>
         {
-            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix))
+            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix)
+                && ep.Data.TopicName == "rt/chatter"
+                && Interlocked.Increment(ref seenCount) == 2)
             {
-                writerSeenByB.TrySetResult(ep);
+                writersSeenByB.TrySetResult();
             }
         };
         pB.DiscoveryDb.WriterLost += ep =>
         {
-            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix))
+            if (ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix)
+                && ep.Data.TopicName == "rt/chatter")
             {
-                writerLostByB.TrySetResult(ep);
+                if (Interlocked.Increment(ref lostCount) == 1)
+                {
+                    firstWriterLostByB.TrySetResult(ep);
+                }
+                else
+                {
+                    secondWriterLostByB.TrySetResult(ep);
+                }
             }
         };
 
@@ -340,18 +370,20 @@ public class SedpLoopbackTests
         pA.Start();
         pB.Start();
 
-        var seen = await writerSeenByB.Task.WaitAsync(DiscoveryTimeout);
-        pub1.Guid.Should().Be(pub2.Guid);
+        await writersSeenByB.Task.WaitAsync(DiscoveryTimeout);
+        pub1.Guid.Should().NotBe(pub2.Guid);
+        pB.DiscoveryDb.WriterSnapshot().Should().Contain(ep => ep.Data.EndpointGuid.Equals(pub1.Guid));
+        pB.DiscoveryDb.WriterSnapshot().Should().Contain(ep => ep.Data.EndpointGuid.Equals(pub2.Guid));
 
         pub1.Dispose();
-        await Task.Delay(300);
-
-        writerLostByB.Task.IsCompleted.Should().BeFalse();
-        pB.DiscoveryDb.WriterSnapshot().Should().Contain(ep => ep.Data.EndpointGuid.Equals(seen.Data.EndpointGuid));
+        var lost1 = await firstWriterLostByB.Task.WaitAsync(DiscoveryTimeout);
+        lost1.Data.EndpointGuid.Should().Be(pub1.Guid);
+        pB.DiscoveryDb.WriterSnapshot().Should().NotContain(ep => ep.Data.EndpointGuid.Equals(pub1.Guid));
+        pB.DiscoveryDb.WriterSnapshot().Should().Contain(ep => ep.Data.EndpointGuid.Equals(pub2.Guid));
 
         pub2.Dispose();
-        var lost = await writerLostByB.Task.WaitAsync(DiscoveryTimeout);
-        lost.Data.EndpointGuid.Should().Be(seen.Data.EndpointGuid);
+        var lost2 = await secondWriterLostByB.Task.WaitAsync(DiscoveryTimeout);
+        lost2.Data.EndpointGuid.Should().Be(pub2.Guid);
     }
 
     [Fact]

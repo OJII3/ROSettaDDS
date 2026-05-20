@@ -215,3 +215,68 @@ public class DataSubmessageTests
         read.SerializedPayload.ToArray().Should().Equal(payload);
     }
 }
+
+public class DataFragSubmessageTests
+{
+    [Theory]
+    [InlineData(CdrEndianness.LittleEndian)]
+    [InlineData(CdrEndianness.BigEndian)]
+    public void DataFrag_payload_fragment_あり_InlineQos_なし(CdrEndianness endian)
+    {
+        var fragment = new byte[] { 0x00, 0x01, 0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF };
+        var src = new DataFragSubmessage(
+            EntityId.Unknown,
+            new EntityId(0x0000_0103u),
+            new SequenceNumber(9L),
+            fragmentStartingNumber: 1,
+            fragmentsInSubmessage: 2,
+            fragmentSize: 4,
+            sampleSize: 12,
+            serializedPayloadFragment: fragment);
+
+        src.ExtraFlags.Should().Be(0);
+        src.BodySize.Should().Be(DataFragSubmessage.FixedHeaderSize + fragment.Length);
+
+        var buf = new byte[src.BodySize];
+        src.WriteBody(buf, endian);
+
+        var read = DataFragSubmessage.ReadBody(buf, endian, src.ExtraFlags);
+        read.ReaderEntityId.Should().Be(src.ReaderEntityId);
+        read.WriterEntityId.Should().Be(src.WriterEntityId);
+        read.WriterSequenceNumber.Should().Be(src.WriterSequenceNumber);
+        read.FragmentStartingNumber.Should().Be(1);
+        read.FragmentsInSubmessage.Should().Be(2);
+        read.FragmentSize.Should().Be(4);
+        read.SampleSize.Should().Be(12);
+        read.SerializedPayloadFragment.ToArray().Should().Equal(fragment);
+        read.InlineQos.IsEmpty.Should().BeTrue();
+    }
+
+    [Fact]
+    public void DataFrag_InlineQos_あり_payload_fragment_あり()
+    {
+        var inlineQos = new byte[] {
+            0x70, 0x00, 0x04, 0x00, 0xAA, 0xBB, 0xCC, 0xDD,
+            0x01, 0x00, 0x00, 0x00 };
+        var fragment = new byte[] { 1, 2, 3, 4 };
+        var src = new DataFragSubmessage(
+            EntityId.Unknown,
+            new EntityId(0x0000_0103u),
+            new SequenceNumber(10L),
+            fragmentStartingNumber: 3,
+            fragmentsInSubmessage: 1,
+            fragmentSize: 4,
+            sampleSize: 16,
+            serializedPayloadFragment: fragment,
+            inlineQos: inlineQos);
+
+        src.ExtraFlags.Should().Be(SubmessageFlags.DataInlineQos);
+
+        var buf = new byte[src.BodySize];
+        src.WriteBody(buf, CdrEndianness.LittleEndian);
+
+        var read = DataFragSubmessage.ReadBody(buf, CdrEndianness.LittleEndian, src.ExtraFlags);
+        read.InlineQos.ToArray().Should().Equal(inlineQos);
+        read.SerializedPayloadFragment.ToArray().Should().Equal(fragment);
+    }
+}

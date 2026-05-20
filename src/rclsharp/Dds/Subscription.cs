@@ -20,7 +20,7 @@ public sealed class Subscription<T> : IDisposable
 
     public string TopicName { get; }
     public Guid Guid { get; }
-    public EntityId WriterEntityId => _reader.WriterEntityId;
+    public EntityId ReaderEntityId => _reader.ReaderEntityId;
 
     public Subscription(
         string topicName,

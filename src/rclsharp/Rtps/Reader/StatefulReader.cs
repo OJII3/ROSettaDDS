@@ -26,6 +26,8 @@ public sealed class StatefulReader : IDisposable
     private readonly EntityId _readerEntityId;
     private readonly Locator _ackNackFallbackDestination;
     private readonly ILogger _logger;
+    private readonly DataFragReassemblyBuffer _dataFragReassembly;
+    private readonly object _reassemblyLock = new();
 
     private readonly object _matchedLock = new();
     private readonly Dictionary<Guid, WriterProxy> _matched = new();
@@ -45,7 +47,8 @@ public sealed class StatefulReader : IDisposable
         GuidPrefix localPrefix,
         EntityId readerEntityId,
         Locator ackNackFallbackDestination,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        DataFragReassemblyOptions? dataFragOptions = null)
     {
         _replyTransport = replyTransport;
         _version = version;
@@ -54,6 +57,7 @@ public sealed class StatefulReader : IDisposable
         _readerEntityId = readerEntityId;
         _ackNackFallbackDestination = ackNackFallbackDestination;
         _logger = logger ?? NullLogger.Instance;
+        _dataFragReassembly = new DataFragReassemblyBuffer(dataFragOptions);
         Guid = new Guid(localPrefix, readerEntityId);
     }
 
@@ -131,6 +135,40 @@ public sealed class StatefulReader : IDisposable
                         }
                         break;
                     }
+                case SubmessageKind.DataFrag:
+                    {
+                        var dataFrag = DataFragSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
+                        if (!dataFrag.ReaderEntityId.Equals(EntityId.Unknown)
+                            && !dataFrag.ReaderEntityId.Equals(_readerEntityId))
+                        {
+                            continue;
+                        }
+                        var writerGuid = new Guid(sourcePrefix, dataFrag.WriterEntityId);
+                        WriterProxy? proxy;
+                        lock (_matchedLock) { _matched.TryGetValue(writerGuid, out proxy); }
+                        if (proxy is null) continue;
+
+                        byte[]? completedPayload;
+                        lock (_reassemblyLock)
+                        {
+                            completedPayload = _dataFragReassembly.Add(writerGuid, dataFrag);
+                        }
+                        if (completedPayload is null) continue;
+
+                        bool isNew = proxy.MarkReceived(dataFrag.WriterSequenceNumber);
+                        if (isNew)
+                        {
+                            var kind = ToChangeKind(dataFrag.InlineQos.Span, hdr.Endianness);
+                            var change = new CacheChange(
+                                kind,
+                                writerGuid,
+                                dataFrag.WriterSequenceNumber,
+                                Time.Zero,
+                                completedPayload);
+                            PayloadReceived?.Invoke(change);
+                        }
+                        break;
+                    }
                 case SubmessageKind.Heartbeat:
                     {
                         var hb = HeartbeatSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
@@ -169,8 +207,11 @@ public sealed class StatefulReader : IDisposable
     }
 
     private static ChangeKind ToChangeKind(DataSubmessage data, CdrEndianness endianness)
+        => ToChangeKind(data.InlineQos.Span, endianness);
+
+    private static ChangeKind ToChangeKind(ReadOnlySpan<byte> inlineQos, CdrEndianness endianness)
     {
-        if (!DataSubmessage.TryReadStatusInfo(data.InlineQos.Span, endianness, out var statusInfo))
+        if (!DataSubmessage.TryReadStatusInfo(inlineQos, endianness, out var statusInfo))
         {
             return ChangeKind.Alive;
         }

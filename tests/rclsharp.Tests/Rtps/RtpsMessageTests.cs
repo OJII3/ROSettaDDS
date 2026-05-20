@@ -93,6 +93,33 @@ public class RtpsMessageTests
     }
 
     [Fact]
+    public void DataFrag_を含む_message_の往復()
+    {
+        Span<byte> buf = stackalloc byte[256];
+        var w = new RtpsMessageWriter(buf, ProtocolVersion.V2_4, VendorId.EProsimaFastDds, SrcPrefix);
+        var frag = new DataFragSubmessage(
+            EntityId.Unknown,
+            new EntityId(0x0000_0103u),
+            new SequenceNumber(42L),
+            fragmentStartingNumber: 2,
+            fragmentsInSubmessage: 1,
+            fragmentSize: 8,
+            sampleSize: 24,
+            serializedPayloadFragment: new byte[] { 8, 9, 10, 11, 12, 13, 14, 15 });
+
+        w.WriteDataFrag(frag);
+
+        var r = new RtpsMessageReader(w.WrittenSpan);
+        r.TryReadNext(out var hdr, out var body).Should().BeTrue();
+        hdr.Kind.Should().Be(SubmessageKind.DataFrag);
+
+        var read = DataFragSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
+        read.WriterSequenceNumber.Should().Be(new SequenceNumber(42L));
+        read.FragmentStartingNumber.Should().Be(2);
+        read.SerializedPayloadFragment.ToArray().Should().Equal(frag.SerializedPayloadFragment.ToArray());
+    }
+
+    [Fact]
     public void 不正な_submessage_length_で_InvalidDataException()
     {
         // 自前で偽の message を構築: header + submessage hdr (length=999, buffer は不足)

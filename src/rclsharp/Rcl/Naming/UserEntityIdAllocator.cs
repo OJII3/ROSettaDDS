@@ -3,42 +3,46 @@ using Rclsharp.Common;
 namespace Rclsharp.Rcl.Naming;
 
 /// <summary>
-/// ユーザートピック用の EntityId を、トピック名から決定論的に割り当てる。
-/// SEDP 未実装の現状では、Pub/Sub の matching を「同じトピック名 → 同じ writer/reader EntityId」で行うために必要。
-/// 24bit entityKey は FNV-1a ハッシュで生成、kind は WriterNoKey (0x03) / ReaderNoKey (0x04)。
-///
-/// <para>
-/// SEDP 実装後 (Phase 6) は実 GUID で matching するため不要になる予定。
-/// </para>
+/// ユーザートピック用の EntityId を Participant 内の小さい連番で割り当てる。
+/// Fast DDS などの ROS 2 実装が広告する user endpoint id に合わせ、
+/// entityKey は 0x000005 から始める。
 /// </summary>
-public static class UserEntityIdAllocator
+public sealed class UserEntityIdAllocator
 {
-    /// <summary>topic 名から WriterNoKey EntityId を計算する。</summary>
-    public static EntityId WriterFor(string topicName)
-        => Allocate(topicName, EntityKind.UserDefinedWriterNoKey);
+    public const uint FirstUserEntityKey = 0x000005u;
 
-    /// <summary>topic 名から ReaderNoKey EntityId を計算する。</summary>
-    public static EntityId ReaderFor(string topicName)
-        => Allocate(topicName, EntityKind.UserDefinedReaderNoKey);
+    private readonly object _lock = new();
+    private uint _nextWriterKey;
+    private uint _nextReaderKey;
 
-    private static EntityId Allocate(string topicName, EntityKind kind)
+    public UserEntityIdAllocator(uint firstUserEntityKey = FirstUserEntityKey)
     {
-        if (string.IsNullOrEmpty(topicName)) throw new ArgumentException("Value cannot be null or empty.", nameof(topicName));
-        uint key = Fnv1a24(topicName);
-        return new EntityId(key, kind);
+        if (firstUserEntityKey == 0 || firstUserEntityKey > 0x00FF_FFFFu)
+        {
+            throw new ArgumentOutOfRangeException(nameof(firstUserEntityKey),
+                "First entity key must fit in 24 bits and be greater than zero.");
+        }
+        _nextWriterKey = firstUserEntityKey;
+        _nextReaderKey = firstUserEntityKey;
     }
 
-    /// <summary>FNV-1a を 24bit にトリミングしたハッシュ。プロセス間/起動間で一致する。</summary>
-    private static uint Fnv1a24(string value)
+    public EntityId AllocateWriter()
+        => Allocate(ref _nextWriterKey, EntityKind.UserDefinedWriterNoKey);
+
+    public EntityId AllocateReader()
+        => Allocate(ref _nextReaderKey, EntityKind.UserDefinedReaderNoKey);
+
+    private EntityId Allocate(ref uint nextKey, EntityKind kind)
     {
-        const uint offsetBasis = 2166136261u;
-        const uint prime = 16777619u;
-        uint hash = offsetBasis;
-        for (int i = 0; i < value.Length; i++)
+        lock (_lock)
         {
-            hash ^= value[i];
-            hash *= prime;
+            if (nextKey > 0x00FF_FFFFu)
+            {
+                throw new InvalidOperationException("No user EntityId keys remain in the 24-bit RTPS entity key space.");
+            }
+            var id = new EntityId(nextKey, kind);
+            nextKey++;
+            return id;
         }
-        return hash & 0x00FF_FFFFu;
     }
 }
