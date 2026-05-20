@@ -51,7 +51,8 @@ public sealed class SedpEndpointWriter : IDisposable
             heartbeatPeriod: heartbeatPeriod,
             history: history,
             logger: _logger,
-            purgeAckedSamples: false);
+            purgeAckedSamples: false,
+            resendHistoryOnMatch: true);
     }
 
     public void Start() => _stateful.Start();

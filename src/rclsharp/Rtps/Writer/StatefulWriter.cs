@@ -33,6 +33,7 @@ public sealed class StatefulWriter : IDisposable
     private readonly WriterHistoryCache _history;
     private readonly ILogger _logger;
     private readonly bool _purgeAckedSamples;
+    private readonly bool _resendHistoryOnMatch;
 
     private readonly object _matchedLock = new();
     private readonly Dictionary<Guid, ReaderProxy> _matched = new();
@@ -57,7 +58,8 @@ public sealed class StatefulWriter : IDisposable
         TimeSpan heartbeatPeriod,
         WriterHistoryCache history,
         ILogger? logger = null,
-        bool purgeAckedSamples = true)
+        bool purgeAckedSamples = true,
+        bool resendHistoryOnMatch = false)
     {
         _transport = sendTransport;
         _multicastDestination = multicastDestination;
@@ -68,6 +70,7 @@ public sealed class StatefulWriter : IDisposable
         _heartbeatPeriod = heartbeatPeriod;
         _history = history;
         _purgeAckedSamples = purgeAckedSamples;
+        _resendHistoryOnMatch = resendHistoryOnMatch;
         _logger = logger ?? NullLogger.Instance;
         Guid = new Guid(localPrefix, writerEntityId);
     }
@@ -84,7 +87,7 @@ public sealed class StatefulWriter : IDisposable
                 _matched[readerGuid] = addedProxy;
             }
         }
-        if (addedProxy is not null)
+        if (addedProxy is not null && _resendHistoryOnMatch)
         {
             _ = SendHistoricalDataToReaderAsync(addedProxy, CancellationToken.None);
         }

@@ -26,7 +26,7 @@ public sealed class StatelessReader : IDisposable
     private readonly Dictionary<Guid, Queue<PendingPayload>> _pendingPayloads = new();
     private int _pendingPayloadCount;
     private readonly object _deliveredLock = new();
-    private readonly Dictionary<Guid, HashSet<long>> _deliveredSequences = new();
+    private readonly Dictionary<Guid, DeliveredSequenceWindow> _deliveredSequences = new();
     private readonly object _deliveryLock = new();
 
     private bool _started;
@@ -88,6 +88,11 @@ public sealed class StatelessReader : IDisposable
         lock (_matchedLock)
         {
             _matchedWriters.Remove(writerGuid);
+        }
+        DropPendingPayloads(writerGuid);
+        lock (_deliveredLock)
+        {
+            _deliveredSequences.Remove(writerGuid);
         }
     }
 
@@ -281,7 +286,7 @@ public sealed class StatelessReader : IDisposable
         {
             if (!_deliveredSequences.TryGetValue(writerGuid, out var delivered))
             {
-                delivered = new HashSet<long>();
+                delivered = new DeliveredSequenceWindow(_dataFragOptions.MaxDeliveredSequenceNumbers);
                 _deliveredSequences[writerGuid] = delivered;
             }
             return delivered.Add(sequenceNumber.Value);
@@ -314,6 +319,18 @@ public sealed class StatelessReader : IDisposable
             }
             _pendingPayloadCount -= queue.Count;
             return queue.ToArray();
+        }
+    }
+
+    private void DropPendingPayloads(Guid writerGuid)
+    {
+        lock (_pendingLock)
+        {
+            if (!_pendingPayloads.Remove(writerGuid, out var queue))
+            {
+                return;
+            }
+            _pendingPayloadCount -= queue.Count;
         }
     }
 
@@ -386,6 +403,35 @@ public sealed class StatelessReader : IDisposable
         public GuidPrefix SourcePrefix { get; }
         public SequenceNumber SequenceNumber { get; }
         public DateTime ReceivedAt { get; }
+    }
+
+    private sealed class DeliveredSequenceWindow
+    {
+        private readonly int _capacity;
+        private readonly Queue<long> _order = new();
+        private readonly HashSet<long> _set = new();
+
+        public DeliveredSequenceWindow(int capacity)
+        {
+            _capacity = capacity;
+        }
+
+        public bool Contains(long sequenceNumber) => _set.Contains(sequenceNumber);
+
+        public bool Add(long sequenceNumber)
+        {
+            if (!_set.Add(sequenceNumber))
+            {
+                return false;
+            }
+
+            _order.Enqueue(sequenceNumber);
+            while (_order.Count > _capacity)
+            {
+                _set.Remove(_order.Dequeue());
+            }
+            return true;
+        }
     }
 
     private void ThrowIfDisposed()

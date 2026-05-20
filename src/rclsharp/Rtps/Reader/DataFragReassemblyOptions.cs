@@ -8,10 +8,12 @@ public sealed class DataFragReassemblyOptions
 {
     public const int DefaultMaxSampleSize = 16 * 1024 * 1024;
     public const int DefaultMaxBufferedSamples = 64;
+    public const int DefaultMaxDeliveredSequenceNumbers = 4096;
     public static readonly TimeSpan DefaultTimeToLive = TimeSpan.FromSeconds(5);
 
     public int MaxSampleSize { get; init; } = DefaultMaxSampleSize;
     public int MaxBufferedSamples { get; init; } = DefaultMaxBufferedSamples;
+    public int MaxDeliveredSequenceNumbers { get; init; } = DefaultMaxDeliveredSequenceNumbers;
     public TimeSpan TimeToLive { get; init; } = DefaultTimeToLive;
 
     public static DataFragReassemblyOptions Default { get; } = new();
@@ -25,6 +27,10 @@ public sealed class DataFragReassemblyOptions
         if (MaxBufferedSamples <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(MaxBufferedSamples), "MaxBufferedSamples must be greater than zero.");
+        }
+        if (MaxDeliveredSequenceNumbers <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaxDeliveredSequenceNumbers), "MaxDeliveredSequenceNumbers must be greater than zero.");
         }
         if (TimeToLive <= TimeSpan.Zero)
         {

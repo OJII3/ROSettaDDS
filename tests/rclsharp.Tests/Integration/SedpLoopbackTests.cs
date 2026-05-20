@@ -435,9 +435,30 @@ public class SedpLoopbackTests
         pA.Start();
         pB.Start();
 
+        await WaitUntilAsync(() =>
+            pB.DiscoveryDb.WriterSnapshot().Any(ep => ep.Data.TopicName == "rt/chatter"
+                                                   && ep.Data.ParticipantGuid.Prefix.Equals(pA.GuidPrefix)));
+        await WaitUntilAsync(() =>
+            pA.DiscoveryDb.ReaderSnapshot().Any(ep => ep.Data.TopicName == "rt/chatter"
+                                                   && ep.Data.ParticipantGuid.Prefix.Equals(pB.GuidPrefix)));
+
         await pub.PublishAsync(new StringMessage("via sedp era"));
 
         var msg = await receivedTcs.Task.WaitAsync(DiscoveryTimeout);
         msg.Data.Should().Be("via sedp era");
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + DiscoveryTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition())
+            {
+                return;
+            }
+            await Task.Delay(50);
+        }
+        condition().Should().BeTrue();
     }
 }

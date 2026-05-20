@@ -44,6 +44,7 @@ public class PubSubLoopbackTests
             DomainId = 0, ParticipantId = 1, EntityName = "node_a",
             MulticastGroup = multicastIp,
             SpdpInterval = TimeSpan.FromMilliseconds(50),
+            SedpInterval = TimeSpan.FromMilliseconds(50),
             CustomMulticastTransport = spdpA,
             CustomUnicastTransport = ucA,
             CustomUserMulticastTransport = userMcA,
@@ -54,6 +55,7 @@ public class PubSubLoopbackTests
             DomainId = 0, ParticipantId = 2, EntityName = "node_b",
             MulticastGroup = multicastIp,
             SpdpInterval = TimeSpan.FromMilliseconds(50),
+            SedpInterval = TimeSpan.FromMilliseconds(50),
             CustomMulticastTransport = spdpB,
             CustomUnicastTransport = ucB,
             CustomUserMulticastTransport = userMcB,
@@ -82,6 +84,8 @@ public class PubSubLoopbackTests
 
         pA.Start();
         pB.Start();
+
+        await WaitUntilDiscoveredAsync(pA, pB, "rt/chatter");
 
         await pub.PublishAsync(new StringMessage("hello rclsharp"));
 
@@ -135,13 +139,25 @@ public class PubSubLoopbackTests
         pA.Start();
         pB.Start();
 
+        await WaitUntilDiscoveredAsync(pA, pB, "rt/chatter");
+
         for (int i = 0; i < 10; i++)
         {
             await pub.PublishAsync(new StringMessage($"msg{i}"));
         }
 
-        // 受信猶予 (Loopback は同期配信なので即時のはず)
-        await Task.Delay(100);
+        var deadline = DateTime.UtcNow + ReceiveTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (lockObj)
+            {
+                if (received.Count == 10)
+                {
+                    break;
+                }
+            }
+            await Task.Delay(10);
+        }
 
         lock (lockObj)
         {
@@ -171,6 +187,32 @@ public class PubSubLoopbackTests
         await pub.PublishAsync(new StringMessage("self-pub"));
         var received = await receivedTcs.Task.WaitAsync(ReceiveTimeout);
         received.Data.Should().Be("self-pub");
+    }
+
+    [Fact]
+    public async Task late_Subscription_には_VOLATILE_user_writer_の履歴を再送しない()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        using var pub = pA.CreatePublisher<StringMessage>("volatile_topic", StringMessageSerializer.Instance);
+
+        pA.Start();
+        pB.Start();
+
+        await pub.PublishAsync(new StringMessage("before subscription"));
+        await Task.Delay(100);
+
+        bool received = false;
+        using var sub = pB.CreateSubscription<StringMessage>(
+            "volatile_topic",
+            StringMessageSerializer.Instance,
+            (_, _) => received = true);
+
+        await Task.Delay(300);
+
+        received.Should().BeFalse();
     }
 
     [Fact]
@@ -314,5 +356,31 @@ public class PubSubLoopbackTests
             sampleSize: sampleSize,
             serializedPayloadFragment: fragmentPayload));
         return writer.WrittenSpan.ToArray();
+    }
+
+    private static async Task WaitUntilDiscoveredAsync(DomainParticipant writerParticipant, DomainParticipant readerParticipant, string ddsTopic)
+    {
+        var deadline = DateTime.UtcNow + ReceiveTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            bool writerSeen = readerParticipant.DiscoveryDb.WriterSnapshot()
+                .Any(ep => ep.Data.TopicName == ddsTopic
+                        && ep.Data.ParticipantGuid.Prefix.Equals(writerParticipant.GuidPrefix));
+            bool readerSeen = writerParticipant.DiscoveryDb.ReaderSnapshot()
+                .Any(ep => ep.Data.TopicName == ddsTopic
+                        && ep.Data.ParticipantGuid.Prefix.Equals(readerParticipant.GuidPrefix));
+            if (writerSeen && readerSeen)
+            {
+                return;
+            }
+            await Task.Delay(50);
+        }
+
+        readerParticipant.DiscoveryDb.WriterSnapshot().Should()
+            .Contain(ep => ep.Data.TopicName == ddsTopic
+                        && ep.Data.ParticipantGuid.Prefix.Equals(writerParticipant.GuidPrefix));
+        writerParticipant.DiscoveryDb.ReaderSnapshot().Should()
+            .Contain(ep => ep.Data.TopicName == ddsTopic
+                        && ep.Data.ParticipantGuid.Prefix.Equals(readerParticipant.GuidPrefix));
     }
 }
