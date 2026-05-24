@@ -17,17 +17,26 @@ public sealed class WriterProxy
     private readonly HashSet<long> _received = new();
     private long _firstAvailable = 1;   // HB.firstSN
     private long _lastAvailable = 0;    // HB.lastSN
+    private Locator? _unicastReplyLocator;
     private int _ackNackCount;
 
     public Guid WriterGuid { get; }
 
     /// <summary>送信元 Participant のメタトラフィック unicast Locator (ACKNACK 返送先)。</summary>
-    public Locator? UnicastReplyLocator { get; }
+    public Locator? UnicastReplyLocator
+    {
+        get { lock (_lock) { return _unicastReplyLocator; } }
+    }
 
     public WriterProxy(Guid writerGuid, Locator? unicastReplyLocator = null)
     {
         WriterGuid = writerGuid;
-        UnicastReplyLocator = unicastReplyLocator;
+        _unicastReplyLocator = unicastReplyLocator;
+    }
+
+    public void UpdateUnicastReplyLocator(Locator? unicastReplyLocator)
+    {
+        lock (_lock) { _unicastReplyLocator = unicastReplyLocator; }
     }
 
     /// <summary>新規受信なら true、重複なら false を返す。</summary>

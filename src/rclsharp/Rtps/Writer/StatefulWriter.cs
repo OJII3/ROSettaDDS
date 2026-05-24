@@ -81,7 +81,11 @@ public sealed class StatefulWriter : IDisposable
         ReaderProxy? addedProxy = null;
         lock (_matchedLock)
         {
-            if (!_matched.ContainsKey(readerGuid))
+            if (_matched.TryGetValue(readerGuid, out var existing))
+            {
+                existing.UpdateUnicastLocator(unicastLocator);
+            }
+            else
             {
                 addedProxy = new ReaderProxy(readerGuid, unicastLocator);
                 _matched[readerGuid] = addedProxy;

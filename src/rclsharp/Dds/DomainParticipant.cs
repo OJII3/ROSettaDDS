@@ -19,6 +19,9 @@ namespace Rclsharp.Dds;
 /// </summary>
 public sealed class DomainParticipant : IDisposable
 {
+    private static readonly TimeSpan MaxLeaseExpiryCheckPeriod = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan MinLeaseExpiryCheckPeriod = TimeSpan.FromMilliseconds(50);
+
     private readonly DomainParticipantOptions _options;
     private readonly IRtpsTransport _multicastTransport;
     private readonly IRtpsTransport _unicastTransport;
@@ -41,6 +44,7 @@ public sealed class DomainParticipant : IDisposable
     private readonly Locator _metatrafficMulticastLocator;
     private readonly Locator _defaultMulticastLocator;
     private readonly Locator _defaultUnicastLocator;
+    private readonly TimeSpan _leaseExpiryCheckPeriod;
     private readonly UserEntityIdAllocator _userEntityIds = new();
 
     // ローカル endpoint 一覧 (SEDP 送信時に使用)
@@ -57,6 +61,8 @@ public sealed class DomainParticipant : IDisposable
     private bool _started;
     private bool _disposed;
     private bool _unregisteringLocalEndpoints;
+    private CancellationTokenSource? _leaseExpiryCts;
+    private Task? _leaseExpiryLoop;
 
     public DomainParticipantOptions Options => _options;
     public GuidPrefix GuidPrefix { get; }
@@ -100,6 +106,7 @@ public sealed class DomainParticipant : IDisposable
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
         _options = options;
+        _leaseExpiryCheckPeriod = ComputeLeaseExpiryCheckPeriod(_options);
 
         GuidPrefix = GuidPrefix.CreateForCurrentProcess(_options.VendorId);
         Guid = new Guid(GuidPrefix, BuiltinEntityIds.Participant);
@@ -243,6 +250,7 @@ public sealed class DomainParticipant : IDisposable
         // SPDP で remote participant を発見/更新したら SEDP endpoint を auto-match
         _discoveryDb.ParticipantDiscovered += OnRemoteParticipantDiscovered;
         _discoveryDb.ParticipantUpdated += OnRemoteParticipantDiscovered;
+        _discoveryDb.ParticipantLost += OnRemoteParticipantLost;
 
         // SEDP で remote reader を発見したらローカル writer にユニキャストロケータを追加
         _discoveryDb.ReaderDiscovered += OnRemoteReaderDiscovered;
@@ -278,6 +286,17 @@ public sealed class DomainParticipant : IDisposable
         _sedpSubscriptionsReader.MatchRemoteWriter(remoteSedpSubWriter, remoteUnicast);
 
         _options.Logger.Debug($"DomainParticipant: auto-matched SEDP endpoints for {participant.Guid}");
+    }
+
+    private void OnRemoteParticipantLost(RemoteParticipant participant)
+    {
+        var prefix = participant.GuidPrefix;
+        _sedpPublicationsWriter.UnmatchRemoteReader(new Guid(prefix, BuiltinEntityIds.SedpBuiltinPublicationsReader));
+        _sedpSubscriptionsWriter.UnmatchRemoteReader(new Guid(prefix, BuiltinEntityIds.SedpBuiltinSubscriptionsReader));
+        _sedpPublicationsReader.UnmatchRemoteWriter(new Guid(prefix, BuiltinEntityIds.SedpBuiltinPublicationsWriter));
+        _sedpSubscriptionsReader.UnmatchRemoteWriter(new Guid(prefix, BuiltinEntityIds.SedpBuiltinSubscriptionsWriter));
+
+        _options.Logger.Debug($"DomainParticipant: unmatched SEDP endpoints for lost participant {participant.Guid}");
     }
 
     private void OnRemoteReaderDiscovered(RemoteEndpoint remoteReader)
@@ -332,6 +351,7 @@ public sealed class DomainParticipant : IDisposable
     {
         if (!TypeMatches(local.EndpointData.TypeName, remoteReader.TypeName))
         {
+            local.Writer.UnmatchReader(remoteReader.Data.EndpointGuid);
             return;
         }
 
@@ -344,6 +364,7 @@ public sealed class DomainParticipant : IDisposable
     {
         if (!TypeMatches(local.EndpointData.TypeName, remoteWriter.TypeName))
         {
+            local.Reader.UnmatchWriter(remoteWriter.Data.EndpointGuid);
             return;
         }
 
@@ -355,6 +376,8 @@ public sealed class DomainParticipant : IDisposable
     {
         if (!TypeMatches(localReader.EndpointData.TypeName, localWriter.EndpointData.TypeName))
         {
+            localReader.Reader.UnmatchWriter(localWriter.EndpointData.EndpointGuid);
+            localWriter.Writer.UnmatchReader(localReader.EndpointData.EndpointGuid);
             return;
         }
 
@@ -439,9 +462,9 @@ public sealed class DomainParticipant : IDisposable
     }
 
     private static bool TypeMatches(string localTypeName, string remoteTypeName)
-        => string.IsNullOrEmpty(localTypeName)
-        || string.IsNullOrEmpty(remoteTypeName)
-        || string.Equals(localTypeName, remoteTypeName, StringComparison.Ordinal);
+        => !string.IsNullOrEmpty(localTypeName)
+        && !string.IsNullOrEmpty(remoteTypeName)
+        && string.Equals(localTypeName, remoteTypeName, StringComparison.Ordinal);
 
     private static bool IsUdpLocator(Locator loc)
         => loc.Kind == LocatorKind.UdpV4 || loc.Kind == LocatorKind.UdpV6;
@@ -485,6 +508,7 @@ public sealed class DomainParticipant : IDisposable
 
         _sedpPublicationsWriter.Start();
         _sedpSubscriptionsWriter.Start();
+        StartLeaseExpiryLoop();
         _started = true;
     }
 
@@ -495,6 +519,7 @@ public sealed class DomainParticipant : IDisposable
         {
             return;
         }
+        StopLeaseExpiryLoop();
         _sedpPublicationsWriter.Stop();
         _sedpSubscriptionsWriter.Stop();
         _userMulticastTransport.Received -= OnUserDataPacketReceived;
@@ -512,6 +537,58 @@ public sealed class DomainParticipant : IDisposable
         _multicastTransport.Stop();
         _unicastTransport.Stop();
         _started = false;
+    }
+
+    private void StartLeaseExpiryLoop()
+    {
+        if (_leaseExpiryCts is not null)
+        {
+            return;
+        }
+        _leaseExpiryCts = new CancellationTokenSource();
+        var token = _leaseExpiryCts.Token;
+        _leaseExpiryLoop = Task.Run(() => LeaseExpiryLoopAsync(token), token);
+    }
+
+    private void StopLeaseExpiryLoop()
+    {
+        if (_leaseExpiryCts is null)
+        {
+            return;
+        }
+
+        _leaseExpiryCts.Cancel();
+        try
+        {
+            _leaseExpiryLoop?.Wait(TimeSpan.FromSeconds(1));
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException))
+        {
+        }
+        catch (Exception ex)
+        {
+            _options.Logger.Warn("DomainParticipant lease expiry loop did not exit cleanly", ex);
+        }
+        _leaseExpiryCts.Dispose();
+        _leaseExpiryCts = null;
+        _leaseExpiryLoop = null;
+    }
+
+    private async Task LeaseExpiryLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(_leaseExpiryCheckPeriod, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            _discoveryDb.ExpireOldParticipants(DateTime.UtcNow);
+        }
     }
 
     /// <summary>現在の自 Participant の <see cref="ParticipantData"/> を生成する (SPDP 送信時に使われる)。</summary>
@@ -675,9 +752,9 @@ public sealed class DomainParticipant : IDisposable
         }
         foreach (var remoteWriter in _discoveryDb.WriterSnapshot())
         {
-            if (remoteWriter.TopicName == ddsTopic && TypeMatches(endpointData.TypeName, remoteWriter.TypeName))
+            if (remoteWriter.TopicName == ddsTopic)
             {
-                reader.MatchWriter(remoteWriter.Data.EndpointGuid);
+                MatchLocalReaderWithRemoteWriter(localReader, remoteWriter);
             }
         }
         _ = _sedpSubscriptionsWriter.AddEndpointAsync(endpointData);
@@ -902,5 +979,30 @@ public sealed class DomainParticipant : IDisposable
             "DdsTypeName",
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
         return field?.GetRawConstantValue() as string ?? "";
+    }
+
+    private static TimeSpan ComputeLeaseExpiryCheckPeriod(DomainParticipantOptions options)
+    {
+        var period = MinPositive(MaxLeaseExpiryCheckPeriod, options.SpdpInterval);
+        var leaseDuration = options.LeaseDuration.ToTimeSpan();
+        if (leaseDuration > TimeSpan.Zero)
+        {
+            var leaseQuarter = TimeSpan.FromTicks(Math.Max(1L, leaseDuration.Ticks / 4L));
+            period = MinPositive(period, leaseQuarter);
+        }
+        return period < MinLeaseExpiryCheckPeriod ? MinLeaseExpiryCheckPeriod : period;
+    }
+
+    private static TimeSpan MinPositive(TimeSpan left, TimeSpan right)
+    {
+        if (left <= TimeSpan.Zero)
+        {
+            return right;
+        }
+        if (right <= TimeSpan.Zero)
+        {
+            return left;
+        }
+        return left <= right ? left : right;
     }
 }

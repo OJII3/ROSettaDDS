@@ -14,18 +14,27 @@ public sealed class ReaderProxy
     private readonly object _lock = new();
     private long _highestAcked;             // ACKNACK.bitmapBase - 1 (これ以下は ack 済み)
     private readonly HashSet<long> _requested = new();   // 明示的に要求された SN 一覧
+    private Locator? _unicastLocator;
     private int _heartbeatCount;
 
     public Guid ReaderGuid { get; }
 
     /// <summary>DATA / HEARTBEAT 送信先 unicast Locator (なければ multicast にフォールバック)。</summary>
-    public Locator? UnicastLocator { get; }
+    public Locator? UnicastLocator
+    {
+        get { lock (_lock) { return _unicastLocator; } }
+    }
 
     public ReaderProxy(Guid readerGuid, Locator? unicastLocator = null)
     {
         ReaderGuid = readerGuid;
-        UnicastLocator = unicastLocator;
+        _unicastLocator = unicastLocator;
         _highestAcked = 0;
+    }
+
+    public void UpdateUnicastLocator(Locator? unicastLocator)
+    {
+        lock (_lock) { _unicastLocator = unicastLocator; }
     }
 
     /// <summary>これまで ack 済みの最大 SN。</summary>

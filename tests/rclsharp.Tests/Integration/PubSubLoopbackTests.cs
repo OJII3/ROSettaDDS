@@ -22,6 +22,36 @@ public class PubSubLoopbackTests
         public required Locator UserUnicastBLocator { get; init; }
     }
 
+    private readonly struct AnonymousMessage
+    {
+        public AnonymousMessage(string data)
+        {
+            Data = data;
+        }
+
+        public string Data { get; }
+    }
+
+    private sealed class AnonymousMessageSerializer : ICdrSerializer<AnonymousMessage>
+    {
+        public static readonly AnonymousMessageSerializer Instance = new();
+
+        public bool IsKeyed => false;
+
+        public int GetSerializedSize(in AnonymousMessage value)
+            => 4 + (value.Data is null ? 0 : System.Text.Encoding.UTF8.GetByteCount(value.Data)) + 1;
+
+        public void Serialize(ref CdrWriter writer, in AnonymousMessage value)
+            => writer.WriteString(value.Data);
+
+        public void Deserialize(ref CdrReader reader, out AnonymousMessage value)
+            => value = new AnonymousMessage(reader.ReadString());
+
+        public void SerializeKey(ref CdrWriter writer, in AnonymousMessage value)
+        {
+        }
+    }
+
     private static TestEnv CreatePair()
     {
         var hub = new LoopbackHub();
@@ -187,6 +217,31 @@ public class PubSubLoopbackTests
         await pub.PublishAsync(new StringMessage("self-pub"));
         var received = await receivedTcs.Task.WaitAsync(ReceiveTimeout);
         received.Data.Should().Be("self-pub");
+    }
+
+    [Fact]
+    public async Task type_nameが空のendpoint同士は同一topicでもmatchしない()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        bool received = false;
+        using var sub = pA.CreateSubscription<AnonymousMessage>(
+            "anonymous",
+            AnonymousMessageSerializer.Instance,
+            (_, _) => received = true);
+        using var pub = pA.CreatePublisher<AnonymousMessage>(
+            "anonymous",
+            AnonymousMessageSerializer.Instance);
+
+        pA.Start();
+        pB.Start();
+
+        await pub.PublishAsync(new AnonymousMessage("must not arrive"));
+        await Task.Delay(200);
+
+        received.Should().BeFalse("空 type name は wildcard ではなく明示 type 不在として扱うべき");
     }
 
     [Fact]

@@ -21,7 +21,7 @@ public class SedpReliableLoopbackTests
         public required DomainParticipant ParticipantB { get; init; }
     }
 
-    private static TestEnv CreatePair()
+    private static TestEnv CreatePair(Duration? leaseDuration = null)
     {
         var hub = new LoopbackHub();
         var multicastIp = IPAddress.Parse("239.255.0.1");
@@ -38,6 +38,7 @@ public class SedpReliableLoopbackTests
         var userMcB = hub.Create(userMcLoc);
         var userUcA = hub.Create(Locator.FromUdpV4(IPAddress.Parse("10.0.0.1"), 7412u));
         var userUcB = hub.Create(Locator.FromUdpV4(IPAddress.Parse("10.0.0.2"), 7414u));
+        var lease = leaseDuration ?? Duration.FromSeconds(20);
 
         var optionsA = new DomainParticipantOptions
         {
@@ -45,6 +46,7 @@ public class SedpReliableLoopbackTests
             MulticastGroup = multicastIp,
             SpdpInterval = TimeSpan.FromMilliseconds(50),
             SedpInterval = TimeSpan.FromMilliseconds(50),
+            LeaseDuration = lease,
             CustomMulticastTransport = spdpA,
             CustomUnicastTransport = ucA,
             CustomUserMulticastTransport = userMcA,
@@ -56,6 +58,7 @@ public class SedpReliableLoopbackTests
             MulticastGroup = multicastIp,
             SpdpInterval = TimeSpan.FromMilliseconds(50),
             SedpInterval = TimeSpan.FromMilliseconds(50),
+            LeaseDuration = lease,
             CustomMulticastTransport = spdpB,
             CustomUnicastTransport = ucB,
             CustomUserMulticastTransport = userMcB,
@@ -239,6 +242,115 @@ public class SedpReliableLoopbackTests
         await WaitUntilAsync(() =>
             userWriter!.MatchedReaders.Any(proxy => proxy.ReaderGuid.Prefix.Equals(pB.GuidPrefix)),
             because: "local publisher 作成時に既存 remote reader と match するべき");
+    }
+
+    [Fact]
+    public void 既存_remote_reader_endpoint_updateでlocal_writerのlocatorを更新する()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+        using var pubA = pA.CreatePublisher<StringMessage>(
+            "locator_update", StringMessageSerializer.Instance, typeName: StringMessage.DdsTypeName);
+        var userWriter = GetUserWriter(pubA)!;
+        var remotePrefix = GuidPrefix.Create(VendorId.Rclsharp, 0x20, 0x30, 0x01);
+        var remoteParticipantGuid = new Guid(remotePrefix, EntityId.Participant);
+        var remoteReaderGuid = new Guid(remotePrefix, new EntityId(0x40u, EntityKind.UserDefinedReaderNoKey));
+        var firstLocator = Locator.FromUdpV4(IPAddress.Parse("10.0.0.20"), 8000u);
+        var updatedLocator = Locator.FromUdpV4(IPAddress.Parse("10.0.0.21"), 8001u);
+
+        var firstEndpoint = new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Reader,
+            EndpointGuid = remoteReaderGuid,
+            ParticipantGuid = remoteParticipantGuid,
+            TopicName = "rt/locator_update",
+            TypeName = StringMessage.DdsTypeName,
+        };
+        firstEndpoint.UnicastLocators.Add(firstLocator);
+        pA.DiscoveryDb.UpsertEndpoint(firstEndpoint, DateTime.UtcNow);
+
+        var updatedEndpoint = new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Reader,
+            EndpointGuid = remoteReaderGuid,
+            ParticipantGuid = remoteParticipantGuid,
+            TopicName = "rt/locator_update",
+            TypeName = StringMessage.DdsTypeName,
+        };
+        updatedEndpoint.UnicastLocators.Add(updatedLocator);
+        pA.DiscoveryDb.UpsertEndpoint(updatedEndpoint, DateTime.UtcNow);
+
+        userWriter.GetReaderProxy(remoteReaderGuid)!.UnicastLocator.Should().Be(updatedLocator);
+    }
+
+    [Fact]
+    public void 既存_remote_reader_endpoint_updateでtype_nameが空ならlocal_writerをunmatchする()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+        using var pubA = pA.CreatePublisher<StringMessage>(
+            "type_update", StringMessageSerializer.Instance, typeName: StringMessage.DdsTypeName);
+        var userWriter = GetUserWriter(pubA)!;
+        var remotePrefix = GuidPrefix.Create(VendorId.Rclsharp, 0x20, 0x30, 0x02);
+        var remoteParticipantGuid = new Guid(remotePrefix, EntityId.Participant);
+        var remoteReaderGuid = new Guid(remotePrefix, new EntityId(0x41u, EntityKind.UserDefinedReaderNoKey));
+
+        pA.DiscoveryDb.UpsertEndpoint(new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Reader,
+            EndpointGuid = remoteReaderGuid,
+            ParticipantGuid = remoteParticipantGuid,
+            TopicName = "rt/type_update",
+            TypeName = StringMessage.DdsTypeName,
+        }, DateTime.UtcNow);
+        userWriter.GetReaderProxy(remoteReaderGuid).Should().NotBeNull();
+
+        pA.DiscoveryDb.UpsertEndpoint(new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Reader,
+            EndpointGuid = remoteReaderGuid,
+            ParticipantGuid = remoteParticipantGuid,
+            TopicName = "rt/type_update",
+            TypeName = "",
+        }, DateTime.UtcNow);
+
+        userWriter.GetReaderProxy(remoteReaderGuid).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task participant_lease失効でremote_endpointとlocal_matchingを解除する()
+    {
+        var env = CreatePair(Duration.FromSeconds(0.15));
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+        using var subB = pB.CreateSubscription<StringMessage>(
+            "lease_topic",
+            StringMessageSerializer.Instance,
+            (_, _) => { },
+            typeName: StringMessage.DdsTypeName);
+
+        pA.Start();
+        pB.Start();
+
+        using var pubA = pA.CreatePublisher<StringMessage>(
+            "lease_topic", StringMessageSerializer.Instance, typeName: StringMessage.DdsTypeName);
+        var userWriter = GetUserWriter(pubA)!;
+
+        await WaitUntilAsync(() =>
+            userWriter.MatchedReaders.Any(proxy => proxy.ReaderGuid.Prefix.Equals(pB.GuidPrefix)),
+            because: "lease 失効前は remote reader と match しているべき");
+
+        pB.Stop();
+
+        await WaitUntilAsync(() =>
+            !userWriter.MatchedReaders.Any(proxy => proxy.ReaderGuid.Prefix.Equals(pB.GuidPrefix)),
+            because: "participant lease 失効時に remote reader lost が local writer へ伝播するべき");
+        pA.DiscoveryDb.ReaderSnapshot()
+            .Should()
+            .NotContain(endpoint => endpoint.Guid.Prefix.Equals(pB.GuidPrefix));
+        pA.DiscoveryDb.Count.Should().Be(0);
     }
 
     private static SedpEndpointWriter? GetSedpPublicationsWriter(DomainParticipant p)

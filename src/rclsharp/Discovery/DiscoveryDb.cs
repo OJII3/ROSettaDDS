@@ -104,6 +104,8 @@ public sealed class DiscoveryDb
     public void ExpireOldParticipants(DateTime nowUtc)
     {
         List<RemoteParticipant>? expired = null;
+        List<RemoteEndpoint>? lostWriters = null;
+        List<RemoteEndpoint>? lostReaders = null;
         lock (_lock)
         {
             foreach (var (key, p) in _participants.ToArray())
@@ -113,6 +115,7 @@ public sealed class DiscoveryDb
                     expired ??= new List<RemoteParticipant>();
                     expired.Add(p);
                     _participants.Remove(key);
+                    RemoveEndpointsForParticipant(key, ref lostWriters, ref lostReaders);
                 }
             }
         }
@@ -120,6 +123,7 @@ public sealed class DiscoveryDb
         {
             return;
         }
+        PublishLostEndpoints(lostWriters, lostReaders);
         foreach (var p in expired)
         {
             ParticipantLost?.Invoke(p);
@@ -130,13 +134,17 @@ public sealed class DiscoveryDb
     public bool TryRemove(GuidPrefix prefix)
     {
         RemoteParticipant? removed;
+        List<RemoteEndpoint>? lostWriters = null;
+        List<RemoteEndpoint>? lostReaders = null;
         lock (_lock)
         {
             if (!_participants.Remove(prefix, out removed))
             {
                 return false;
             }
+            RemoveEndpointsForParticipant(prefix, ref lostWriters, ref lostReaders);
         }
+        PublishLostEndpoints(lostWriters, lostReaders);
         if (removed is not null)
         {
             ParticipantLost?.Invoke(removed);
@@ -244,5 +252,55 @@ public sealed class DiscoveryDb
     public IReadOnlyList<RemoteEndpoint> ReaderSnapshot()
     {
         lock (_lock) { return _readers.Values.ToArray(); }
+    }
+
+    private void RemoveEndpointsForParticipant(
+        GuidPrefix participantPrefix,
+        ref List<RemoteEndpoint>? lostWriters,
+        ref List<RemoteEndpoint>? lostReaders)
+    {
+        RemoveEndpointsForParticipant(_writers, participantPrefix, ref lostWriters);
+        RemoveEndpointsForParticipant(_readers, participantPrefix, ref lostReaders);
+    }
+
+    private static void RemoveEndpointsForParticipant(
+        Dictionary<Guid, RemoteEndpoint> endpoints,
+        GuidPrefix participantPrefix,
+        ref List<RemoteEndpoint>? lostEndpoints)
+    {
+        foreach (var (endpointGuid, endpoint) in endpoints.ToArray())
+        {
+            if (!BelongsToParticipant(endpoint, participantPrefix))
+            {
+                continue;
+            }
+            endpoints.Remove(endpointGuid);
+            lostEndpoints ??= new List<RemoteEndpoint>();
+            lostEndpoints.Add(endpoint);
+        }
+    }
+
+    private static bool BelongsToParticipant(RemoteEndpoint endpoint, GuidPrefix participantPrefix)
+        => endpoint.Guid.Prefix.Equals(participantPrefix)
+        || endpoint.ParticipantGuid.Prefix.Equals(participantPrefix);
+
+    private void PublishLostEndpoints(
+        IReadOnlyList<RemoteEndpoint>? lostWriters,
+        IReadOnlyList<RemoteEndpoint>? lostReaders)
+    {
+        if (lostWriters is not null)
+        {
+            foreach (var writer in lostWriters)
+            {
+                WriterLost?.Invoke(writer);
+            }
+        }
+        if (lostReaders is not null)
+        {
+            foreach (var reader in lostReaders)
+            {
+                ReaderLost?.Invoke(reader);
+            }
+        }
     }
 }

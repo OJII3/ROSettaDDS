@@ -224,6 +224,52 @@ public class StatefulHandshakeTests
     }
 
     [Fact]
+    public void StatefulWriter_MatchReader_は既存readerのlocatorを更新する()
+    {
+        var s = CreateSetup();
+        var writerGuid = new Guid(s.WriterPrefix, s.WriterEntityId);
+        var readerGuid = new Guid(s.ReaderPrefix, s.ReaderEntityId);
+        var firstLocator = Locator.FromUdpV4(IPAddress.Parse("10.0.0.20"), 8000u);
+        var updatedLocator = Locator.FromUdpV4(IPAddress.Parse("10.0.0.21"), 8001u);
+        var history = new WriterHistoryCache(writerGuid);
+        using var writer = new StatefulWriter(
+            sendTransport: s.WriterTransport,
+            multicastDestination: s.ReaderLocator,
+            version: ProtocolVersion.V2_4,
+            vendorId: VendorId.Rclsharp,
+            localPrefix: s.WriterPrefix,
+            writerEntityId: s.WriterEntityId,
+            heartbeatPeriod: TimeSpan.FromMilliseconds(50),
+            history: history);
+
+        writer.MatchReader(readerGuid, firstLocator);
+        writer.MatchReader(readerGuid, updatedLocator);
+
+        writer.GetReaderProxy(readerGuid)!.UnicastLocator.Should().Be(updatedLocator);
+    }
+
+    [Fact]
+    public void StatefulReader_MatchWriter_は既存writerのreply_locatorを更新する()
+    {
+        var s = CreateSetup();
+        var writerGuid = new Guid(s.WriterPrefix, s.WriterEntityId);
+        var firstLocator = Locator.FromUdpV4(IPAddress.Parse("10.0.0.30"), 9000u);
+        var updatedLocator = Locator.FromUdpV4(IPAddress.Parse("10.0.0.31"), 9001u);
+        using var reader = new StatefulReader(
+            replyTransport: s.ReaderTransport,
+            version: ProtocolVersion.V2_4,
+            vendorId: VendorId.Rclsharp,
+            localPrefix: s.ReaderPrefix,
+            readerEntityId: s.ReaderEntityId,
+            ackNackFallbackDestination: s.WriterLocator);
+
+        reader.MatchWriter(writerGuid, firstLocator);
+        reader.MatchWriter(writerGuid, updatedLocator);
+
+        reader.GetWriterProxy(writerGuid)!.UnicastReplyLocator.Should().Be(updatedLocator);
+    }
+
+    [Fact]
     public async Task Writer_は_history_に無い要求SNへ_GAP_を返す()
     {
         var s = CreateSetup();

@@ -66,7 +66,11 @@ public sealed class StatefulReader : IDisposable
         ThrowIfDisposed();
         lock (_matchedLock)
         {
-            if (!_matched.ContainsKey(writerGuid))
+            if (_matched.TryGetValue(writerGuid, out var existing))
+            {
+                existing.UpdateUnicastReplyLocator(unicastReplyLocator);
+            }
+            else
             {
                 _matched[writerGuid] = new WriterProxy(writerGuid, unicastReplyLocator);
             }
