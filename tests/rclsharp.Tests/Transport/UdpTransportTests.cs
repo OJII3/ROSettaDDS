@@ -49,6 +49,30 @@ public class UdpTransportTests
     }
 
     [Fact]
+    public async Task Stop_後に_Start_して_再受信できる()
+    {
+        using var receiver = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+        using var sender = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+
+        TaskCompletionSource<byte[]>? currentReceive = null;
+        receiver.Received += (data, _) => currentReceive?.TrySetResult(data.ToArray());
+
+        currentReceive = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        receiver.Start();
+        await sender.SendAsync(new byte[] { 0x10, 0x20 }, receiver.LocalLocator);
+        var first = await currentReceive.Task.WaitAsync(ReceiveTimeout);
+        first.Should().Equal(0x10, 0x20);
+
+        receiver.Stop();
+
+        currentReceive = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        receiver.Start();
+        await sender.SendAsync(new byte[] { 0x30, 0x40 }, receiver.LocalLocator);
+        var second = await currentReceive.Task.WaitAsync(ReceiveTimeout);
+        second.Should().Equal(0x30, 0x40);
+    }
+
+    [Fact]
     public async Task Dispose_後の_SendAsync_は_ObjectDisposedException()
     {
         var transport = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);

@@ -66,6 +66,25 @@ public class RtpsPortsTests
     }
 
     [Fact]
+    public void Domain232_Participant62_は_UDPポート上限以内()
+    {
+        RtpsPorts.DiscoveryMulticast(232).Should().Be(65400);
+        RtpsPorts.UserMulticast(232).Should().Be(65401);
+        RtpsPorts.DiscoveryUnicast(232, 62).Should().Be(65534);
+        RtpsPorts.UserUnicast(232, 62).Should().Be(65535);
+    }
+
+    [Fact]
+    public void Domain232_Participant63_は_UDPポート上限超過で例外()
+    {
+        Action discoveryUnicast = () => RtpsPorts.DiscoveryUnicast(232, 63);
+        Action userUnicast = () => RtpsPorts.UserUnicast(232, 63);
+
+        discoveryUnicast.Should().Throw<ArgumentOutOfRangeException>();
+        userUnicast.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
     public void DefaultMulticastAddress_は_239_255_0_1()
     {
         RtpsConstants.DefaultMulticastAddress.ToString().Should().Be("239.255.0.1");

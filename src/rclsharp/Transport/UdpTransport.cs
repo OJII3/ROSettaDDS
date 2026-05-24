@@ -19,6 +19,8 @@ namespace Rclsharp.Transport;
 /// </remarks>
 public sealed class UdpTransport : IRtpsTransport
 {
+    private const int ReceivePollTimeoutMilliseconds = 100;
+
     private readonly Socket _socket;
     private readonly Locator _localLocator;
     private readonly bool _isMulticast;
@@ -43,6 +45,7 @@ public sealed class UdpTransport : IRtpsTransport
         int receiveBufferSize)
     {
         _socket = socket;
+        _socket.ReceiveTimeout = ReceivePollTimeoutMilliseconds;
         _localLocator = localLocator;
         _isMulticast = isMulticast;
         _multicastGroup = multicastGroup;
@@ -152,7 +155,7 @@ public sealed class UdpTransport : IRtpsTransport
         }
         _receiveCts = new CancellationTokenSource();
         var token = _receiveCts.Token;
-        _receiveTask = Task.Run(() => ReceiveLoopAsync(token), token);
+        _receiveTask = Task.Run(() => ReceiveLoop(token), token);
     }
 
     public void Stop()
@@ -179,24 +182,24 @@ public sealed class UdpTransport : IRtpsTransport
         _receiveTask = null;
     }
 
-    private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
+    private void ReceiveLoop(CancellationToken cancellationToken)
     {
         var pool = ArrayPool<byte>.Shared;
-        EndPoint endpoint = new IPEndPoint(IPAddress.Any, 0);
 
         while (!cancellationToken.IsCancellationRequested)
         {
             byte[] buffer = pool.Rent(_receiveBufferSize);
             try
             {
-                var recvTask = _socket.ReceiveFromAsync(
-                    new ArraySegment<byte>(buffer, 0, _receiveBufferSize),
+                EndPoint endpoint = new IPEndPoint(IPAddress.Any, 0);
+                int receivedBytes = _socket.ReceiveFrom(
+                    buffer,
+                    0,
+                    _receiveBufferSize,
                     SocketFlags.None,
-                    endpoint);
-                using var reg = cancellationToken.Register(() => { try { _socket.Close(); } catch { } });
-                var result = await recvTask.ConfigureAwait(false);
+                    ref endpoint);
 
-                if (result.RemoteEndPoint is not IPEndPoint src)
+                if (endpoint is not IPEndPoint src)
                 {
                     continue;
                 }
@@ -205,17 +208,17 @@ public sealed class UdpTransport : IRtpsTransport
                     ? Locator.FromUdpV4(src.Address, (uint)src.Port)
                     : Locator.FromUdpV6(src.Address, (uint)src.Port);
 
-                Received?.Invoke(buffer.AsMemory(0, result.ReceivedBytes), sourceLocator);
+                Received?.Invoke(buffer.AsMemory(0, receivedBytes), sourceLocator);
             }
-            catch (OperationCanceledException)
+            catch (SocketException ex) when (ex.SocketErrorCode is SocketError.TimedOut or SocketError.WouldBlock)
+            {
+                continue;
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.OperationAborted)
             {
                 break;
             }
             catch (ObjectDisposedException)
-            {
-                break;
-            }
-            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.OperationAborted)
             {
                 break;
             }

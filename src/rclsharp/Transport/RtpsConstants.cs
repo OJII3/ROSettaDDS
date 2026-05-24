@@ -10,6 +10,9 @@ public static class RtpsConstants
     /// <summary>Port Base (PB)。SPDP 既定 7400。</summary>
     public const int PortBase = 7400;
 
+    /// <summary>UDP port の最大値。</summary>
+    public const int MaxUdpPort = ushort.MaxValue;
+
     /// <summary>Domain ID Gain (DG)。Domain あたり 250。</summary>
     public const int DomainGain = 250;
 
@@ -38,7 +41,7 @@ public static class RtpsConstants
     public const int MinDomainId = 0;
     public const int MaxDomainId = 232;
 
-    /// <summary>有効な Participant ID 範囲 (0〜119、ポートが 65535 を超えない範囲)。</summary>
+    /// <summary>有効な Participant ID 範囲 (0〜119)。最終的なポート範囲は domain との組み合わせで検証する。</summary>
     public const int MinParticipantId = 0;
     public const int MaxParticipantId = 119;
 }
