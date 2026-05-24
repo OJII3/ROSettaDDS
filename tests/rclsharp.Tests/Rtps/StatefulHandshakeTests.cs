@@ -378,6 +378,89 @@ public class StatefulHandshakeTests
         }
     }
 
+    [Fact]
+    public void Reader_は_GAP_を受けると欠損SNを解消する()
+    {
+        var s = CreateSetup();
+        var writerGuid = new Guid(s.WriterPrefix, s.WriterEntityId);
+        var reader = new StatefulReader(
+            replyTransport: s.ReaderTransport,
+            version: ProtocolVersion.V2_4,
+            vendorId: VendorId.Rclsharp,
+            localPrefix: s.ReaderPrefix,
+            readerEntityId: s.ReaderEntityId,
+            ackNackFallbackDestination: s.WriterLocator);
+        using (reader)
+        {
+            reader.MatchWriter(writerGuid, s.WriterLocator);
+            reader.ProcessPacket(BuildDataPacket(
+                s.WriterPrefix,
+                s.WriterEntityId,
+                s.ReaderEntityId,
+                new SequenceNumber(1),
+                new byte[] { 1 }));
+            reader.ProcessPacket(BuildDataPacket(
+                s.WriterPrefix,
+                s.WriterEntityId,
+                s.ReaderEntityId,
+                new SequenceNumber(3),
+                new byte[] { 3 }));
+            reader.ProcessPacket(BuildHeartbeatPacket(
+                s.WriterPrefix,
+                s.WriterEntityId,
+                s.ReaderEntityId,
+                first: new SequenceNumber(1),
+                last: new SequenceNumber(5)));
+
+            var proxy = reader.GetWriterProxy(writerGuid);
+            proxy.Should().NotBeNull();
+            proxy!.MissingSequenceNumbers().Select(sn => sn.Value).Should().Equal(2L, 4L, 5L);
+
+            reader.ProcessPacket(BuildGapPacket(
+                s.WriterPrefix,
+                s.WriterEntityId,
+                s.ReaderEntityId,
+                gapStart: new SequenceNumber(2),
+                gapList: new SequenceNumberSet(new SequenceNumber(3), 0, Array.Empty<uint>())));
+
+            proxy.MissingSequenceNumbers().Select(sn => sn.Value).Should().Equal(4L, 5L);
+            proxy.BuildAckNackBitmap().BitmapBase.Value.Should().Be(4L);
+        }
+    }
+
+    [Fact]
+    public async Task Writer_は_MTU超_payload_を_DATA_FRAG_で送信する()
+    {
+        var s = CreateSetup();
+        var (writer, reader) = BuildPair(s, heartbeatPeriod: TimeSpan.FromMilliseconds(50));
+        using (writer)
+        using (reader)
+        {
+            int dataFragCount = 0;
+            s.ReaderTransport.Received += (packet, _) =>
+            {
+                var rtpsReader = new RtpsMessageReader(packet.Span);
+                while (rtpsReader.TryReadNext(out var header, out var ignoredBody))
+                {
+                    if (header.Kind == SubmessageKind.DataFrag)
+                    {
+                        Interlocked.Increment(ref dataFragCount);
+                    }
+                }
+            };
+
+            var payload = Enumerable.Range(0, 5000).Select(i => (byte)(i & 0xFF)).ToArray();
+            var receivedTcs = new TaskCompletionSource<CacheChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+            reader.PayloadReceived += change => receivedTcs.TrySetResult(change);
+
+            await writer.WriteAsync(payload);
+
+            var change = await receivedTcs.Task.WaitAsync(ReceiveTimeout);
+            change.SerializedPayload.ToArray().Should().Equal(payload);
+            Volatile.Read(ref dataFragCount).Should().BeGreaterThan(1);
+        }
+    }
+
     private static byte[] BuildAckNackPacket(
         GuidPrefix sourcePrefix,
         EntityId readerEntityId,
@@ -392,6 +475,59 @@ public class StatefulHandshakeTests
             readerSnState,
             count: 1,
             final: false));
+        return writer.WrittenSpan.ToArray();
+    }
+
+    private static byte[] BuildDataPacket(
+        GuidPrefix sourcePrefix,
+        EntityId writerEntityId,
+        EntityId readerEntityId,
+        SequenceNumber sequenceNumber,
+        ReadOnlyMemory<byte> payload)
+    {
+        var buffer = new byte[1500];
+        var writer = new RtpsMessageWriter(buffer, ProtocolVersion.V2_4, VendorId.Rclsharp, sourcePrefix);
+        writer.WriteData(new DataSubmessage(
+            readerEntityId,
+            writerEntityId,
+            sequenceNumber,
+            payload));
+        return writer.WrittenSpan.ToArray();
+    }
+
+    private static byte[] BuildHeartbeatPacket(
+        GuidPrefix sourcePrefix,
+        EntityId writerEntityId,
+        EntityId readerEntityId,
+        SequenceNumber first,
+        SequenceNumber last)
+    {
+        var buffer = new byte[1500];
+        var writer = new RtpsMessageWriter(buffer, ProtocolVersion.V2_4, VendorId.Rclsharp, sourcePrefix);
+        writer.WriteHeartbeat(new HeartbeatSubmessage(
+            readerEntityId,
+            writerEntityId,
+            first,
+            last,
+            count: 1,
+            final: false));
+        return writer.WrittenSpan.ToArray();
+    }
+
+    private static byte[] BuildGapPacket(
+        GuidPrefix sourcePrefix,
+        EntityId writerEntityId,
+        EntityId readerEntityId,
+        SequenceNumber gapStart,
+        SequenceNumberSet gapList)
+    {
+        var buffer = new byte[1500];
+        var writer = new RtpsMessageWriter(buffer, ProtocolVersion.V2_4, VendorId.Rclsharp, sourcePrefix);
+        writer.WriteGap(new GapSubmessage(
+            readerEntityId,
+            writerEntityId,
+            gapStart,
+            gapList));
         return writer.WrittenSpan.ToArray();
     }
 

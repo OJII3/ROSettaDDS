@@ -194,6 +194,22 @@ public sealed class StatefulReader : IDisposable
                         pendingAcknacks.Add((proxy, ackPacket));
                         break;
                     }
+                case SubmessageKind.Gap:
+                    {
+                        var gap = GapSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
+                        if (!gap.ReaderEntityId.Equals(EntityId.Unknown)
+                            && !gap.ReaderEntityId.Equals(_readerEntityId))
+                        {
+                            continue;
+                        }
+                        var writerGuid = new Guid(sourcePrefix, gap.WriterEntityId);
+                        WriterProxy? proxy;
+                        lock (_matchedLock) { _matched.TryGetValue(writerGuid, out proxy); }
+                        if (proxy is null) continue;
+
+                        proxy.MarkGap(gap.GapStart, gap.GapList);
+                        break;
+                    }
                 default:
                     break;
             }

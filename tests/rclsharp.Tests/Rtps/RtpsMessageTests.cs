@@ -63,6 +63,65 @@ public class RtpsMessageTests
     }
 
     [Fact]
+    public void InfoTimestamp_invalidate_length_0_の後続_DATA_を読める()
+    {
+        Span<byte> buf = stackalloc byte[256];
+        var w = new RtpsMessageWriter(buf, ProtocolVersion.V2_4, VendorId.EProsimaFastDds, SrcPrefix);
+        var data = new DataSubmessage(
+            EntityId.Unknown,
+            new EntityId(0x0000_0103u),
+            new SequenceNumber(1L),
+            serializedPayload: new byte[] { 0x00, 0x01, 0x00, 0x00, 0xAA });
+
+        w.WriteInfoTimestamp(InfoTimestampSubmessage.CreateInvalidate());
+        w.WriteData(data);
+
+        var r = new RtpsMessageReader(w.WrittenSpan);
+        r.TryReadNext(out var hdr1, out var body1).Should().BeTrue();
+        hdr1.Kind.Should().Be(SubmessageKind.InfoTimestamp);
+        hdr1.Length.Should().Be(0);
+        body1.Length.Should().Be(0);
+        InfoTimestampSubmessage.ReadBody(body1, hdr1.Endianness, hdr1.Flags).Invalidate.Should().BeTrue();
+
+        r.TryReadNext(out var hdr2, out var body2).Should().BeTrue();
+        hdr2.Kind.Should().Be(SubmessageKind.Data);
+        DataSubmessage.ReadBody(body2, hdr2.Endianness, hdr2.Flags)
+            .SerializedPayload.ToArray().Should().Equal(data.SerializedPayload.ToArray());
+    }
+
+    [Fact]
+    public void Pad_length_0_の後続_DATA_を読める()
+    {
+        var data = new DataSubmessage(
+            EntityId.Unknown,
+            new EntityId(0x0000_0103u),
+            new SequenceNumber(2L),
+            serializedPayload: new byte[] { 0x00, 0x01, 0x00, 0x00, 0xBB });
+        var buf = new byte[RtpsHeader.Size + SubmessageHeader.Size + SubmessageHeader.Size + data.BodySize];
+        RtpsHeader.Write(buf, ProtocolVersion.V2_4, VendorId.EProsimaFastDds, SrcPrefix);
+        new SubmessageHeader(SubmessageKind.Pad, SubmessageFlags.Endianness, 0)
+            .WriteTo(buf.AsSpan(RtpsHeader.Size, SubmessageHeader.Size));
+        new SubmessageHeader(
+                SubmessageKind.Data,
+                (byte)(SubmessageFlags.Endianness | data.ExtraFlags),
+                (ushort)data.BodySize)
+            .WriteTo(buf.AsSpan(RtpsHeader.Size + SubmessageHeader.Size, SubmessageHeader.Size));
+        data.WriteBody(
+            buf.AsSpan(RtpsHeader.Size + SubmessageHeader.Size + SubmessageHeader.Size, data.BodySize),
+            CdrEndianness.LittleEndian);
+
+        var r = new RtpsMessageReader(buf);
+        r.TryReadNext(out var hdr1, out var body1).Should().BeTrue();
+        hdr1.Kind.Should().Be(SubmessageKind.Pad);
+        body1.Length.Should().Be(0);
+
+        r.TryReadNext(out var hdr2, out var body2).Should().BeTrue();
+        hdr2.Kind.Should().Be(SubmessageKind.Data);
+        DataSubmessage.ReadBody(body2, hdr2.Endianness, hdr2.Flags)
+            .SerializedPayload.ToArray().Should().Equal(data.SerializedPayload.ToArray());
+    }
+
+    [Fact]
     public void Data_と_InfoDestination_を含む_message_の往復()
     {
         Span<byte> buf = stackalloc byte[256];

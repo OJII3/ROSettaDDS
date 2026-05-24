@@ -45,6 +45,22 @@ public sealed class WriterProxy
         lock (_lock) { return _received.Add(sn.Value); }
     }
 
+    /// <summary>Writer から GAP として通知された SN を、今後要求しないものとして扱う。</summary>
+    public void MarkGap(SequenceNumber gapStart, SequenceNumberSet gapList)
+    {
+        lock (_lock)
+        {
+            for (long sn = gapStart.Value; sn < gapList.BitmapBase.Value; sn++)
+            {
+                _received.Add(sn);
+            }
+            foreach (var sn in gapList.EnumerateSet())
+            {
+                _received.Add(sn.Value);
+            }
+        }
+    }
+
     /// <summary>HEARTBEAT で通知された SN 範囲を保存する。</summary>
     public void UpdateHeartbeatRange(SequenceNumber firstSn, SequenceNumber lastSn)
     {

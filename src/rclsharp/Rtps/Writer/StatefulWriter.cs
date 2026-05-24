@@ -22,6 +22,7 @@ namespace Rclsharp.Rtps.Writer;
 public sealed class StatefulWriter : IDisposable
 {
     public const int SendBufferSize = 1500;
+    public const int DataFragPayloadSize = 1024;
 
     private readonly IRtpsTransport _transport;
     private readonly Locator _multicastDestination;
@@ -329,28 +330,51 @@ public sealed class StatefulWriter : IDisposable
 
     private async ValueTask SendDataToDestinationAsync(CacheChange change, EntityId readerEntityId, Locator destination, CancellationToken cancellationToken)
     {
-        var packet = BuildDataPacket(change, readerEntityId);
-        try
+        foreach (var packet in BuildDataPackets(change, readerEntityId))
         {
-            await _transport.SendAsync(packet, destination, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            _logger.Error("StatefulWriter DATA send failed", ex);
+            try
+            {
+                await _transport.SendAsync(packet, destination, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.Error("StatefulWriter DATA send failed", ex);
+            }
         }
     }
 
-    /// <summary>DATA メッセージ (INFO_TS + DATA) を組み立てる。</summary>
-    private byte[] BuildDataPacket(CacheChange change, EntityId readerEntityId)
+    /// <summary>DATA または DATA_FRAG メッセージを組み立てる。</summary>
+    private IReadOnlyList<byte[]> BuildDataPackets(CacheChange change, EntityId readerEntityId)
     {
-        var buffer = new byte[SendBufferSize];
-        var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
-        writer.WriteInfoTimestamp(new InfoTimestampSubmessage(change.SourceTimestamp));
         bool isAlive = change.Kind == ChangeKind.Alive;
         ReadOnlyMemory<byte> inlineQos = isAlive
             ? default
             : DataSubmessage.BuildStatusInfoInlineQos(ToStatusInfo(change.Kind), CdrEndianness.LittleEndian);
+
+        int dataMessageSize = RtpsHeader.Size
+            + SubmessageHeader.Size + Time.Size
+            + SubmessageHeader.Size + DataSubmessage.FixedHeaderSize
+            + inlineQos.Length
+            + change.SerializedPayload.Length;
+        if (dataMessageSize <= SendBufferSize)
+        {
+            return new[] { BuildDataPacket(change, readerEntityId, inlineQos, isAlive) };
+        }
+
+        return BuildDataFragPackets(change, readerEntityId, inlineQos, isAlive);
+    }
+
+    /// <summary>DATA メッセージ (INFO_TS + DATA) を組み立てる。</summary>
+    private byte[] BuildDataPacket(
+        CacheChange change,
+        EntityId readerEntityId,
+        ReadOnlyMemory<byte> inlineQos,
+        bool isAlive)
+    {
+        var buffer = new byte[SendBufferSize];
+        var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
+        writer.WriteInfoTimestamp(new InfoTimestampSubmessage(change.SourceTimestamp));
         var data = new DataSubmessage(
             readerEntityId: readerEntityId,
             writerEntityId: _writerEntityId,
@@ -364,6 +388,62 @@ public sealed class StatefulWriter : IDisposable
         var packet = new byte[writer.BytesWritten];
         writer.WrittenSpan.CopyTo(packet);
         return packet;
+    }
+
+    private IReadOnlyList<byte[]> BuildDataFragPackets(
+        CacheChange change,
+        EntityId readerEntityId,
+        ReadOnlyMemory<byte> inlineQos,
+        bool isAlive)
+    {
+        if (change.SerializedPayload.Length == 0)
+        {
+            return Array.Empty<byte[]>();
+        }
+        int firstFragmentCapacity = SendBufferSize
+            - RtpsHeader.Size
+            - SubmessageHeader.Size
+            - DataFragSubmessage.FixedHeaderSize
+            - inlineQos.Length;
+        int payloadFragmentSize = Math.Min(DataFragPayloadSize, firstFragmentCapacity);
+        if (payloadFragmentSize <= 0)
+        {
+            throw new InvalidOperationException(
+                $"DATA_FRAG inline QoS length {inlineQos.Length} leaves no room for payload.");
+        }
+
+        int fragmentCount = (change.SerializedPayload.Length + payloadFragmentSize - 1) / payloadFragmentSize;
+        var packets = new byte[fragmentCount][];
+        ushort fragmentSize = checked((ushort)payloadFragmentSize);
+        uint sampleSize = checked((uint)change.SerializedPayload.Length);
+
+        for (int i = 0; i < fragmentCount; i++)
+        {
+            int offset = i * payloadFragmentSize;
+            int length = Math.Min(payloadFragmentSize, change.SerializedPayload.Length - offset);
+            var fragmentPayload = change.SerializedPayload.Slice(offset, length);
+            var fragmentInlineQos = i == 0 ? inlineQos : default;
+            var dataFrag = new DataFragSubmessage(
+                readerEntityId: readerEntityId,
+                writerEntityId: _writerEntityId,
+                writerSn: change.SequenceNumber,
+                fragmentStartingNumber: checked((uint)i + 1u),
+                fragmentsInSubmessage: 1,
+                fragmentSize: fragmentSize,
+                sampleSize: sampleSize,
+                serializedPayloadFragment: fragmentPayload,
+                inlineQos: fragmentInlineQos,
+                keyPresent: !isAlive);
+
+            var buffer = new byte[SendBufferSize];
+            var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
+            writer.WriteDataFrag(dataFrag);
+            var packet = new byte[writer.BytesWritten];
+            writer.WrittenSpan.CopyTo(packet);
+            packets[i] = packet;
+        }
+
+        return packets;
     }
 
     private static uint ToStatusInfo(ChangeKind kind)

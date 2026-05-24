@@ -51,9 +51,7 @@ public ref struct RtpsMessageReader
         var hdr = SubmessageHeader.Read(_buffer.Slice(_position, SubmessageHeader.Size));
         _position += SubmessageHeader.Size;
 
-        int bodyLength = hdr.IsLengthExtendedToEnd
-            ? _buffer.Length - _position
-            : hdr.Length;
+        int bodyLength = ResolveBodyLength(hdr);
 
         if (_position + bodyLength > _buffer.Length)
         {
@@ -66,5 +64,21 @@ public ref struct RtpsMessageReader
         body = _buffer.Slice(_position, bodyLength);
         _position += bodyLength;
         return true;
+    }
+
+    private int ResolveBodyLength(SubmessageHeader header)
+    {
+        if (header.Length != 0)
+        {
+            return header.Length;
+        }
+
+        return header.Kind switch
+        {
+            SubmessageKind.Pad => 0,
+            SubmessageKind.InfoTimestamp
+                when (header.Flags & SubmessageFlags.InfoTsInvalidate) != 0 => 0,
+            _ => _buffer.Length - _position,
+        };
     }
 }
