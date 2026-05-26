@@ -31,6 +31,7 @@ public ref struct ParameterListReader
     public float ReadFloat() => _reader.ReadFloat();
     public double ReadDouble() => _reader.ReadDouble();
     public string ReadString() => _reader.ReadString();
+    public string ReadString(int maxBytes) => _reader.ReadString(maxBytes);
     public void AlignTo(int alignment) => _reader.AlignTo(alignment);
     public void Skip(int count) => _reader.Skip(count);
 

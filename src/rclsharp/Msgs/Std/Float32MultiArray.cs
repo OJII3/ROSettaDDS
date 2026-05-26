@@ -56,7 +56,7 @@ public sealed class Float32MultiArraySerializer : ICdrSerializer<Float32MultiArr
     public void Deserialize(ref CdrReader reader, out Float32MultiArray value)
     {
         MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
-        int count = reader.ReadSequenceLength();
+        int count = reader.ReadSequenceLength(elementSize: 4, elementAlignment: 4);
         var data = count == 0 ? Array.Empty<float>() : new float[count];
         for (int i = 0; i < count; i++)
         {

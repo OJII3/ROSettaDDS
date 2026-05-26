@@ -97,4 +97,22 @@ public class MultiArrayLayoutTests
         read.Dim[1].Label.Should().Be("cols");
         read.DataOffset.Should().Be(1u);
     }
+
+    [Fact]
+    public void MultiArrayLayout_dim_countが上限を超えたら拒否する()
+    {
+        Span<byte> buf = stackalloc byte[8];
+        var w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        w.WriteSequenceLength(3);
+        byte[] bytes = buf[..w.BytesWritten].ToArray();
+
+        Assert.Throws<InvalidDataException>(() =>
+        {
+            var r = new CdrReader(
+                bytes,
+                CdrEndianness.LittleEndian,
+                limits: new CdrReadLimits(maxSequenceElements: 2));
+            MultiArrayLayoutSerializer.Instance.Deserialize(ref r, out _);
+        });
+    }
 }

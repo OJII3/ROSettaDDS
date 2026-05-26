@@ -56,7 +56,7 @@ public sealed class UInt64MultiArraySerializer : ICdrSerializer<UInt64MultiArray
     public void Deserialize(ref CdrReader reader, out UInt64MultiArray value)
     {
         MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
-        int count = reader.ReadSequenceLength();
+        int count = reader.ReadSequenceLength(elementSize: 8, elementAlignment: 8);
         var data = count == 0 ? Array.Empty<ulong>() : new ulong[count];
         for (int i = 0; i < count; i++)
         {

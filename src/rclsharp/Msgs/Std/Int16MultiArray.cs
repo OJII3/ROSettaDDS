@@ -56,7 +56,7 @@ public sealed class Int16MultiArraySerializer : ICdrSerializer<Int16MultiArray>
     public void Deserialize(ref CdrReader reader, out Int16MultiArray value)
     {
         MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
-        int count = reader.ReadSequenceLength();
+        int count = reader.ReadSequenceLength(elementSize: 2, elementAlignment: 2);
         var data = count == 0 ? Array.Empty<short>() : new short[count];
         for (int i = 0; i < count; i++)
         {

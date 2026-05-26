@@ -52,7 +52,7 @@ public sealed class ByteMultiArraySerializer : ICdrSerializer<ByteMultiArray>
     public void Deserialize(ref CdrReader reader, out ByteMultiArray value)
     {
         MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
-        int count = reader.ReadSequenceLength();
+        int count = reader.ReadSequenceLength(elementSize: 1, elementAlignment: 1);
         var data = count == 0 ? Array.Empty<byte>() : reader.ReadRawBytes(count).ToArray();
         value = new ByteMultiArray(layout, data);
     }

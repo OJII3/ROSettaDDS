@@ -13,14 +13,24 @@ public ref struct CdrReader
 {
     private readonly ReadOnlySpan<byte> _buffer;
     private readonly int _cdrOrigin;
+    private readonly CdrReadLimits _limits;
     private int _position;
 
     public CdrEndianness Endianness { get; }
 
-    public CdrReader(ReadOnlySpan<byte> buffer, CdrEndianness endianness, int cdrOrigin = 0)
+    public CdrReader(
+        ReadOnlySpan<byte> buffer,
+        CdrEndianness endianness,
+        int cdrOrigin = 0,
+        CdrReadLimits? limits = null)
     {
+        if (cdrOrigin < 0 || cdrOrigin > buffer.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cdrOrigin));
+        }
         _buffer = buffer;
         _cdrOrigin = cdrOrigin;
+        _limits = limits ?? CdrReadLimits.Default;
         _position = cdrOrigin;
         Endianness = endianness;
     }
@@ -49,10 +59,14 @@ public ref struct CdrReader
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void EnsureAvailable(int byteCount)
     {
-        if (_position + byteCount > _buffer.Length)
+        if (byteCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(byteCount));
+        }
+        if (byteCount > Remaining)
         {
             throw new InvalidOperationException(
-                $"CdrReader buffer underflow: needed {byteCount} bytes at position {_position} but only {_buffer.Length - _position} bytes remain.");
+                $"CdrReader buffer underflow: needed {byteCount} bytes at position {_position} but only {Remaining} bytes remain.");
         }
     }
 
@@ -184,16 +198,37 @@ public ref struct CdrReader
     /// 戻り値は NUL を除いた文字列。
     /// </summary>
     public string ReadString()
+        => ReadString(_limits.MaxStringBytes);
+
+    public string ReadString(int maxBytes)
     {
+        if (maxBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        }
+
         uint length = ReadUInt32();
         if (length == 0)
         {
-            // 仕様外だが防御的に空文字を返す
-            return string.Empty;
+            throw new InvalidDataException("CDR string length must include a NUL terminator.");
+        }
+        if (length > int.MaxValue)
+        {
+            throw new InvalidDataException($"CDR string length {length} exceeds Int32.MaxValue.");
+        }
+        if (length > maxBytes)
+        {
+            throw new InvalidDataException(
+                $"CDR string length {length} exceeds limit {maxBytes}.");
         }
         EnsureAvailable((int)length);
+
         // length は NUL 終端を含む
         int payloadLength = (int)length - 1;
+        if (_buffer[_position + payloadLength] != 0)
+        {
+            throw new InvalidDataException("CDR string is not NUL terminated.");
+        }
         ReadOnlySpan<byte> payload = _buffer.Slice(_position, payloadLength);
         _position += (int)length; // NUL 含めて進める
         return payloadLength == 0 ? string.Empty : Encoding.UTF8.GetString(payload);
@@ -205,9 +240,60 @@ public ref struct CdrReader
         uint length = ReadUInt32();
         if (length > int.MaxValue)
         {
-            throw new InvalidOperationException(
+            throw new InvalidDataException(
                 $"Sequence length {length} exceeds Int32.MaxValue.");
         }
+        if (length > _limits.MaxSequenceElements)
+        {
+            throw new InvalidDataException(
+                $"Sequence length {length} exceeds limit {_limits.MaxSequenceElements}.");
+        }
         return (int)length;
+    }
+
+    /// <summary>
+    /// 固定長要素 sequence の長さを読み、確保前に payload の上限と残量を検証する。
+    /// </summary>
+    public int ReadSequenceLength(int elementSize, int elementAlignment)
+    {
+        int count = ReadSequenceLength();
+        EnsureSequencePayloadAvailable(count, elementSize, elementAlignment);
+        return count;
+    }
+
+    public void EnsureSequencePayloadAvailable(int count, int elementSize, int elementAlignment)
+    {
+        if (count < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+        if (elementSize <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(elementSize));
+        }
+        if (elementAlignment <= 0 || (elementAlignment & (elementAlignment - 1)) != 0)
+        {
+            throw new ArgumentException("Alignment must be a positive power of two.", nameof(elementAlignment));
+        }
+        if (count == 0)
+        {
+            return;
+        }
+
+        long payloadBytes = (long)count * elementSize;
+        if (payloadBytes > _limits.MaxSequenceBytes)
+        {
+            throw new InvalidDataException(
+                $"Sequence payload size {payloadBytes} bytes exceeds limit {_limits.MaxSequenceBytes}.");
+        }
+
+        int offset = StreamOffset;
+        int padding = (elementAlignment - (offset & (elementAlignment - 1))) & (elementAlignment - 1);
+        long requiredBytes = padding + payloadBytes;
+        if (requiredBytes > Remaining)
+        {
+            throw new InvalidDataException(
+                $"Sequence payload requires {requiredBytes} bytes at position {_position} but only {Remaining} bytes remain.");
+        }
     }
 }

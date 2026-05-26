@@ -24,9 +24,13 @@ public class MultiArrayTests
         return buf[..w.BytesWritten].ToArray();
     }
 
-    private static T Deserialize<T>(ICdrSerializer<T> serializer, ReadOnlySpan<byte> bytes, CdrEndianness endian)
+    private static T Deserialize<T>(
+        ICdrSerializer<T> serializer,
+        ReadOnlySpan<byte> bytes,
+        CdrEndianness endian,
+        CdrReadLimits? limits = null)
     {
-        var r = new CdrReader(bytes, endian);
+        var r = new CdrReader(bytes, endian, limits: limits);
         serializer.Deserialize(ref r, out T value);
         return value;
     }
@@ -59,6 +63,24 @@ public class MultiArrayTests
         read.Layout.Dim.Should().HaveCount(1);
         read.Layout.Dim[0].Label.Should().Be("d");
         read.Data.Should().Equal((byte)1, (byte)2, (byte)3);
+    }
+
+    [Fact]
+    public void ByteMultiArray_data_payloadが上限を超えたら確保前に拒否する()
+    {
+        byte[] bytes =
+        [
+            .. EmptyLayoutLE,
+            0x03, 0x00, 0x00, 0x00,
+            0x01, 0x02, 0x03,
+        ];
+
+        Assert.Throws<InvalidDataException>(() =>
+            Deserialize(
+                ByteMultiArraySerializer.Instance,
+                bytes,
+                CdrEndianness.LittleEndian,
+                new CdrReadLimits(maxSequenceBytes: 2)));
     }
 
     [Fact]
@@ -191,6 +213,19 @@ public class MultiArrayTests
     }
 
     [Fact]
+    public void Int32MultiArray_data_countに対して残量不足なら確保前に拒否する()
+    {
+        byte[] bytes =
+        [
+            .. EmptyLayoutLE,
+            0x02, 0x00, 0x00, 0x00,
+        ];
+
+        Assert.Throws<InvalidDataException>(() =>
+            Deserialize(Int32MultiArraySerializer.Instance, bytes, CdrEndianness.LittleEndian));
+    }
+
+    [Fact]
     public void UInt32MultiArray_LE_bit_exact()
     {
         var msg = new UInt32MultiArray(EmptyLayout(), [0xDEADBEEFu]);
@@ -317,5 +352,20 @@ public class MultiArrayTests
         var bytes = Serialize(Float64MultiArraySerializer.Instance, in msg, endian);
         Deserialize(Float64MultiArraySerializer.Instance, bytes, endian)
             .Data.Should().Equal(msg.Data);
+    }
+
+    [Fact]
+    public void Float64MultiArray_data_payloadは8バイトalignment_padding込みで残量検証する()
+    {
+        byte[] bytes =
+        [
+            .. EmptyLayoutLE,
+            0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+        ];
+
+        Assert.Throws<InvalidDataException>(() =>
+            Deserialize(Float64MultiArraySerializer.Instance, bytes, CdrEndianness.LittleEndian));
     }
 }
