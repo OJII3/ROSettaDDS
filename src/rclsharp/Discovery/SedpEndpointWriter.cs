@@ -15,11 +15,14 @@ namespace Rclsharp.Discovery;
 /// Phase 8 で Reliable Stateful Writer ベースに変更:
 /// 各 endpoint = 1 サンプルとして history に追加し、新規 reader が match されたら NACK で再送される
 /// (TRANSIENT_LOCAL に近い挙動)。
+/// 同一 endpoint GUID の履歴は最新状態だけを保持し、古い alive/unregister は再送対象から外す。
 /// </summary>
 public sealed class SedpEndpointWriter : IDisposable
 {
     private readonly StatefulWriter _stateful;
     private readonly ILogger _logger;
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private readonly Dictionary<Guid, SequenceNumber> _latestEndpointSequences = new();
     private bool _disposed;
 
     /// <summary>内部の StatefulWriter (matching 等の操作用)。</summary>
@@ -76,7 +79,11 @@ public sealed class SedpEndpointWriter : IDisposable
     {
         ThrowIfDisposed();
         var payload = SerializeEndpoint(endpoint);
-        await _stateful.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+        await WriteLatestEndpointStateAsync(
+            endpoint.EndpointGuid,
+            payload,
+            ChangeKind.Alive,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask UnregisterEndpointAsync(
@@ -85,7 +92,11 @@ public sealed class SedpEndpointWriter : IDisposable
     {
         ThrowIfDisposed();
         var payload = SerializeEndpointKey(endpoint);
-        await _stateful.WriteAsync(payload, ChangeKind.NotAliveUnregistered, cancellationToken).ConfigureAwait(false);
+        await WriteLatestEndpointStateAsync(
+            endpoint.EndpointGuid,
+            payload,
+            ChangeKind.NotAliveUnregistered,
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>WriterHistoryCache 上の累積件数 (テスト/デバッグ用)。</summary>
@@ -100,6 +111,31 @@ public sealed class SedpEndpointWriter : IDisposable
         if (_disposed) return;
         _disposed = true;
         _stateful.Dispose();
+        _writeGate.Dispose();
+    }
+
+    private async ValueTask WriteLatestEndpointStateAsync(
+        Guid endpointGuid,
+        ReadOnlyMemory<byte> payload,
+        ChangeKind kind,
+        CancellationToken cancellationToken)
+    {
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await _stateful.WriteAsync(payload, kind, cancellationToken).ConfigureAwait(false);
+            var latestSequence = _stateful.History.LastSequenceNumber;
+            if (_latestEndpointSequences.TryGetValue(endpointGuid, out var previousSequence))
+            {
+                _stateful.History.Remove(previousSequence);
+            }
+            _latestEndpointSequences[endpointGuid] = latestSequence;
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
     }
 
     /// <summary>encap PL_CDR_LE 4B + DiscoveredEndpointData を 1 つの byte[] にする。</summary>

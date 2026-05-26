@@ -1,5 +1,6 @@
 using Rclsharp.Cdr;
 using Rclsharp.Common;
+using Rclsharp.Common.Logging;
 using Rclsharp.Rtps.Reader;
 
 using Guid = Rclsharp.Common.Guid;
@@ -16,6 +17,8 @@ public sealed class Subscription<T> : IDisposable
     private readonly ICdrSerializer<T> _serializer;
     private readonly Action<T, GuidPrefix> _handler;
     private readonly Action<Guid, StatelessReader>? _unregisterEndpoint;
+    private readonly SynchronizationContext? _handlerContext;
+    private readonly ILogger _logger;
     private bool _disposed;
 
     public string TopicName { get; }
@@ -29,6 +32,8 @@ public sealed class Subscription<T> : IDisposable
         ICdrSerializer<T> serializer,
         Action<T, GuidPrefix> handler,
         Action<Guid, StatelessReader>? unregisterEndpoint = null,
+        SynchronizationContext? handlerContext = null,
+        ILogger? logger = null,
         bool autoStart = true)
     {
         TopicName = topicName;
@@ -37,6 +42,8 @@ public sealed class Subscription<T> : IDisposable
         _serializer = serializer;
         _handler = handler;
         _unregisterEndpoint = unregisterEndpoint;
+        _handlerContext = handlerContext;
+        _logger = logger ?? NullLogger.Instance;
         _reader.PayloadReceived += OnPayloadReceived;
         if (autoStart)
         {
@@ -46,14 +53,46 @@ public sealed class Subscription<T> : IDisposable
 
     private void OnPayloadReceived(ReadOnlyMemory<byte> payload, GuidPrefix sourcePrefix)
     {
+        T value;
         try
         {
-            T value = DeserializeWithEncapsulation(payload.Span);
+            value = DeserializeWithEncapsulation(payload.Span);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"Subscription failed to deserialize payload on topic {TopicName}", ex);
+            return;
+        }
+
+        if (_handlerContext is null)
+        {
+            InvokeHandler(value, sourcePrefix);
+            return;
+        }
+
+        _handlerContext.Post(
+            static state =>
+            {
+                var callback = (HandlerCallback)state!;
+                callback.Subscription.InvokeHandler(callback.Value, callback.SourcePrefix);
+            },
+            new HandlerCallback(this, value, sourcePrefix));
+    }
+
+    private void InvokeHandler(T value, GuidPrefix sourcePrefix)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
             _handler(value, sourcePrefix);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Phase 5 では握り潰し (logger を渡せるよう Phase 6+ で拡張)
+            _logger.Error($"Subscription handler failed on topic {TopicName}", ex);
         }
     }
 
@@ -82,5 +121,19 @@ public sealed class Subscription<T> : IDisposable
         _reader.PayloadReceived -= OnPayloadReceived;
         _unregisterEndpoint?.Invoke(Guid, _reader);
         _reader.Dispose();
+    }
+
+    private sealed class HandlerCallback
+    {
+        public HandlerCallback(Subscription<T> subscription, T value, GuidPrefix sourcePrefix)
+        {
+            Subscription = subscription;
+            Value = value;
+            SourcePrefix = sourcePrefix;
+        }
+
+        public Subscription<T> Subscription { get; }
+        public T Value { get; }
+        public GuidPrefix SourcePrefix { get; }
     }
 }

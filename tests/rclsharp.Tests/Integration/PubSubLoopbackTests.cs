@@ -52,6 +52,50 @@ public class PubSubLoopbackTests
         }
     }
 
+    private sealed class QueuedSynchronizationContext : SynchronizationContext
+    {
+        private readonly Queue<(SendOrPostCallback Callback, object? State)> _queue = new();
+
+        public int PendingCount
+        {
+            get
+            {
+                lock (_queue)
+                {
+                    return _queue.Count;
+                }
+            }
+        }
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            lock (_queue)
+            {
+                _queue.Enqueue((d, state));
+            }
+        }
+
+        public void Drain()
+        {
+            while (true)
+            {
+                SendOrPostCallback callback;
+                object? state;
+                lock (_queue)
+                {
+                    if (_queue.Count == 0)
+                    {
+                        return;
+                    }
+
+                    (callback, state) = _queue.Dequeue();
+                }
+
+                callback(state);
+            }
+        }
+    }
+
     private static TestEnv CreatePair()
     {
         var hub = new LoopbackHub();
@@ -121,6 +165,38 @@ public class PubSubLoopbackTests
 
         var received = await receivedTcs.Task.WaitAsync(ReceiveTimeout);
         received.Data.Should().Be("hello rclsharp");
+    }
+
+    [Fact]
+    public async Task Subscription_handler_を指定した_SynchronizationContext_へ配送する()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+        var context = new QueuedSynchronizationContext();
+        var receivedTcs = new TaskCompletionSource<StringMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var sub = pB.CreateSubscription<StringMessage>(
+            "context_chatter",
+            StringMessageSerializer.Instance,
+            (msg, _) => receivedTcs.TrySetResult(msg),
+            handlerContext: context);
+
+        using var pub = pA.CreatePublisher<StringMessage>("context_chatter", StringMessageSerializer.Instance);
+
+        pA.Start();
+        pB.Start();
+
+        await WaitUntilDiscoveredAsync(pA, pB, "rt/context_chatter");
+
+        await pub.PublishAsync(new StringMessage("main-thread"));
+
+        await WaitUntilAsync(() => context.PendingCount > 0);
+        receivedTcs.Task.IsCompleted.Should().BeFalse("handler は context を drain するまで実行されない");
+
+        context.Drain();
+        var received = await receivedTcs.Task.WaitAsync(ReceiveTimeout);
+        received.Data.Should().Be("main-thread");
     }
 
     [Fact]
@@ -490,5 +566,21 @@ public class PubSubLoopbackTests
         writerParticipant.DiscoveryDb.ReaderSnapshot().Should()
             .Contain(ep => ep.Data.TopicName == ddsTopic
                         && ep.Data.ParticipantGuid.Prefix.Equals(readerParticipant.GuidPrefix));
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + ReceiveTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition())
+            {
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        condition().Should().BeTrue();
     }
 }

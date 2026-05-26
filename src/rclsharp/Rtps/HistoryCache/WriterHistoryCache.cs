@@ -106,6 +106,15 @@ public sealed class WriterHistoryCache
         }
     }
 
+    /// <summary>指定 SN のサンプルを破棄する。存在して削除できた場合は true。</summary>
+    public bool Remove(SequenceNumber sn)
+    {
+        lock (_lock)
+        {
+            return _changes.Remove(sn.Value);
+        }
+    }
+
     private void EvictIfNeeded()
     {
         if (MaxSamples <= 0) return;

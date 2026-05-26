@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using Rclsharp.Cdr;
 using Rclsharp.Common;
@@ -207,6 +208,66 @@ public class StatefulHandshakeTests
 
         var snSet = proxy.BuildAckNackBitmap();
         snSet.BitmapBase.Value.Should().Be(4L);
+        snSet.NumBits.Should().Be(0);
+    }
+
+    [Fact]
+    public void WriterProxy_の_BuildAckNackBitmap_は_最大256bit_の範囲で欠損を表す()
+    {
+        var proxy = new WriterProxy(new Guid(GuidPrefix.Unknown, EntityId.Unknown));
+        proxy.UpdateHeartbeatRange(new SequenceNumber(1L), new SequenceNumber(3_000_000_000L));
+
+        var snSet = proxy.BuildAckNackBitmap();
+
+        snSet.BitmapBase.Value.Should().Be(1L);
+        snSet.NumBits.Should().Be(256);
+        snSet.IsSet(0).Should().BeTrue();
+        snSet.IsSet(255).Should().BeTrue();
+        snSet.IsSet(256).Should().BeFalse();
+    }
+
+    [Fact]
+    public void WriterProxy_の_MarkGap_は_巨大範囲を展開しない()
+    {
+        var proxy = new WriterProxy(new Guid(GuidPrefix.Unknown, EntityId.Unknown));
+        const long gapBitmapBase = 50_000_000L;
+        proxy.UpdateHeartbeatRange(new SequenceNumber(1L), new SequenceNumber(500L));
+
+        var elapsed = Stopwatch.StartNew();
+        proxy.MarkGap(
+            new SequenceNumber(100L),
+            new SequenceNumberSet(new SequenceNumber(gapBitmapBase), 0, Array.Empty<uint>()));
+        elapsed.Stop();
+
+        elapsed.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(1));
+        proxy.HighestContiguousReceived.Value.Should().Be(0L);
+        proxy.TrackedSatisfiedRangeCount.Should().Be(1);
+
+        var snSet = proxy.BuildAckNackBitmap();
+        snSet.BitmapBase.Value.Should().Be(1L);
+        snSet.NumBits.Should().Be(256);
+        snSet.IsSet(98).Should().BeTrue();   // 99 missing
+        snSet.IsSet(99).Should().BeFalse();  // 100 gap
+        snSet.IsSet(255).Should().BeFalse(); // 256 gap
+    }
+
+    [Fact]
+    public void WriterProxy_は_連続受信済みSNを保持し続けない()
+    {
+        var proxy = new WriterProxy(new Guid(GuidPrefix.Unknown, EntityId.Unknown));
+        const long receivedCount = 10_000L;
+        proxy.UpdateHeartbeatRange(new SequenceNumber(1L), new SequenceNumber(receivedCount));
+
+        for (long sn = 1L; sn <= receivedCount; sn++)
+        {
+            proxy.MarkReceived(new SequenceNumber(sn)).Should().BeTrue();
+        }
+
+        proxy.HighestContiguousReceived.Value.Should().Be(receivedCount);
+        proxy.TrackedSatisfiedRangeCount.Should().Be(0);
+
+        var snSet = proxy.BuildAckNackBitmap();
+        snSet.BitmapBase.Value.Should().Be(receivedCount + 1);
         snSet.NumBits.Should().Be(0);
     }
 
