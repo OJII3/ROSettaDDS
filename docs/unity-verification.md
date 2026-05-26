@@ -12,7 +12,10 @@
 
 ## 検証範囲
 
-初期の自動検証は `LoopbackHub` を使う。これは同一プロセス内で RTPS transport の契約を満たすため、Unity Editor のバッチ実行でも安定して通信経路を測れる。
+自動検証は用途ごとに 2 層に分ける。
+
+- EditMode は `LoopbackHub` を使う。これは同一プロセス内で RTPS transport の契約を満たすため、Unity Editor のバッチ実行でも安定して通信経路を測れる。
+- PlayMode は実 `UdpTransport` を使い、`MonoBehaviour.OnEnable` / `OnDisable` / `OnDestroy` 経由で participant lifecycle を通す。
 
 計測対象:
 
@@ -20,6 +23,7 @@
 - Smoke: 2 つの `DomainParticipant` 間で `StringMessage` を複数件送受信し、順序と件数を確認する。
 - Throughput: payload サイズ別に warmup 後の publish/subscribe batch を複数回実行し、受信完了までの経過時間、messages/sec、serialized bytes/sec、平均 ms/message を記録する。
 - Leak guard: participant / publisher / subscription / transport の create/dispose を繰り返し、full GC 後の managed heap と Unity mono used memory の retained delta を記録し、閾値を超えたら失敗させる。
+- Lifecycle smoke: 実 UDP loopback で publish/subscribe し、Play Mode の GameObject disable / destroy 後に participant と background receive loop が停止することを確認する。
 
 対象外:
 
@@ -35,6 +39,7 @@ Unity Editor が標準の Hub パスにある場合:
 
 ```sh
 scripts/unity/run_unity_editmode_tests.sh
+scripts/unity/run_unity_playmode_tests.sh
 ```
 
 Editor パスを明示する場合:
@@ -42,6 +47,8 @@ Editor パスを明示する場合:
 ```sh
 UNITY_EDITOR=/Applications/Unity/Hub/Editor/6000.3.7f1/Unity.app/Contents/MacOS/Unity \
   scripts/unity/run_unity_editmode_tests.sh
+UNITY_EDITOR=/Applications/Unity/Hub/Editor/6000.3.7f1/Unity.app/Contents/MacOS/Unity \
+  scripts/unity/run_unity_playmode_tests.sh
 ```
 
 `Ros2Unity` を Unity Editor で開いている間は、Unity の制約で同じ project path を batchmode から開けない。その場合は Editor を閉じるか、検証用に複製した project path を `UNITY_PROJECT_PATH` で指定する。
@@ -50,12 +57,15 @@ UNITY_EDITOR=/Applications/Unity/Hub/Editor/6000.3.7f1/Unity.app/Contents/MacOS/
 
 ```sh
 UNITY_USE_TEMP_PROJECT=1 scripts/unity/run_unity_editmode_tests.sh
+UNITY_USE_TEMP_PROJECT=1 scripts/unity/run_unity_playmode_tests.sh
 ```
 
 出力先:
 
 - `artifacts/unity/editmode-results.xml`
 - `artifacts/unity/unity-editmode.log`
+- `artifacts/unity/playmode-results.xml`
+- `artifacts/unity/unity-playmode.log`
 
 `artifacts/` は計測結果の生成物なのでコミットしない。
 

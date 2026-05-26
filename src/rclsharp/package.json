@@ -3,7 +3,7 @@
   "version": "0.0.1-alpha",
   "displayName": "rclsharp",
   "description": "ROS 2 compatible pure C# communication library (RTPS/DDS minimal implementation). No native dependencies.",
-  "unity": "2022.3",
+  "unity": "6000.3",
   "author": {
     "name": "OJII3",
     "url": "https://github.com/OJII3"
