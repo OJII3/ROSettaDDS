@@ -32,6 +32,7 @@ public class DataFragReassemblyBufferTests
 
         completed.Should().NotBeNull();
         completed!.Value.Payload.Should().Equal(sample);
+        buffer.BufferedSampleBytes.Should().Be(0);
     }
 
     [Fact]
@@ -74,6 +75,7 @@ public class DataFragReassemblyBufferTests
             WriterGuid,
             Fragment(sequenceNumber: 3, start: 2, count: 1, fragmentSize: 8, sample, payloadOffset: 4, payloadLength: 4),
             CdrEndianness.LittleEndian).Should().BeNull();
+        buffer.BufferedSampleBytes.Should().Be(0);
 
         buffer.Add(
             WriterGuid,
@@ -140,6 +142,59 @@ public class DataFragReassemblyBufferTests
 
         completed.Should().NotBeNull();
         completed!.Value.Payload.Should().Equal(secondSample);
+        buffer.BufferedSampleBytes.Should().Be(0);
+    }
+
+    [Fact]
+    public void MaxBufferedBytes_を超えるsampleは確保しない()
+    {
+        var buffer = new DataFragReassemblyBuffer(
+            new DataFragReassemblyOptions { MaxSampleSize = 16, MaxBufferedBytes = 8 });
+        var sample = Enumerable.Range(0, 12).Select(i => (byte)i).ToArray();
+
+        buffer.Add(
+            WriterGuid,
+            Fragment(sequenceNumber: 7, start: 1, count: 1, fragmentSize: 6, sample, payloadOffset: 0, payloadLength: 6),
+            CdrEndianness.LittleEndian).Should().BeNull();
+
+        buffer.BufferedSampleBytes.Should().Be(0);
+    }
+
+    [Fact]
+    public void MaxBufferedBytes_上限に近い場合は古いsampleを破棄してから確保する()
+    {
+        var now = new DateTime(2026, 5, 20, 0, 0, 0, DateTimeKind.Utc);
+        var buffer = new DataFragReassemblyBuffer(
+            new DataFragReassemblyOptions
+            {
+                MaxSampleSize = 16,
+                MaxBufferedBytes = 20,
+                MaxBufferedSamples = 10,
+            },
+            () => now);
+        var firstSample = Enumerable.Range(0, 12).Select(i => (byte)i).ToArray();
+        var secondSample = Enumerable.Range(20, 12).Select(i => (byte)i).ToArray();
+
+        buffer.Add(
+            WriterGuid,
+            Fragment(sequenceNumber: 8, start: 1, count: 1, fragmentSize: 6, firstSample, payloadOffset: 0, payloadLength: 6),
+            CdrEndianness.LittleEndian).Should().BeNull();
+        buffer.BufferedSampleBytes.Should().Be(12);
+
+        now += TimeSpan.FromMilliseconds(1);
+        buffer.Add(
+            WriterGuid,
+            Fragment(sequenceNumber: 9, start: 1, count: 1, fragmentSize: 6, secondSample, payloadOffset: 0, payloadLength: 6),
+            CdrEndianness.LittleEndian).Should().BeNull();
+        buffer.BufferedSampleBytes.Should().BeLessThanOrEqualTo(20);
+
+        var firstCompleted = buffer.Add(
+            WriterGuid,
+            Fragment(sequenceNumber: 8, start: 2, count: 1, fragmentSize: 6, firstSample, payloadOffset: 6, payloadLength: 6),
+            CdrEndianness.LittleEndian);
+
+        firstCompleted.Should().BeNull();
+        buffer.BufferedSampleBytes.Should().BeLessThanOrEqualTo(20);
     }
 
     [Fact]

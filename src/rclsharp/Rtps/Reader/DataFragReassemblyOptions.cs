@@ -7,11 +7,13 @@ namespace Rclsharp.Rtps.Reader;
 public sealed class DataFragReassemblyOptions
 {
     public const int DefaultMaxSampleSize = 16 * 1024 * 1024;
+    public const long DefaultMaxBufferedBytes = 64L * 1024 * 1024;
     public const int DefaultMaxBufferedSamples = 64;
     public const int DefaultMaxDeliveredSequenceNumbers = 4096;
     public static readonly TimeSpan DefaultTimeToLive = TimeSpan.FromSeconds(5);
 
     public int MaxSampleSize { get; init; } = DefaultMaxSampleSize;
+    public long MaxBufferedBytes { get; init; } = DefaultMaxBufferedBytes;
     public int MaxBufferedSamples { get; init; } = DefaultMaxBufferedSamples;
     public int MaxDeliveredSequenceNumbers { get; init; } = DefaultMaxDeliveredSequenceNumbers;
     public TimeSpan TimeToLive { get; init; } = DefaultTimeToLive;
@@ -23,6 +25,10 @@ public sealed class DataFragReassemblyOptions
         if (MaxSampleSize <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(MaxSampleSize), "MaxSampleSize must be greater than zero.");
+        }
+        if (MaxBufferedBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaxBufferedBytes), "MaxBufferedBytes must be greater than zero.");
         }
         if (MaxBufferedSamples <= 0)
         {

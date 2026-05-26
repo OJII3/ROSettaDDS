@@ -11,6 +11,7 @@ internal sealed class DataFragReassemblyBuffer
     private readonly DataFragReassemblyOptions _options;
     private readonly Func<DateTime> _clock;
     private readonly Dictionary<FragmentKey, PartialSample> _samples = new();
+    private long _bufferedSampleBytes;
 
     public DataFragReassemblyBuffer(DataFragReassemblyOptions? options = null, Func<DateTime>? clock = null)
     {
@@ -19,12 +20,19 @@ internal sealed class DataFragReassemblyBuffer
         _clock = clock ?? (() => DateTime.UtcNow);
     }
 
+    public long BufferedSampleBytes => _bufferedSampleBytes;
+
     public DataFragReassemblyResult? Add(
         Guid writerGuid,
         DataFragSubmessage fragment,
         CdrEndianness endianness)
     {
         if (fragment.SampleSize > (uint)_options.MaxSampleSize)
+        {
+            return null;
+        }
+        int sampleSize = checked((int)fragment.SampleSize);
+        if (sampleSize > _options.MaxBufferedBytes)
         {
             return null;
         }
@@ -39,13 +47,14 @@ internal sealed class DataFragReassemblyBuffer
         var key = new FragmentKey(writerGuid, fragment.WriterSequenceNumber, fragment.SampleSize);
         if (!_samples.TryGetValue(key, out var sample))
         {
-            EvictOldestIfFull();
+            EvictOldestUntilCapacityAvailable(sampleSize);
             sample = new PartialSample(fragment.SampleSize, fragment.FragmentSize, now);
             _samples.Add(key, sample);
+            _bufferedSampleBytes += sample.Buffer.Length;
         }
         else if (sample.FragmentSize != fragment.FragmentSize)
         {
-            _samples.Remove(key);
+            RemoveSample(key);
             return null;
         }
 
@@ -58,7 +67,7 @@ internal sealed class DataFragReassemblyBuffer
             return null;
         }
 
-        _samples.Remove(key);
+        RemoveSample(key);
         return new DataFragReassemblyResult(sample.Buffer, sample.InlineQos, sample.InlineQosEndianness);
     }
 
@@ -74,20 +83,34 @@ internal sealed class DataFragReassemblyBuffer
             .Select(pair => pair.Key)
             .ToArray())
         {
-            _samples.Remove(key);
+            RemoveSample(key);
         }
     }
 
-    private void EvictOldestIfFull()
+    private void EvictOldestUntilCapacityAvailable(int sampleSize)
     {
-        if (_samples.Count < _options.MaxBufferedSamples)
+        while (_samples.Count >= _options.MaxBufferedSamples
+            || _bufferedSampleBytes + sampleSize > _options.MaxBufferedBytes)
+        {
+            if (_samples.Count == 0)
+            {
+                return;
+            }
+
+            var oldestKey = _samples.Aggregate(
+                (oldest, current) => current.Value.LastUpdated < oldest.Value.LastUpdated ? current : oldest).Key;
+            RemoveSample(oldestKey);
+        }
+    }
+
+    private void RemoveSample(FragmentKey key)
+    {
+        if (!_samples.Remove(key, out var sample))
         {
             return;
         }
 
-        var oldestKey = _samples.Aggregate(
-            (oldest, current) => current.Value.LastUpdated < oldest.Value.LastUpdated ? current : oldest).Key;
-        _samples.Remove(oldestKey);
+        _bufferedSampleBytes -= sample.Buffer.Length;
     }
 
     private readonly struct FragmentKey : IEquatable<FragmentKey>
