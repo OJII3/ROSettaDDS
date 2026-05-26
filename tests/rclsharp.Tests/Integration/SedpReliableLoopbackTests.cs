@@ -1,8 +1,10 @@
 using System.Net;
+using Rclsharp.Cdr;
 using Rclsharp.Common;
 using Rclsharp.Dds;
 using Rclsharp.Discovery;
 using Rclsharp.Msgs.Std;
+using Rclsharp.Rtps.HistoryCache;
 using Rclsharp.Rtps.Writer;
 using Rclsharp.Transport;
 
@@ -217,6 +219,123 @@ public class SedpReliableLoopbackTests
     }
 
     [Fact]
+    public async Task SEDP_writer_history_は_endpoint_GUIDごとに最新_aliveまたは_tombstoneだけを保持する()
+    {
+        using var f = new SedpEndpointWireFixture();
+        var endpoint = CreateWriterEndpoint(
+            f.WriterPrefix,
+            new EntityId(0x000010u, EntityKind.UserDefinedWriterNoKey),
+            "rt/compact_topic",
+            "old_type");
+        var updatedEndpoint = CreateWriterEndpoint(
+            f.WriterPrefix,
+            endpoint.EndpointGuid.EntityId,
+            endpoint.TopicName,
+            "new_type");
+
+        await f.Writer.AddEndpointAsync(endpoint);
+        await f.Writer.AddEndpointAsync(updatedEndpoint);
+
+        f.Writer.Stateful.History.Count.Should().Be(1);
+        var aliveChange = SingleHistoryChange(f.Writer);
+        aliveChange.Kind.Should().Be(ChangeKind.Alive);
+        ReadEndpointPayload(aliveChange).TypeName.Should().Be("new_type");
+
+        await f.Writer.UnregisterEndpointAsync(updatedEndpoint);
+
+        f.Writer.Stateful.History.Count.Should().Be(1);
+        var tombstoneChange = SingleHistoryChange(f.Writer);
+        tombstoneChange.Kind.Should().Be(ChangeKind.NotAliveUnregistered);
+        ReadEndpointPayload(tombstoneChange).EndpointGuid.Should().Be(endpoint.EndpointGuid);
+    }
+
+    [Fact]
+    public async Task late_SEDP_reader_は同一_endpoint_GUIDの最新_aliveだけを受け取る()
+    {
+        using var f = new SedpEndpointWireFixture();
+        var endpoint = CreateWriterEndpoint(
+            f.WriterPrefix,
+            new EntityId(0x000011u, EntityKind.UserDefinedWriterNoKey),
+            "rt/latest_alive",
+            "old_type");
+        var updatedEndpoint = CreateWriterEndpoint(
+            f.WriterPrefix,
+            endpoint.EndpointGuid.EntityId,
+            endpoint.TopicName,
+            "new_type");
+        var received = new List<DiscoveredEndpointData>();
+        var receivedLock = new object();
+        f.Reader.EndpointDataReceived += ep =>
+        {
+            if (!ep.EndpointGuid.Equals(endpoint.EndpointGuid))
+            {
+                return;
+            }
+            lock (receivedLock) { received.Add(ep); }
+        };
+
+        await f.Writer.AddEndpointAsync(endpoint);
+        await f.Writer.AddEndpointAsync(updatedEndpoint);
+
+        f.Match();
+
+        await WaitUntilAsync(() =>
+        {
+            lock (receivedLock) { return received.Count > 0; }
+        });
+        lock (receivedLock)
+        {
+            received.Should().ContainSingle();
+            received[0].TypeName.Should().Be("new_type");
+        }
+        f.DiscoveryDb.WriterSnapshot()
+            .Should()
+            .ContainSingle(ep => ep.Data.EndpointGuid.Equals(endpoint.EndpointGuid))
+            .Which.Data.TypeName.Should().Be("new_type");
+    }
+
+    [Fact]
+    public async Task late_SEDP_reader_は_unregister済み_endpointの古い_aliveを受け取らない()
+    {
+        using var f = new SedpEndpointWireFixture();
+        var endpoint = CreateWriterEndpoint(
+            f.WriterPrefix,
+            new EntityId(0x000012u, EntityKind.UserDefinedWriterNoKey),
+            "rt/latest_tombstone",
+            StringMessage.DdsTypeName);
+        int endpointPayloads = 0;
+        int discoveredAlive = 0;
+        f.Reader.EndpointDataReceived += ep =>
+        {
+            if (ep.EndpointGuid.Equals(endpoint.EndpointGuid))
+            {
+                Interlocked.Increment(ref endpointPayloads);
+            }
+        };
+        f.DiscoveryDb.WriterDiscovered += ep =>
+        {
+            if (ep.Data.EndpointGuid.Equals(endpoint.EndpointGuid))
+            {
+                Interlocked.Increment(ref discoveredAlive);
+            }
+        };
+
+        await f.Writer.AddEndpointAsync(endpoint);
+        await f.Writer.UnregisterEndpointAsync(endpoint);
+
+        f.Match();
+
+        await WaitUntilAsync(() => Volatile.Read(ref endpointPayloads) > 0);
+        await Task.Delay(100);
+
+        Volatile.Read(ref endpointPayloads).Should().Be(1, "late reader には最新 tombstone だけが再送されるべき");
+        Volatile.Read(ref discoveredAlive).Should().Be(0, "古い alive が再送されると remote writer として一度発見されてしまう");
+        f.DiscoveryDb.WriterSnapshot()
+            .Should()
+            .NotContain(ep => ep.Data.EndpointGuid.Equals(endpoint.EndpointGuid));
+    }
+
+    [Fact]
     public async Task 既存_remote_reader_発見後に作った_local_publisher_を即時_matchする()
     {
         var env = CreatePair();
@@ -366,6 +485,100 @@ public class SedpReliableLoopbackTests
         var field = typeof(Publisher<T>).GetField("_writer",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
         return field?.GetValue(publisher) as StatefulWriter;
+    }
+
+    private sealed class SedpEndpointWireFixture : IDisposable
+    {
+        public GuidPrefix WriterPrefix { get; } = GuidPrefix.Create(VendorId.Rclsharp, 0x30, 0x40, 0x01);
+        public GuidPrefix ReaderPrefix { get; } = GuidPrefix.Create(VendorId.Rclsharp, 0x30, 0x40, 0x02);
+        public Locator WriterLocator { get; } = Locator.FromUdpV4(IPAddress.Parse("10.0.0.30"), 7431u);
+        public Locator ReaderLocator { get; } = Locator.FromUdpV4(IPAddress.Parse("10.0.0.31"), 7433u);
+        public LoopbackTransport WriterTransport { get; }
+        public LoopbackTransport ReaderTransport { get; }
+        public DiscoveryDb DiscoveryDb { get; } = new();
+        public SedpEndpointWriter Writer { get; }
+        public SedpEndpointReader Reader { get; }
+
+        private readonly LoopbackHub _hub = new();
+
+        public SedpEndpointWireFixture()
+        {
+            WriterTransport = _hub.Create(WriterLocator);
+            ReaderTransport = _hub.Create(ReaderLocator);
+            Writer = new SedpEndpointWriter(
+                transport: WriterTransport,
+                multicastDestination: ReaderLocator,
+                version: ProtocolVersion.V2_4,
+                vendorId: VendorId.Rclsharp,
+                localPrefix: WriterPrefix,
+                writerEntityId: BuiltinEntityIds.SedpBuiltinPublicationsWriter,
+                heartbeatPeriod: TimeSpan.FromMilliseconds(50));
+            Reader = new SedpEndpointReader(
+                replyTransport: ReaderTransport,
+                discoveryDb: DiscoveryDb,
+                version: ProtocolVersion.V2_4,
+                vendorId: VendorId.Rclsharp,
+                localPrefix: ReaderPrefix,
+                readerEntityId: BuiltinEntityIds.SedpBuiltinPublicationsReader,
+                ackNackFallbackDestination: WriterLocator,
+                producedEndpointKind: EndpointKind.Writer);
+
+            WriterTransport.Received += Writer.OnPacketReceived;
+            ReaderTransport.Received += Reader.OnPacketReceived;
+        }
+
+        public void Match()
+        {
+            Reader.MatchRemoteWriter(Writer.Guid, WriterLocator);
+            Writer.MatchRemoteReader(Reader.Guid, ReaderLocator);
+        }
+
+        public void Dispose()
+        {
+            WriterTransport.Received -= Writer.OnPacketReceived;
+            ReaderTransport.Received -= Reader.OnPacketReceived;
+            Reader.Dispose();
+            Writer.Dispose();
+            ReaderTransport.Dispose();
+            WriterTransport.Dispose();
+        }
+    }
+
+    private static DiscoveredEndpointData CreateWriterEndpoint(
+        GuidPrefix participantPrefix,
+        EntityId entityId,
+        string topicName,
+        string typeName)
+    {
+        var endpoint = new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Writer,
+            EndpointGuid = new Guid(participantPrefix, entityId),
+            ParticipantGuid = new Guid(participantPrefix, EntityId.Participant),
+            TopicName = topicName,
+            TypeName = typeName,
+        };
+        endpoint.UnicastLocators.Add(Locator.FromUdpV4(IPAddress.Parse("10.0.0.32"), 7441u));
+        return endpoint;
+    }
+
+    private static CacheChange SingleHistoryChange(SedpEndpointWriter writer)
+    {
+        var history = writer.Stateful.History;
+        var changes = history.EnumerateRange(history.FirstSequenceNumber, history.LastSequenceNumber);
+        changes.Should().ContainSingle();
+        return changes[0];
+    }
+
+    private static DiscoveredEndpointData ReadEndpointPayload(CacheChange change)
+    {
+        var payload = change.SerializedPayload.Span;
+        var (encapsulation, _) = CdrEncapsulation.Read(payload[..CdrEncapsulation.Size]);
+        var reader = new CdrReader(
+            payload,
+            CdrEncapsulation.GetEndianness(encapsulation),
+            cdrOrigin: CdrEncapsulation.Size);
+        return DiscoveredEndpointDataSerializer.Read(ref reader, EndpointKind.Writer);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, string because = "")
