@@ -20,6 +20,7 @@ public sealed class SpdpBuiltinParticipantReader : IDisposable
     private readonly GuidPrefix _localPrefix;
     private readonly ILogger _logger;
     private readonly Func<DateTime> _clock;
+    private readonly DiscoveryLimits _limits;
 
     private bool _started;
     private bool _disposed;
@@ -32,13 +33,15 @@ public sealed class SpdpBuiltinParticipantReader : IDisposable
         DiscoveryDb discoveryDb,
         GuidPrefix localPrefix,
         ILogger? logger = null,
-        Func<DateTime>? clock = null)
+        Func<DateTime>? clock = null,
+        DiscoveryLimits? limits = null)
     {
         _transport = transport;
         _discoveryDb = discoveryDb;
         _localPrefix = localPrefix;
         _logger = logger ?? NullLogger.Instance;
         _clock = clock ?? (() => DateTime.UtcNow);
+        _limits = limits ?? DiscoveryLimits.Default;
     }
 
     public void Start()
@@ -76,7 +79,7 @@ public sealed class SpdpBuiltinParticipantReader : IDisposable
     {
         try
         {
-            ProcessPacket(packet.Span);
+            ProcessPacketBorrowed(packet);
         }
         catch (Exception ex)
         {
@@ -115,6 +118,33 @@ public sealed class SpdpBuiltinParticipantReader : IDisposable
         }
     }
 
+    private void ProcessPacketBorrowed(ReadOnlyMemory<byte> packet)
+    {
+        if (!RtpsHeader.TryRead(packet.Span, out _, out _, out _))
+        {
+            return;
+        }
+
+        var reader = RtpsMessageReader.FromMemory(packet);
+        while (reader.TryReadNextMemory(out var hdr, out var body))
+        {
+            if (hdr.Kind != SubmessageKind.Data)
+            {
+                continue;
+            }
+            var data = DataSubmessage.ReadBodyBorrowed(body, hdr.Endianness, hdr.Flags);
+            if (!data.WriterEntityId.Equals(BuiltinEntityIds.SpdpBuiltinParticipantWriter))
+            {
+                continue;
+            }
+            if (data.SerializedPayload.IsEmpty)
+            {
+                continue;
+            }
+            HandleSpdpData(data.SerializedPayload.Span);
+        }
+    }
+
     private void HandleSpdpData(ReadOnlySpan<byte> serializedPayload)
     {
         if (serializedPayload.Length < CdrEncapsulation.Size)
@@ -130,7 +160,7 @@ public sealed class SpdpBuiltinParticipantReader : IDisposable
         }
         var endian = CdrEncapsulation.GetEndianness(kind);
         var cdrReader = new CdrReader(serializedPayload, endian, cdrOrigin: CdrEncapsulation.Size);
-        var participantData = ParticipantDataSerializer.Read(ref cdrReader);
+        var participantData = ParticipantDataSerializer.Read(ref cdrReader, _limits);
 
         ParticipantDataReceived?.Invoke(participantData);
         _discoveryDb.UpsertParticipant(participantData, _clock(), ignorePrefix: _localPrefix);

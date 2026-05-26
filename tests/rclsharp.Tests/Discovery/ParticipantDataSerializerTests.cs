@@ -28,10 +28,13 @@ public class ParticipantDataSerializerTests
         return data;
     }
 
-    private static ParticipantData ReadParticipantData(byte[] buffer, int length)
+    private static ParticipantData ReadParticipantData(
+        byte[] buffer,
+        int length,
+        DiscoveryLimits? limits = null)
     {
         var r = new CdrReader(buffer.AsSpan(0, length), CdrEndianness.LittleEndian);
-        return ParticipantDataSerializer.Read(ref r);
+        return ParticipantDataSerializer.Read(ref r, limits);
     }
 
     [Fact]
@@ -190,6 +193,67 @@ public class ParticipantDataSerializerTests
         var data = ParticipantDataSerializer.Read(ref r);
 
         data.ProtocolVersion.Should().Be(new ProtocolVersion(2, 5));
+    }
+
+    [Fact]
+    public void entity_nameは上限ちょうどなら受理し超過なら拒否する()
+    {
+        var ok = MakeSampleData();
+        ok.EntityName = "abc";
+        var buf = new byte[1024];
+        var w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        ParticipantDataSerializer.Write(ref w, ok);
+
+        ReadParticipantData(buf, w.Position, new DiscoveryLimits(maxEntityNameBytes: 4))
+            .EntityName.Should().Be("abc");
+
+        var tooLong = MakeSampleData();
+        tooLong.EntityName = "abcd";
+        w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        ParticipantDataSerializer.Write(ref w, tooLong);
+        int tooLongLength = w.Position;
+
+        Action act = () => ReadParticipantData(buf, tooLongLength, new DiscoveryLimits(maxEntityNameBytes: 4));
+        act.Should().Throw<InvalidDataException>().WithMessage("*exceeds limit 4*");
+    }
+
+    [Fact]
+    public void locator数が上限を超えたら拒否する()
+    {
+        var data = MakeSampleData();
+        data.DefaultUnicastLocators.Add(Locator.FromUdpV4(IPAddress.Parse("192.168.1.11"), 7413u));
+        var buf = new byte[1024];
+        var w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        ParticipantDataSerializer.Write(ref w, data);
+        int length = w.Position;
+
+        Action act = () => ReadParticipantData(buf, length, new DiscoveryLimits(maxParticipantLocators: 2));
+        act.Should().Throw<InvalidDataException>().WithMessage("*locator count*");
+    }
+
+    [Fact]
+    public void lease_durationは指定範囲にclampされる()
+    {
+        var data = MakeSampleData();
+        data.LeaseDuration = Duration.Infinite;
+        var buf = new byte[1024];
+        var w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        ParticipantDataSerializer.Write(ref w, data);
+
+        var limits = new DiscoveryLimits(
+            minRemoteParticipantLeaseSeconds: 1,
+            maxRemoteParticipantLeaseSeconds: 2);
+        ReadParticipantData(buf, w.Position, limits)
+            .LeaseDuration.ToTimeSpan()
+            .Should().BeCloseTo(TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(1));
+
+        data.LeaseDuration = Duration.Zero;
+        w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        ParticipantDataSerializer.Write(ref w, data);
+
+        ReadParticipantData(buf, w.Position, limits)
+            .LeaseDuration.ToTimeSpan()
+            .Should().BeCloseTo(TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(1));
     }
 
     [Fact]

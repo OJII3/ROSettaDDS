@@ -21,6 +21,7 @@ public sealed class SedpEndpointReader : IDisposable
     private readonly EndpointKind _producedEndpointKind;
     private readonly ILogger _logger;
     private readonly Func<DateTime> _clock;
+    private readonly DiscoveryLimits _limits;
     private bool _disposed;
 
     public StatefulReader Stateful => _stateful;
@@ -40,13 +41,15 @@ public sealed class SedpEndpointReader : IDisposable
         Locator ackNackFallbackDestination,
         EndpointKind producedEndpointKind,
         ILogger? logger = null,
-        Func<DateTime>? clock = null)
+        Func<DateTime>? clock = null,
+        DiscoveryLimits? limits = null)
     {
         _discoveryDb = discoveryDb;
         _localPrefix = localPrefix;
         _producedEndpointKind = producedEndpointKind;
         _logger = logger ?? NullLogger.Instance;
         _clock = clock ?? (() => DateTime.UtcNow);
+        _limits = limits ?? DiscoveryLimits.Default;
 
         _stateful = new StatefulReader(
             replyTransport: replyTransport,
@@ -99,7 +102,7 @@ public sealed class SedpEndpointReader : IDisposable
             }
             var endian = CdrEncapsulation.GetEndianness(kind);
             var cdrReader = new CdrReader(payload, endian, cdrOrigin: CdrEncapsulation.Size);
-            var endpointData = DiscoveredEndpointDataSerializer.Read(ref cdrReader, _producedEndpointKind);
+            var endpointData = DiscoveredEndpointDataSerializer.Read(ref cdrReader, _producedEndpointKind, _limits);
 
             EndpointDataReceived?.Invoke(endpointData);
             if (change.Kind == Rclsharp.Rtps.HistoryCache.ChangeKind.Alive)

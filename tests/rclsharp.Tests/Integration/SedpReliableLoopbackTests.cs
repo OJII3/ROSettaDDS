@@ -377,6 +377,7 @@ public class SedpReliableLoopbackTests
         var remoteReaderGuid = new Guid(remotePrefix, new EntityId(0x40u, EntityKind.UserDefinedReaderNoKey));
         var firstLocator = Locator.FromUdpV4(IPAddress.Parse("10.0.0.20"), 8000u);
         var updatedLocator = Locator.FromUdpV4(IPAddress.Parse("10.0.0.21"), 8001u);
+        SeedRemoteParticipant(pA.DiscoveryDb, remotePrefix);
 
         var firstEndpoint = new DiscoveredEndpointData
         {
@@ -415,6 +416,7 @@ public class SedpReliableLoopbackTests
         var remotePrefix = GuidPrefix.Create(VendorId.Rclsharp, 0x20, 0x30, 0x02);
         var remoteParticipantGuid = new Guid(remotePrefix, EntityId.Participant);
         var remoteReaderGuid = new Guid(remotePrefix, new EntityId(0x41u, EntityKind.UserDefinedReaderNoKey));
+        SeedRemoteParticipant(pA.DiscoveryDb, remotePrefix);
 
         pA.DiscoveryDb.UpsertEndpoint(new DiscoveredEndpointData
         {
@@ -487,6 +489,15 @@ public class SedpReliableLoopbackTests
         return field?.GetValue(publisher) as StatefulWriter;
     }
 
+    private static void SeedRemoteParticipant(DiscoveryDb db, GuidPrefix remotePrefix)
+    {
+        db.UpsertParticipant(new ParticipantData
+        {
+            Guid = new Guid(remotePrefix, EntityId.Participant),
+            LeaseDuration = Duration.FromSeconds(20),
+        }, DateTime.UtcNow);
+    }
+
     private sealed class SedpEndpointWireFixture : IDisposable
     {
         public GuidPrefix WriterPrefix { get; } = GuidPrefix.Create(VendorId.Rclsharp, 0x30, 0x40, 0x01);
@@ -505,6 +516,7 @@ public class SedpReliableLoopbackTests
         {
             WriterTransport = _hub.Create(WriterLocator);
             ReaderTransport = _hub.Create(ReaderLocator);
+            SeedRemoteParticipant(DiscoveryDb, WriterPrefix);
             Writer = new SedpEndpointWriter(
                 transport: WriterTransport,
                 multicastDestination: ReaderLocator,

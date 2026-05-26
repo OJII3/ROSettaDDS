@@ -57,6 +57,8 @@ public sealed class DomainParticipant : IDisposable
 
     // ローカル StatelessReader をトピック名でルックアップ (remote writer マッチング用)
     private readonly Dictionary<string, List<LocalUserReader>> _localUserReaders = new();
+    private StatefulWriter[] _localUserWriterSnapshot = Array.Empty<StatefulWriter>();
+    private StatelessReader[] _localUserReaderSnapshot = Array.Empty<StatelessReader>();
 
     private bool _started;
     private bool _disposed;
@@ -187,10 +189,10 @@ public sealed class DomainParticipant : IDisposable
         _defaultMulticastLocator = _userMulticastDestination;
         _defaultUnicastLocator = _userUnicastTransport.LocalLocator;
 
-        _discoveryDb = new DiscoveryDb();
+        _discoveryDb = new DiscoveryDb(_options.DiscoveryLimits);
 
         _spdpReader = new SpdpBuiltinParticipantReader(
-            _multicastTransport, _discoveryDb, GuidPrefix, _options.Logger);
+            _multicastTransport, _discoveryDb, GuidPrefix, _options.Logger, limits: _options.DiscoveryLimits);
 
         _spdpWriter = new SpdpBuiltinParticipantWriter(
             transport: _multicastTransport,
@@ -224,7 +226,8 @@ public sealed class DomainParticipant : IDisposable
             readerEntityId: BuiltinEntityIds.SedpBuiltinPublicationsReader,
             ackNackFallbackDestination: _multicastDestination,
             producedEndpointKind: EndpointKind.Writer,
-            logger: _options.Logger);
+            logger: _options.Logger,
+            limits: _options.DiscoveryLimits);
 
         _sedpSubscriptionsWriter = new SedpEndpointWriter(
             transport: _multicastTransport,
@@ -245,7 +248,8 @@ public sealed class DomainParticipant : IDisposable
             readerEntityId: BuiltinEntityIds.SedpBuiltinSubscriptionsReader,
             ackNackFallbackDestination: _multicastDestination,
             producedEndpointKind: EndpointKind.Reader,
-            logger: _options.Logger);
+            logger: _options.Logger,
+            limits: _options.DiscoveryLimits);
 
         // SPDP で remote participant を発見/更新したら SEDP endpoint を auto-match
         _discoveryDb.ParticipantDiscovered += OnRemoteParticipantDiscovered;
@@ -443,14 +447,8 @@ public sealed class DomainParticipant : IDisposable
 
     private void OnUserDataPacketReceived(ReadOnlyMemory<byte> packet, Locator source)
     {
-        // 全ローカル user endpoint に渡す。entity ID / writer GUID で内部フィルタされる。
-        StatefulWriter[] writers;
-        StatelessReader[] readers;
-        lock (_localEndpointsLock)
-        {
-            writers = _localUserWriters.Values.SelectMany(static list => list).Select(static w => w.Writer).ToArray();
-            readers = _localUserReaders.Values.SelectMany(static list => list).Select(static r => r.Reader).ToArray();
-        }
+        var writers = Volatile.Read(ref _localUserWriterSnapshot);
+        var readers = Volatile.Read(ref _localUserReaderSnapshot);
         foreach (var w in writers)
         {
             w.OnPacketReceived(packet, source);
@@ -702,6 +700,7 @@ public sealed class DomainParticipant : IDisposable
                 _localUserWriters[ddsTopic] = writers;
             }
             writers.Add(localWriter);
+            RefreshLocalUserEndpointSnapshotsLocked();
 
             localReaders = _localUserReaders.TryGetValue(ddsTopic, out var readers)
                 ? readers.ToArray()
@@ -774,6 +773,7 @@ public sealed class DomainParticipant : IDisposable
                 _localUserReaders[ddsTopic] = readers;
             }
             readers.Add(localReader);
+            RefreshLocalUserEndpointSnapshotsLocked();
 
             localWriters = _localUserWriters.TryGetValue(ddsTopic, out var writers)
                 ? writers.ToArray()
@@ -913,6 +913,7 @@ public sealed class DomainParticipant : IDisposable
                 {
                     _localUserWriters.Remove(endpoint.TopicName);
                 }
+                RefreshLocalUserEndpointSnapshotsLocked();
                 matchedLocalReaders = _localUserReaders.TryGetValue(endpoint.TopicName, out var readers)
                     ? readers.ToArray()
                     : Array.Empty<LocalUserReader>();
@@ -967,6 +968,7 @@ public sealed class DomainParticipant : IDisposable
                 {
                     _localUserReaders.Remove(endpoint.TopicName);
                 }
+                RefreshLocalUserEndpointSnapshotsLocked();
                 matchedLocalWriters = _localUserWriters.TryGetValue(endpoint.TopicName, out var writers)
                     ? writers.ToArray()
                     : Array.Empty<LocalUserWriter>();
@@ -1005,6 +1007,18 @@ public sealed class DomainParticipant : IDisposable
         {
             _options.Logger.Warn("DomainParticipant failed to send SEDP unregister", ex);
         }
+    }
+
+    private void RefreshLocalUserEndpointSnapshotsLocked()
+    {
+        _localUserWriterSnapshot = _localUserWriters.Values
+            .SelectMany(static list => list)
+            .Select(static local => local.Writer)
+            .ToArray();
+        _localUserReaderSnapshot = _localUserReaders.Values
+            .SelectMany(static list => list)
+            .Select(static local => local.Reader)
+            .ToArray();
     }
 
     private async Task RunSedpOperationAsync(

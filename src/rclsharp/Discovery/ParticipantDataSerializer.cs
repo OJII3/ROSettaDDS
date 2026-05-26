@@ -92,8 +92,9 @@ public static class ParticipantDataSerializer
     /// PL_CDR ParameterList を読み出して <see cref="ParticipantData"/> を生成する。
     /// 未知 PID はスキップする。ただし must-understand PID は拒否する。
     /// </summary>
-    public static ParticipantData Read(ref CdrReader reader)
+    public static ParticipantData Read(ref CdrReader reader, DiscoveryLimits? limits = null)
     {
+        limits ??= DiscoveryLimits.Default;
         var data = new ParticipantData();
         var pl = new ParameterListReader(reader);
         bool littleEndian = reader.Endianness == CdrEndianness.LittleEndian;
@@ -139,20 +140,20 @@ public static class ParticipantDataSerializer
                     break;
 
                 case ParameterId.MetatrafficUnicastLocator:
-                    AppendLocator(pl.CurrentValueRaw(), littleEndian, data.MetatrafficUnicastLocators);
+                    AppendLocator(pl.CurrentValueRaw(), littleEndian, data, data.MetatrafficUnicastLocators, limits);
                     break;
                 case ParameterId.MetatrafficMulticastLocator:
-                    AppendLocator(pl.CurrentValueRaw(), littleEndian, data.MetatrafficMulticastLocators);
+                    AppendLocator(pl.CurrentValueRaw(), littleEndian, data, data.MetatrafficMulticastLocators, limits);
                     break;
                 case ParameterId.DefaultUnicastLocator:
-                    AppendLocator(pl.CurrentValueRaw(), littleEndian, data.DefaultUnicastLocators);
+                    AppendLocator(pl.CurrentValueRaw(), littleEndian, data, data.DefaultUnicastLocators, limits);
                     break;
                 case ParameterId.DefaultMulticastLocator:
-                    AppendLocator(pl.CurrentValueRaw(), littleEndian, data.DefaultMulticastLocators);
+                    AppendLocator(pl.CurrentValueRaw(), littleEndian, data, data.DefaultMulticastLocators, limits);
                     break;
 
                 case ParameterId.EntityName:
-                    data.EntityName = pl.ReadString();
+                    data.EntityName = pl.ReadString(limits.MaxEntityNameBytes);
                     break;
 
                 case ParameterId.DomainTagBase:
@@ -167,14 +168,31 @@ public static class ParticipantDataSerializer
         }
 
         reader = pl.CurrentReader;
+        data.LeaseDuration = limits.ClampRemoteParticipantLeaseDuration(data.LeaseDuration);
         return data;
     }
 
-    private static void AppendLocator(ReadOnlySpan<byte> raw, bool littleEndian, List<Locator> dest)
+    private static void AppendLocator(
+        ReadOnlySpan<byte> raw,
+        bool littleEndian,
+        ParticipantData data,
+        List<Locator> dest,
+        DiscoveryLimits limits)
     {
         if (raw.Length >= Locator.Size)
         {
+            if (TotalLocatorCount(data) >= limits.MaxParticipantLocators)
+            {
+                throw new InvalidDataException(
+                    $"Participant locator count exceeds limit {limits.MaxParticipantLocators}.");
+            }
             dest.Add(Locator.Read(raw[..Locator.Size], littleEndian));
         }
     }
+
+    private static int TotalLocatorCount(ParticipantData data)
+        => data.MetatrafficUnicastLocators.Count
+         + data.MetatrafficMulticastLocators.Count
+         + data.DefaultUnicastLocators.Count
+         + data.DefaultMulticastLocators.Count;
 }

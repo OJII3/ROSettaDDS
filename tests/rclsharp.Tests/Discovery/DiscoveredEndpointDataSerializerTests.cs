@@ -1,3 +1,4 @@
+using System.Net;
 using Rclsharp.Cdr;
 using Rclsharp.Cdr.ParameterList;
 using Rclsharp.Common;
@@ -26,10 +27,13 @@ public class DiscoveredEndpointDataSerializerTests
         };
     }
 
-    private static DiscoveredEndpointData ReadEndpointData(byte[] buffer, int length)
+    private static DiscoveredEndpointData ReadEndpointData(
+        byte[] buffer,
+        int length,
+        DiscoveryLimits? limits = null)
     {
         var r = new CdrReader(buffer.AsSpan(0, length), CdrEndianness.LittleEndian);
-        return DiscoveredEndpointDataSerializer.Read(ref r, EndpointKind.Writer);
+        return DiscoveredEndpointDataSerializer.Read(ref r, EndpointKind.Writer, limits);
     }
 
     [Theory]
@@ -193,5 +197,78 @@ public class DiscoveredEndpointDataSerializerTests
         act.Should()
             .Throw<InvalidDataException>()
             .WithMessage("*0x4242*");
+    }
+
+    [Fact]
+    public void topic_nameは上限ちょうどなら受理し超過なら拒否する()
+    {
+        var ok = MakeWriter();
+        ok.TopicName = "abc";
+        var buf = new byte[1024];
+        var w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        DiscoveredEndpointDataSerializer.Write(ref w, ok);
+
+        ReadEndpointData(buf, w.Position, new DiscoveryLimits(maxTopicNameBytes: 4))
+            .TopicName.Should().Be("abc");
+
+        var tooLong = MakeWriter();
+        tooLong.TopicName = "abcd";
+        w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        DiscoveredEndpointDataSerializer.Write(ref w, tooLong);
+        int length = w.Position;
+
+        Action act = () => ReadEndpointData(buf, length, new DiscoveryLimits(maxTopicNameBytes: 4));
+        act.Should().Throw<InvalidDataException>().WithMessage("*exceeds limit 4*");
+    }
+
+    [Fact]
+    public void type_name超過は拒否する()
+    {
+        var endpoint = MakeWriter();
+        endpoint.TypeName = "abcd";
+        var buf = new byte[1024];
+        var w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        DiscoveredEndpointDataSerializer.Write(ref w, endpoint);
+        int length = w.Position;
+
+        Action act = () => ReadEndpointData(buf, length, new DiscoveryLimits(maxTypeNameBytes: 4));
+        act.Should().Throw<InvalidDataException>().WithMessage("*exceeds limit 4*");
+    }
+
+    [Fact]
+    public void partition_countとpartition_name超過は拒否する()
+    {
+        var endpoint = MakeWriter();
+        endpoint.Partition = new PartitionQos("a", "b");
+        var buf = new byte[1024];
+        var w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        DiscoveredEndpointDataSerializer.Write(ref w, endpoint);
+        int length = w.Position;
+
+        Action countAct = () => ReadEndpointData(buf, length, new DiscoveryLimits(maxPartitionNames: 1));
+        countAct.Should().Throw<InvalidDataException>().WithMessage("*Partition name count*");
+
+        endpoint.Partition = new PartitionQos("abcd");
+        w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        DiscoveredEndpointDataSerializer.Write(ref w, endpoint);
+        length = w.Position;
+
+        Action nameAct = () => ReadEndpointData(buf, length, new DiscoveryLimits(maxPartitionNameBytes: 4));
+        nameAct.Should().Throw<InvalidDataException>().WithMessage("*exceeds limit 4*");
+    }
+
+    [Fact]
+    public void endpoint_locator数が上限を超えたら拒否する()
+    {
+        var endpoint = MakeWriter();
+        endpoint.UnicastLocators.Add(Locator.FromUdpV4(IPAddress.Parse("10.0.0.1"), 7411u));
+        endpoint.MulticastLocators.Add(Locator.FromUdpV4(IPAddress.Parse("239.255.0.1"), 7401u));
+        var buf = new byte[1024];
+        var w = new CdrWriter(buf, CdrEndianness.LittleEndian);
+        DiscoveredEndpointDataSerializer.Write(ref w, endpoint);
+        int length = w.Position;
+
+        Action act = () => ReadEndpointData(buf, length, new DiscoveryLimits(maxEndpointLocators: 1));
+        act.Should().Throw<InvalidDataException>().WithMessage("*Endpoint locator count*");
     }
 }

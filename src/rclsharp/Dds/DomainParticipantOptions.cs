@@ -1,6 +1,7 @@
 using System.Net;
 using Rclsharp.Common;
 using Rclsharp.Common.Logging;
+using Rclsharp.Discovery;
 using Rclsharp.Rtps.Reader;
 using Rclsharp.Transport;
 
@@ -45,6 +46,9 @@ public sealed class DomainParticipantOptions
 
     /// <summary>DATA_FRAG 再構成バッファの制限値。</summary>
     public DataFragReassemblyOptions DataFragReassembly { get; init; } = DataFragReassemblyOptions.Default;
+
+    /// <summary>remote discovery metadata と保持状態の制限値。</summary>
+    public DiscoveryLimits DiscoveryLimits { get; init; } = DiscoveryLimits.Default;
 
     /// <summary>
     /// テスト用の差し替えポイント。null なら <see cref="UdpTransport.CreateMulticast"/> で作る。

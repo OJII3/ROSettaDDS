@@ -155,8 +155,12 @@ public static class DiscoveredEndpointDataSerializer
     }
 
     /// <summary>PL_CDR ParameterList を読み出して <see cref="DiscoveredEndpointData"/> を生成する。</summary>
-    public static DiscoveredEndpointData Read(ref CdrReader reader, EndpointKind kind)
+    public static DiscoveredEndpointData Read(
+        ref CdrReader reader,
+        EndpointKind kind,
+        DiscoveryLimits? limits = null)
     {
+        limits ??= DiscoveryLimits.Default;
         var data = new DiscoveredEndpointData { Kind = kind };
         var pl = new ParameterListReader(reader);
         bool littleEndian = reader.Endianness == CdrEndianness.LittleEndian;
@@ -184,10 +188,10 @@ public static class DiscoveredEndpointDataSerializer
                         break;
                     }
                 case ParameterId.TopicName:
-                    data.TopicName = pl.ReadString();
+                    data.TopicName = pl.ReadString(limits.MaxTopicNameBytes);
                     break;
                 case ParameterId.TypeName:
-                    data.TypeName = pl.ReadString();
+                    data.TypeName = pl.ReadString(limits.MaxTypeNameBytes);
                     break;
                 case ParameterId.Reliability:
                     {
@@ -244,10 +248,14 @@ public static class DiscoveredEndpointDataSerializer
                 case ParameterId.Partition:
                     {
                         var count = pl.ReadUInt32();
-                        if (count > 256) break; // 不正パケットによる OOM 防止
+                        if (count > limits.MaxPartitionNames)
+                        {
+                            throw new InvalidDataException(
+                                $"Partition name count {count} exceeds limit {limits.MaxPartitionNames}.");
+                        }
                         var names = new string[count];
                         for (uint i = 0; i < count; i++)
-                            names[i] = pl.ReadString();
+                            names[i] = pl.ReadString(limits.MaxPartitionNameBytes);
                         data.Partition = new PartitionQos(names);
                         break;
                     }
@@ -266,6 +274,7 @@ public static class DiscoveredEndpointDataSerializer
                         var raw = pl.CurrentValueRaw();
                         if (raw.Length >= Locator.Size)
                         {
+                            ThrowIfEndpointLocatorLimitExceeded(data, limits);
                             data.UnicastLocators.Add(Locator.Read(raw[..Locator.Size], littleEndian));
                         }
                         break;
@@ -275,6 +284,7 @@ public static class DiscoveredEndpointDataSerializer
                         var raw = pl.CurrentValueRaw();
                         if (raw.Length >= Locator.Size)
                         {
+                            ThrowIfEndpointLocatorLimitExceeded(data, limits);
                             data.MulticastLocators.Add(Locator.Read(raw[..Locator.Size], littleEndian));
                         }
                         break;
@@ -287,5 +297,16 @@ public static class DiscoveredEndpointDataSerializer
 
         reader = pl.CurrentReader;
         return data;
+    }
+
+    private static void ThrowIfEndpointLocatorLimitExceeded(
+        DiscoveredEndpointData data,
+        DiscoveryLimits limits)
+    {
+        if (data.UnicastLocators.Count + data.MulticastLocators.Count >= limits.MaxEndpointLocators)
+        {
+            throw new InvalidDataException(
+                $"Endpoint locator count exceeds limit {limits.MaxEndpointLocators}.");
+        }
     }
 }

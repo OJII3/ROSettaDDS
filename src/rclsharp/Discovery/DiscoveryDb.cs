@@ -1,4 +1,5 @@
 using Rclsharp.Common;
+using System.Text;
 
 using Guid = Rclsharp.Common.Guid;
 
@@ -14,6 +15,12 @@ public sealed class DiscoveryDb
     private readonly Dictionary<GuidPrefix, RemoteParticipant> _participants = new();
     private readonly Dictionary<Guid, RemoteEndpoint> _writers = new();
     private readonly Dictionary<Guid, RemoteEndpoint> _readers = new();
+    private readonly DiscoveryLimits _limits;
+
+    public DiscoveryDb(DiscoveryLimits? limits = null)
+    {
+        _limits = limits ?? DiscoveryLimits.Default;
+    }
 
     /// <summary>新規参加者検出時に発火 (lock 外で呼ばれる)。</summary>
     public event Action<RemoteParticipant>? ParticipantDiscovered;
@@ -71,6 +78,11 @@ public sealed class DiscoveryDb
         {
             return;
         }
+        if (!IsParticipantMetadataAccepted(data))
+        {
+            return;
+        }
+        data.LeaseDuration = _limits.ClampRemoteParticipantLeaseDuration(data.LeaseDuration);
 
         RemoteParticipant participant;
         bool isNew;
@@ -84,6 +96,10 @@ public sealed class DiscoveryDb
             }
             else
             {
+                if (_participants.Count >= _limits.MaxRemoteParticipants)
+                {
+                    return;
+                }
                 participant = new RemoteParticipant(data, nowUtc);
                 _participants[data.Guid.Prefix] = participant;
                 isNew = true;
@@ -162,12 +178,21 @@ public sealed class DiscoveryDb
         {
             return;
         }
+        if (!IsEndpointMetadataAccepted(data))
+        {
+            return;
+        }
 
         var dict = data.Kind == EndpointKind.Writer ? _writers : _readers;
         RemoteEndpoint endpoint;
         bool isNew;
         lock (_lock)
         {
+            if (!_participants.ContainsKey(data.ParticipantGuid.Prefix)
+                || !data.EndpointGuid.Prefix.Equals(data.ParticipantGuid.Prefix))
+            {
+                return;
+            }
             if (dict.TryGetValue(data.EndpointGuid, out var existing))
             {
                 existing.Update(data, nowUtc);
@@ -176,6 +201,11 @@ public sealed class DiscoveryDb
             }
             else
             {
+                if (IsEndpointCapacityExceeded(data.Kind)
+                    || CountEndpointsForParticipant(data.ParticipantGuid.Prefix) >= _limits.MaxRemoteEndpointsPerParticipant)
+                {
+                    return;
+                }
                 endpoint = new RemoteEndpoint(data, nowUtc);
                 dict[data.EndpointGuid] = endpoint;
                 isNew = true;
@@ -283,6 +313,57 @@ public sealed class DiscoveryDb
     private static bool BelongsToParticipant(RemoteEndpoint endpoint, GuidPrefix participantPrefix)
         => endpoint.Guid.Prefix.Equals(participantPrefix)
         || endpoint.ParticipantGuid.Prefix.Equals(participantPrefix);
+
+    private bool IsEndpointCapacityExceeded(EndpointKind kind)
+        => kind == EndpointKind.Writer
+            ? _writers.Count >= _limits.MaxRemoteWriters
+            : _readers.Count >= _limits.MaxRemoteReaders;
+
+    private int CountEndpointsForParticipant(GuidPrefix participantPrefix)
+    {
+        int count = 0;
+        foreach (var endpoint in _writers.Values)
+        {
+            if (BelongsToParticipant(endpoint, participantPrefix))
+            {
+                count++;
+            }
+        }
+        foreach (var endpoint in _readers.Values)
+        {
+            if (BelongsToParticipant(endpoint, participantPrefix))
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private bool IsParticipantMetadataAccepted(ParticipantData data)
+    {
+        int locatorCount = data.MetatrafficUnicastLocators.Count
+            + data.MetatrafficMulticastLocators.Count
+            + data.DefaultUnicastLocators.Count
+            + data.DefaultMulticastLocators.Count;
+        if (locatorCount > _limits.MaxParticipantLocators)
+        {
+            return false;
+        }
+        return StringByteCount(data.EntityName) <= _limits.MaxEntityNameBytes;
+    }
+
+    private bool IsEndpointMetadataAccepted(DiscoveredEndpointData data)
+    {
+        int locatorCount = data.UnicastLocators.Count + data.MulticastLocators.Count;
+        return locatorCount <= _limits.MaxEndpointLocators
+            && StringByteCount(data.TopicName) <= _limits.MaxTopicNameBytes
+            && StringByteCount(data.TypeName) <= _limits.MaxTypeNameBytes
+            && data.Partition.Names.Count <= _limits.MaxPartitionNames
+            && data.Partition.Names.All(name => StringByteCount(name) <= _limits.MaxPartitionNameBytes);
+    }
+
+    private static int StringByteCount(string? value)
+        => string.IsNullOrEmpty(value) ? 0 : Encoding.UTF8.GetByteCount(value);
 
     private void PublishLostEndpoints(
         IReadOnlyList<RemoteEndpoint>? lostWriters,

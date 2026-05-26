@@ -365,6 +365,7 @@ public class PubSubLoopbackTests
         var remotePrefix = GuidPrefix.CreateForCurrentProcess(VendorId.EProsimaFastDds);
         var remoteWriterId = new EntityId(0x123456u, EntityKind.UserDefinedWriterNoKey);
         var remoteWriterGuid = new Rclsharp.Common.Guid(remotePrefix, remoteWriterId);
+        SeedRemoteParticipant(pB.DiscoveryDb, remotePrefix);
         pB.DiscoveryDb.UpsertEndpoint(new DiscoveredEndpointData
         {
             Kind = EndpointKind.Writer,
@@ -401,6 +402,7 @@ public class PubSubLoopbackTests
         var remotePrefix = GuidPrefix.CreateForCurrentProcess(VendorId.EProsimaFastDds);
         var remoteWriterId = new EntityId(0x000005u, EntityKind.UserDefinedWriterNoKey);
         var remoteWriterGuid = new Rclsharp.Common.Guid(remotePrefix, remoteWriterId);
+        SeedRemoteParticipant(pB.DiscoveryDb, remotePrefix);
         pB.DiscoveryDb.UpsertEndpoint(new DiscoveredEndpointData
         {
             Kind = EndpointKind.Writer,
@@ -455,6 +457,7 @@ public class PubSubLoopbackTests
         var remotePrefix = GuidPrefix.CreateForCurrentProcess(VendorId.EProsimaFastDds);
         var remoteWriterId = new EntityId(0x000005u, EntityKind.UserDefinedWriterNoKey);
         var remoteWriterGuid = new Rclsharp.Common.Guid(remotePrefix, remoteWriterId);
+        SeedRemoteParticipant(pB.DiscoveryDb, remotePrefix);
         pB.DiscoveryDb.UpsertEndpoint(new DiscoveredEndpointData
         {
             Kind = EndpointKind.Writer,
@@ -497,6 +500,15 @@ public class PubSubLoopbackTests
         var writer = new CdrWriter(buffer, CdrEndianness.LittleEndian, cdrOrigin: CdrEncapsulation.Size);
         StringMessageSerializer.Instance.Serialize(ref writer, in value);
         return buffer[..writer.Position];
+    }
+
+    private static void SeedRemoteParticipant(DiscoveryDb db, GuidPrefix remotePrefix)
+    {
+        db.UpsertParticipant(new ParticipantData
+        {
+            Guid = new Rclsharp.Common.Guid(remotePrefix, EntityId.Participant),
+            LeaseDuration = Duration.FromSeconds(20),
+        }, DateTime.UtcNow);
     }
 
     private static byte[] BuildDataPacket(
