@@ -91,6 +91,29 @@ public class UdpTransportTests
             await transport.SendAsync(new byte[] { 1 }, unsupported));
     }
 
+    [Fact]
+    public void Unicast_初期化失敗時は作成済みsocketを破棄する()
+    {
+        using var blocker = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        blocker.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        int blockedPort = ((IPEndPoint)blocker.LocalEndPoint!).Port;
+
+        Assert.Throws<SocketException>(() =>
+            UdpTransport.CreateUnicast(IPAddress.Loopback, blockedPort));
+    }
+
+    [Fact]
+    public void Multicast_初期化失敗時はbound_socketを破棄する()
+    {
+        int port = GetFreeUdpPort();
+
+        Assert.ThrowsAny<Exception>(() =>
+            UdpTransport.CreateMulticast(IPAddress.Loopback, port));
+
+        using var probe = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        probe.Bind(new IPEndPoint(IPAddress.Any, port));
+    }
+
     /// <summary>
     /// マルチキャスト loopback テスト。
     /// 環境によっては multicast loopback が無効化されている場合があり、その場合は SocketException でスキップ。

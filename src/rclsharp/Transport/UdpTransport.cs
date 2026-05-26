@@ -73,14 +73,22 @@ public sealed class UdpTransport : IRtpsTransport
         }
 
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-        socket.Bind(new IPEndPoint(bindAddress, port));
-        var ep = (IPEndPoint)socket.LocalEndPoint!;
-        var locator = Locator.FromUdpV4(ep.Address, (uint)ep.Port);
-        return new UdpTransport(
-            socket, locator,
-            isMulticast: false, multicastGroup: null,
-            logger ?? NullLogger.Instance, receiveBufferSize);
+        try
+        {
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            socket.Bind(new IPEndPoint(bindAddress, port));
+            var ep = (IPEndPoint)socket.LocalEndPoint!;
+            var locator = Locator.FromUdpV4(ep.Address, (uint)ep.Port);
+            return new UdpTransport(
+                socket, locator,
+                isMulticast: false, multicastGroup: null,
+                logger ?? NullLogger.Instance, receiveBufferSize);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -107,29 +115,37 @@ public sealed class UdpTransport : IRtpsTransport
         }
 
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-        // 全 NIC からマルチキャスト受信を取りこぼさないため ANY:port にバインドする
-        socket.Bind(new IPEndPoint(IPAddress.Any, port));
-
-        // Join multicast group
-        var iface = joinInterface ?? IPAddress.Any;
-        socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership,
-            new MulticastOption(multicastGroup, iface));
-
-        // 送信側マルチキャスト設定
-        socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, multicastTimeToLive);
-        if (joinInterface is not null && !joinInterface.Equals(IPAddress.Any))
+        try
         {
-            // 送信時のマルチキャスト送信元 NIC を明示
-            socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface, joinInterface.GetAddressBytes());
-        }
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            // 全 NIC からマルチキャスト受信を取りこぼさないため ANY:port にバインドする
+            socket.Bind(new IPEndPoint(IPAddress.Any, port));
 
-        var actualPort = ((IPEndPoint)socket.LocalEndPoint!).Port;
-        var locator = Locator.FromUdpV4(multicastGroup, (uint)actualPort);
-        return new UdpTransport(
-            socket, locator,
-            isMulticast: true, multicastGroup: multicastGroup,
-            logger ?? NullLogger.Instance, receiveBufferSize);
+            // Join multicast group
+            var iface = joinInterface ?? IPAddress.Any;
+            socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership,
+                new MulticastOption(multicastGroup, iface));
+
+            // 送信側マルチキャスト設定
+            socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, multicastTimeToLive);
+            if (joinInterface is not null && !joinInterface.Equals(IPAddress.Any))
+            {
+                // 送信時のマルチキャスト送信元 NIC を明示
+                socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface, joinInterface.GetAddressBytes());
+            }
+
+            var actualPort = ((IPEndPoint)socket.LocalEndPoint!).Port;
+            var locator = Locator.FromUdpV4(multicastGroup, (uint)actualPort);
+            return new UdpTransport(
+                socket, locator,
+                isMulticast: true, multicastGroup: multicastGroup,
+                logger ?? NullLogger.Instance, receiveBufferSize);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
     }
 
     public async ValueTask SendAsync(
