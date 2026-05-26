@@ -34,6 +34,7 @@
             rosEnv
             pkgs.colcon
             pkgs.dotnet-sdk_8
+            pkgs.python3
           ];
           RMW_IMPLEMENTATION = "rmw_fastrtps_cpp";
           DOTNET_CLI_TELEMETRY_OPTOUT = "1";

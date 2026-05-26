@@ -55,3 +55,18 @@ Desktop.ini
 .direnv/
 result
 result-*
+
+## Unity verification project
+Ros2Unity/[Ll]ibrary/
+Ros2Unity/[Tt]emp/
+Ros2Unity/[Oo]bj/
+Ros2Unity/[Bb]uild/
+Ros2Unity/[Bb]uilds/
+Ros2Unity/[Ll]ogs/
+Ros2Unity/[Uu]ser[Ss]ettings/
+Ros2Unity/[Mm]emoryCaptures/
+Ros2Unity/*.csproj
+Ros2Unity/*.sln
+!Ros2Unity/Packages/
+!Ros2Unity/Packages/manifest.json
+!Ros2Unity/Packages/packages-lock.json

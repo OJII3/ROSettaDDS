@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'rclsharp'">
+    <!-- Ros2Unity imports src/rclsharp as a local UPM package, so keep MSBuild outputs outside that tree. -->
+    <BaseOutputPath>$(MSBuildThisFileDirectory)artifacts/dotnet/bin/rclsharp/</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)artifacts/dotnet/obj/rclsharp/</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>
