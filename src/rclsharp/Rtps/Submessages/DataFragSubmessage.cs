@@ -219,4 +219,83 @@ public sealed class DataFragSubmessage
             nonStandardPayload,
             extraFlagsValue);
     }
+
+    /// <summary>
+    /// DATA_FRAG の本体を読み出し、InlineQos / fragment payload は入力 memory の slice として返す。
+    /// 返却された memory は呼び出し元が保持する packet buffer の寿命内だけ有効。
+    /// </summary>
+    public static DataFragSubmessage ReadBodyBorrowed(
+        ReadOnlyMemory<byte> bodyMemory, CdrEndianness endianness, byte flags)
+    {
+        var body = bodyMemory.Span;
+        if (body.Length < FixedHeaderSize)
+        {
+            throw new ArgumentException(
+                $"Body requires at least {FixedHeaderSize} bytes.", nameof(bodyMemory));
+        }
+        bool littleEndian = endianness == CdrEndianness.LittleEndian;
+
+        ushort extraFlagsValue = littleEndian
+            ? BinaryPrimitives.ReadUInt16LittleEndian(body[..2])
+            : BinaryPrimitives.ReadUInt16BigEndian(body[..2]);
+        ushort octetsToInlineQos = littleEndian
+            ? BinaryPrimitives.ReadUInt16LittleEndian(body.Slice(2, 2))
+            : BinaryPrimitives.ReadUInt16BigEndian(body.Slice(2, 2));
+
+        var readerId = EntityId.Read(body.Slice(4, 4));
+        var writerId = EntityId.Read(body.Slice(8, 4));
+        var writerSn = SequenceNumber.Read(body.Slice(12, 8), littleEndian);
+        uint fragmentStartingNum = littleEndian
+            ? BinaryPrimitives.ReadUInt32LittleEndian(body.Slice(20, 4))
+            : BinaryPrimitives.ReadUInt32BigEndian(body.Slice(20, 4));
+        ushort fragmentsInSubmessage = littleEndian
+            ? BinaryPrimitives.ReadUInt16LittleEndian(body.Slice(24, 2))
+            : BinaryPrimitives.ReadUInt16BigEndian(body.Slice(24, 2));
+        ushort fragmentSize = littleEndian
+            ? BinaryPrimitives.ReadUInt16LittleEndian(body.Slice(26, 2))
+            : BinaryPrimitives.ReadUInt16BigEndian(body.Slice(26, 2));
+        uint sampleSize = littleEndian
+            ? BinaryPrimitives.ReadUInt32LittleEndian(body.Slice(28, 4))
+            : BinaryPrimitives.ReadUInt32BigEndian(body.Slice(28, 4));
+
+        int inlineQosStart = 4 + octetsToInlineQos;
+        if (inlineQosStart > body.Length)
+        {
+            throw new InvalidDataException(
+                $"octetsToInlineQos={octetsToInlineQos} points past body end ({body.Length}).");
+        }
+
+        bool inlineQosPresent = (flags & SubmessageFlags.DataInlineQos) != 0;
+        bool keyPresent = (flags & SubmessageFlags.DataKey) != 0;
+        bool nonStandardPayload = (flags & SubmessageFlags.DataNonStandardPayload) != 0;
+
+        int payloadStart = inlineQosStart;
+        ReadOnlyMemory<byte> inlineQos = default;
+        if (inlineQosPresent)
+        {
+            int inlineQosLength = DataSubmessage.ScanParameterListLength(body[inlineQosStart..], littleEndian);
+            inlineQos = bodyMemory.Slice(inlineQosStart, inlineQosLength);
+            payloadStart += inlineQosLength;
+        }
+
+        ReadOnlyMemory<byte> serializedPayloadFragment = default;
+        if (payloadStart < body.Length)
+        {
+            serializedPayloadFragment = bodyMemory[payloadStart..];
+        }
+
+        return new DataFragSubmessage(
+            readerId,
+            writerId,
+            writerSn,
+            fragmentStartingNum,
+            fragmentsInSubmessage,
+            fragmentSize,
+            sampleSize,
+            serializedPayloadFragment,
+            inlineQos,
+            keyPresent,
+            nonStandardPayload,
+            extraFlagsValue);
+    }
 }

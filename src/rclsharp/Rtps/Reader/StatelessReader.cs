@@ -34,7 +34,10 @@ public sealed class StatelessReader : IDisposable
 
     public EntityId ReaderEntityId => _readerEntityId;
 
-    /// <summary>マッチング DATA を受信したときに発火。第二引数は送信元 Participant の GuidPrefix。</summary>
+    /// <summary>
+    /// マッチング DATA を受信したときに発火。第二引数は送信元 Participant の GuidPrefix。
+    /// payload は呼び出し中のみ有効な場合があるため、保持する場合は呼び出し側で複製する。
+    /// </summary>
     public event Action<ReadOnlyMemory<byte>, GuidPrefix>? PayloadReceived;
 
     public StatelessReader(
@@ -141,7 +144,7 @@ public sealed class StatelessReader : IDisposable
         }
         try
         {
-            ProcessPacket(packet.Span);
+            ProcessPacketBorrowed(packet);
         }
         catch (Exception ex)
         {
@@ -180,6 +183,33 @@ public sealed class StatelessReader : IDisposable
         }
     }
 
+    private void ProcessPacketBorrowed(ReadOnlyMemory<byte> packet)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        if (!RtpsHeader.TryRead(packet.Span, out _, out _, out var sourcePrefix))
+        {
+            return;
+        }
+        var reader = RtpsMessageReader.FromMemory(packet);
+        while (reader.TryReadNextMemory(out var hdr, out var body))
+        {
+            switch (hdr.Kind)
+            {
+                case SubmessageKind.Data:
+                    HandleData(sourcePrefix, body, hdr);
+                    break;
+                case SubmessageKind.DataFrag:
+                    HandleDataFrag(sourcePrefix, body, hdr);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
     private void HandleData(GuidPrefix sourcePrefix, ReadOnlySpan<byte> body, SubmessageHeader hdr)
     {
         var data = DataSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
@@ -201,9 +231,55 @@ public sealed class StatelessReader : IDisposable
         DeliverPayload(writerGuid, data.WriterSequenceNumber, data.SerializedPayload, sourcePrefix);
     }
 
+    private void HandleData(GuidPrefix sourcePrefix, ReadOnlyMemory<byte> body, SubmessageHeader hdr)
+    {
+        var data = DataSubmessage.ReadBodyBorrowed(body, hdr.Endianness, hdr.Flags);
+        if (!IsTargetReader(data.ReaderEntityId))
+        {
+            return;
+        }
+        if (data.SerializedPayload.IsEmpty)
+        {
+            return;
+        }
+
+        var writerGuid = new Guid(sourcePrefix, data.WriterEntityId);
+        if (!IsMatchedWriter(writerGuid))
+        {
+            BufferPendingPayload(writerGuid, data.SerializedPayload, sourcePrefix, data.WriterSequenceNumber);
+            return;
+        }
+        DeliverPayload(writerGuid, data.WriterSequenceNumber, data.SerializedPayload, sourcePrefix);
+    }
+
     private void HandleDataFrag(GuidPrefix sourcePrefix, ReadOnlySpan<byte> body, SubmessageHeader hdr)
     {
         var dataFrag = DataFragSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
+        if (!IsTargetReader(dataFrag.ReaderEntityId))
+        {
+            return;
+        }
+
+        var writerGuid = new Guid(sourcePrefix, dataFrag.WriterEntityId);
+        DataFragReassemblyResult? completed;
+        lock (_reassemblyLock)
+        {
+            completed = _dataFragReassembly.Add(writerGuid, dataFrag, hdr.Endianness);
+        }
+        if (completed is not null)
+        {
+            if (!IsMatchedWriter(writerGuid))
+            {
+                BufferPendingPayload(writerGuid, completed.Value.Payload, sourcePrefix, dataFrag.WriterSequenceNumber);
+                return;
+            }
+            DeliverPayload(writerGuid, dataFrag.WriterSequenceNumber, completed.Value.Payload, sourcePrefix);
+        }
+    }
+
+    private void HandleDataFrag(GuidPrefix sourcePrefix, ReadOnlyMemory<byte> body, SubmessageHeader hdr)
+    {
+        var dataFrag = DataFragSubmessage.ReadBodyBorrowed(body, hdr.Endianness, hdr.Flags);
         if (!IsTargetReader(dataFrag.ReaderEntityId))
         {
             return;

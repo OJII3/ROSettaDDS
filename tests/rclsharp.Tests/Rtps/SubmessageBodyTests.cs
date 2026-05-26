@@ -214,6 +214,25 @@ public class DataSubmessageTests
         read.InlineQos.ToArray().Should().Equal(inlineQos);
         read.SerializedPayload.ToArray().Should().Equal(payload);
     }
+
+    [Fact]
+    public void Data_memory版ReadBodyはpayloadをコピーせず元bufferを参照する()
+    {
+        var payload = new byte[] { 0x00, 0x01, 0x00, 0x00, 0x05 };
+        var src = new DataSubmessage(
+            EntityId.Unknown,
+            new EntityId(0x0000_0103u),
+            new SequenceNumber(1L),
+            payload);
+        var buf = new byte[src.BodySize];
+        src.WriteBody(buf, CdrEndianness.LittleEndian);
+
+        var read = DataSubmessage.ReadBodyBorrowed(buf.AsMemory(), CdrEndianness.LittleEndian, src.ExtraFlags);
+        int payloadOffset = DataSubmessage.FixedHeaderSize;
+        buf[payloadOffset + 4] = 0x99;
+
+        read.SerializedPayload.Span[4].Should().Be(0x99);
+    }
 }
 
 public class DataFragSubmessageTests
@@ -278,5 +297,28 @@ public class DataFragSubmessageTests
         var read = DataFragSubmessage.ReadBody(buf, CdrEndianness.LittleEndian, src.ExtraFlags);
         read.InlineQos.ToArray().Should().Equal(inlineQos);
         read.SerializedPayloadFragment.ToArray().Should().Equal(fragment);
+    }
+
+    [Fact]
+    public void DataFrag_memory版ReadBodyはfragmentをコピーせず元bufferを参照する()
+    {
+        var fragment = new byte[] { 1, 2, 3, 4 };
+        var src = new DataFragSubmessage(
+            EntityId.Unknown,
+            new EntityId(0x0000_0103u),
+            new SequenceNumber(10L),
+            fragmentStartingNumber: 1,
+            fragmentsInSubmessage: 1,
+            fragmentSize: 4,
+            sampleSize: 4,
+            serializedPayloadFragment: fragment);
+        var buf = new byte[src.BodySize];
+        src.WriteBody(buf, CdrEndianness.LittleEndian);
+
+        var read = DataFragSubmessage.ReadBodyBorrowed(buf.AsMemory(), CdrEndianness.LittleEndian, src.ExtraFlags);
+        int fragmentOffset = DataFragSubmessage.FixedHeaderSize;
+        buf[fragmentOffset + 2] = 0x77;
+
+        read.SerializedPayloadFragment.Span[2].Should().Be(0x77);
     }
 }

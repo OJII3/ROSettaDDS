@@ -51,9 +51,7 @@ public sealed class Publisher<T> : IDisposable
         var w = new CdrWriter(buffer, CdrEndianness.LittleEndian, cdrOrigin: CdrEncapsulation.Size);
         _serializer.Serialize(ref w, in value);
         int payloadLength = w.Position;
-        var payload = new byte[payloadLength];
-        Buffer.BlockCopy(buffer, 0, payload, 0, payloadLength);
-        return payload;
+        return buffer.AsMemory(0, payloadLength);
     }
 
     public void Start() => _writer.Start();

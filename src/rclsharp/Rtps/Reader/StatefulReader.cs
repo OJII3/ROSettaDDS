@@ -37,7 +37,11 @@ public sealed class StatefulReader : IDisposable
     public Guid Guid { get; }
     public EntityId ReaderEntityId => _readerEntityId;
 
-    /// <summary>新規 (非重複) サンプルを受信したときに発火。</summary>
+    /// <summary>
+    /// 新規 (非重複) サンプルを受信したときに発火。
+    /// <see cref="CacheChange.SerializedPayload"/> は呼び出し中のみ有効な場合があるため、
+    /// 保持する場合は呼び出し側で複製する。
+    /// </summary>
     public event Action<CacheChange>? PayloadReceived;
 
     public StatefulReader(
@@ -100,7 +104,7 @@ public sealed class StatefulReader : IDisposable
             return;
         }
 
-        try { ProcessPacket(packet.Span); }
+        try { ProcessPacketBorrowed(packet); }
         catch (Exception ex) { _logger.Warn($"StatefulReader failed to parse packet from {source}", ex); }
     }
 
@@ -226,6 +230,139 @@ public sealed class StatefulReader : IDisposable
         }
 
         // バッファした ACKNACK を送信 (同期 fire-and-forget)
+        if (pendingAcknacks is not null)
+        {
+            foreach (var (proxy, packetBytes) in pendingAcknacks)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                var dest = proxy.UnicastReplyLocator ?? _ackNackFallbackDestination;
+                _ = SendAckNackAsync(packetBytes, dest);
+            }
+        }
+    }
+
+    private void ProcessPacketBorrowed(ReadOnlyMemory<byte> packet)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!RtpsHeader.TryRead(packet.Span, out _, out _, out var sourcePrefix)) return;
+        var reader = RtpsMessageReader.FromMemory(packet);
+        List<(WriterProxy proxy, byte[] packet)>? pendingAcknacks = null;
+
+        while (reader.TryReadNextMemory(out var hdr, out var body))
+        {
+            switch (hdr.Kind)
+            {
+                case SubmessageKind.Data:
+                    {
+                        var data = DataSubmessage.ReadBodyBorrowed(body, hdr.Endianness, hdr.Flags);
+                        if (!data.ReaderEntityId.Equals(EntityId.Unknown)
+                            && !data.ReaderEntityId.Equals(_readerEntityId))
+                        {
+                            continue;
+                        }
+                        var writerGuid = new Guid(sourcePrefix, data.WriterEntityId);
+                        WriterProxy? proxy;
+                        lock (_matchedLock) { _matched.TryGetValue(writerGuid, out proxy); }
+                        if (proxy is null) continue;
+                        if (data.SerializedPayload.IsEmpty) continue;
+
+                        bool isNew = proxy.MarkReceived(data.WriterSequenceNumber);
+                        if (isNew)
+                        {
+                            var kind = ToChangeKind(data, hdr.Endianness);
+                            var change = new CacheChange(
+                                kind,
+                                writerGuid,
+                                data.WriterSequenceNumber,
+                                Time.Zero,
+                                data.SerializedPayload);
+                            PayloadReceived?.Invoke(change);
+                        }
+                        break;
+                    }
+                case SubmessageKind.DataFrag:
+                    {
+                        var dataFrag = DataFragSubmessage.ReadBodyBorrowed(body, hdr.Endianness, hdr.Flags);
+                        if (!dataFrag.ReaderEntityId.Equals(EntityId.Unknown)
+                            && !dataFrag.ReaderEntityId.Equals(_readerEntityId))
+                        {
+                            continue;
+                        }
+                        var writerGuid = new Guid(sourcePrefix, dataFrag.WriterEntityId);
+                        WriterProxy? proxy;
+                        lock (_matchedLock) { _matched.TryGetValue(writerGuid, out proxy); }
+                        if (proxy is null) continue;
+
+                        DataFragReassemblyResult? completed;
+                        lock (_reassemblyLock)
+                        {
+                            completed = _dataFragReassembly.Add(writerGuid, dataFrag, hdr.Endianness);
+                        }
+                        if (completed is null) continue;
+
+                        bool isNew = proxy.MarkReceived(dataFrag.WriterSequenceNumber);
+                        if (isNew)
+                        {
+                            var kind = ToChangeKind(completed.Value.InlineQos.Span, completed.Value.InlineQosEndianness);
+                            var change = new CacheChange(
+                                kind,
+                                writerGuid,
+                                dataFrag.WriterSequenceNumber,
+                                Time.Zero,
+                                completed.Value.Payload);
+                            PayloadReceived?.Invoke(change);
+                        }
+                        break;
+                    }
+                case SubmessageKind.Heartbeat:
+                    {
+                        var hb = HeartbeatSubmessage.ReadBody(body.Span, hdr.Endianness, hdr.Flags);
+                        if (!hb.ReaderEntityId.Equals(EntityId.Unknown)
+                            && !hb.ReaderEntityId.Equals(_readerEntityId))
+                        {
+                            continue;
+                        }
+                        var writerGuid = new Guid(sourcePrefix, hb.WriterEntityId);
+                        WriterProxy? proxy;
+                        lock (_matchedLock) { _matched.TryGetValue(writerGuid, out proxy); }
+                        if (proxy is null) continue;
+
+                        proxy.UpdateHeartbeatRange(hb.FirstSequenceNumber, hb.LastSequenceNumber);
+
+                        var ackPacket = BuildAckNackPacket(proxy);
+                        pendingAcknacks ??= new List<(WriterProxy, byte[])>();
+                        pendingAcknacks.Add((proxy, ackPacket));
+                        break;
+                    }
+                case SubmessageKind.Gap:
+                    {
+                        var gap = GapSubmessage.ReadBody(body.Span, hdr.Endianness, hdr.Flags);
+                        if (!gap.ReaderEntityId.Equals(EntityId.Unknown)
+                            && !gap.ReaderEntityId.Equals(_readerEntityId))
+                        {
+                            continue;
+                        }
+                        var writerGuid = new Guid(sourcePrefix, gap.WriterEntityId);
+                        WriterProxy? proxy;
+                        lock (_matchedLock) { _matched.TryGetValue(writerGuid, out proxy); }
+                        if (proxy is null) continue;
+
+                        proxy.MarkGap(gap.GapStart, gap.GapList);
+                        break;
+                    }
+                default:
+                    break;
+            }
+        }
+
         if (pendingAcknacks is not null)
         {
             foreach (var (proxy, packetBytes) in pendingAcknacks)

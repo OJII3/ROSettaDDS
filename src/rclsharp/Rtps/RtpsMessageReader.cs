@@ -10,6 +10,7 @@ namespace Rclsharp.Rtps;
 public ref struct RtpsMessageReader
 {
     private readonly ReadOnlySpan<byte> _buffer;
+    private readonly ReadOnlyMemory<byte> _memory;
     private int _position;
 
     public ProtocolVersion Version { get; }
@@ -19,7 +20,22 @@ public ref struct RtpsMessageReader
     public RtpsMessageReader(ReadOnlySpan<byte> buffer)
     {
         _buffer = buffer;
+        _memory = default;
         var (version, vendorId, prefix) = RtpsHeader.Read(buffer);
+        Version = version;
+        VendorId = vendorId;
+        SourceGuidPrefix = prefix;
+        _position = RtpsHeader.Size;
+    }
+
+    public static RtpsMessageReader FromMemory(ReadOnlyMemory<byte> buffer)
+        => new(buffer);
+
+    private RtpsMessageReader(ReadOnlyMemory<byte> buffer)
+    {
+        _buffer = buffer.Span;
+        _memory = buffer;
+        var (version, vendorId, prefix) = RtpsHeader.Read(_buffer);
         Version = version;
         VendorId = vendorId;
         SourceGuidPrefix = prefix;
@@ -62,6 +78,42 @@ public ref struct RtpsMessageReader
 
         header = hdr;
         body = _buffer.Slice(_position, bodyLength);
+        _position += bodyLength;
+        return true;
+    }
+
+    public bool TryReadNextMemory(out SubmessageHeader header, out ReadOnlyMemory<byte> body)
+    {
+        if (_memory.IsEmpty)
+        {
+            throw new InvalidOperationException(
+                "RtpsMessageReader must be constructed with FromMemory to return memory slices.");
+        }
+
+        header = default;
+        body = default;
+
+        if (_position >= _buffer.Length)
+        {
+            return false;
+        }
+        if (_position + SubmessageHeader.Size > _buffer.Length)
+        {
+            return false;
+        }
+        var hdr = SubmessageHeader.Read(_buffer.Slice(_position, SubmessageHeader.Size));
+        _position += SubmessageHeader.Size;
+
+        int bodyLength = ResolveBodyLength(hdr);
+
+        if (_position + bodyLength > _buffer.Length)
+        {
+            throw new InvalidDataException(
+                $"Submessage body length {bodyLength} exceeds remaining buffer {_buffer.Length - _position}.");
+        }
+
+        header = hdr;
+        body = _memory.Slice(_position, bodyLength);
         _position += bodyLength;
         return true;
     }

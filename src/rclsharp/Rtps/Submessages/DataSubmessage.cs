@@ -229,6 +229,66 @@ public sealed class DataSubmessage
     }
 
     /// <summary>
+    /// DATA の本体を読み出し、InlineQos / SerializedPayload は入力 memory の slice として返す。
+    /// 返却された memory は呼び出し元が保持する packet buffer の寿命内だけ有効。
+    /// </summary>
+    public static DataSubmessage ReadBodyBorrowed(
+        ReadOnlyMemory<byte> bodyMemory, CdrEndianness endianness, byte flags)
+    {
+        var body = bodyMemory.Span;
+        if (body.Length < FixedHeaderSize)
+        {
+            throw new ArgumentException(
+                $"Body requires at least {FixedHeaderSize} bytes.", nameof(bodyMemory));
+        }
+        bool littleEndian = endianness == CdrEndianness.LittleEndian;
+
+        ushort extraFlagsValue = littleEndian
+            ? BinaryPrimitives.ReadUInt16LittleEndian(body[..2])
+            : BinaryPrimitives.ReadUInt16BigEndian(body[..2]);
+        ushort octetsToInlineQos = littleEndian
+            ? BinaryPrimitives.ReadUInt16LittleEndian(body.Slice(2, 2))
+            : BinaryPrimitives.ReadUInt16BigEndian(body.Slice(2, 2));
+
+        var readerId = EntityId.Read(body.Slice(4, 4));
+        var writerId = EntityId.Read(body.Slice(8, 4));
+        var writerSn = SequenceNumber.Read(body.Slice(12, 8), littleEndian);
+
+        int inlineQosStart = 4 + octetsToInlineQos;
+        if (inlineQosStart > body.Length)
+        {
+            throw new InvalidDataException(
+                $"octetsToInlineQos={octetsToInlineQos} points past body end ({body.Length}).");
+        }
+
+        bool inlineQosPresent = (flags & SubmessageFlags.DataInlineQos) != 0;
+        bool dataPresent = (flags & SubmessageFlags.DataData) != 0;
+        bool keyPresent = (flags & SubmessageFlags.DataKey) != 0;
+        bool nonStandardPayload = (flags & SubmessageFlags.DataNonStandardPayload) != 0;
+
+        int payloadStart = inlineQosStart;
+        ReadOnlyMemory<byte> inlineQos = default;
+        if (inlineQosPresent)
+        {
+            int inlineQosLength = ScanParameterListLength(body[inlineQosStart..], littleEndian);
+            inlineQos = bodyMemory.Slice(inlineQosStart, inlineQosLength);
+            payloadStart += inlineQosLength;
+        }
+
+        ReadOnlyMemory<byte> serializedPayload = default;
+        if ((dataPresent || keyPresent) && payloadStart < body.Length)
+        {
+            int payloadLength = body.Length - payloadStart;
+            serializedPayload = bodyMemory.Slice(payloadStart, payloadLength);
+        }
+
+        return new DataSubmessage(
+            readerId, writerId, writerSn,
+            serializedPayload, inlineQos,
+            dataPresent, keyPresent, nonStandardPayload, extraFlagsValue);
+    }
+
+    /// <summary>
     /// PL_CDR ParameterList の終端 (SENTINEL) までを走査して長さを返す。SENTINEL を含む長さ。
     /// </summary>
     internal static int ScanParameterListLength(ReadOnlySpan<byte> source, bool littleEndian)
