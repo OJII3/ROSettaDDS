@@ -7,6 +7,8 @@ ARTIFACT_DIR="$ROOT_DIR/artifacts/unity"
 UNITY_EDITOR="${UNITY_EDITOR:-}"
 UNITY_USE_TEMP_PROJECT="${UNITY_USE_TEMP_PROJECT:-0}"
 TMP_ROOT=""
+PROJECT_VERSION_FILE="$PROJECT_PATH/ProjectSettings/ProjectVersion.txt"
+PROJECT_EDITOR_VERSION=""
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'USAGE'
@@ -22,9 +24,20 @@ USAGE
 fi
 
 if [[ -z "$UNITY_EDITOR" ]]; then
-  for candidate in \
-    "/Applications/Unity/Hub/Editor/6000.3.7f1/Unity.app/Contents/MacOS/Unity" \
-    /Applications/Unity/Hub/Editor/*/Unity.app/Contents/MacOS/Unity; do
+  if [[ -f "$PROJECT_VERSION_FILE" ]]; then
+    PROJECT_EDITOR_VERSION="$(sed -n 's/^m_EditorVersion: //p' "$PROJECT_VERSION_FILE" | head -n 1)"
+  fi
+
+  unity_editor_candidates=()
+  if [[ -n "$PROJECT_EDITOR_VERSION" ]]; then
+    unity_editor_candidates+=("/Applications/Unity/Hub/Editor/$PROJECT_EDITOR_VERSION/Unity.app/Contents/MacOS/Unity")
+    project_editor_series="${PROJECT_EDITOR_VERSION%.*}"
+    for candidate in /Applications/Unity/Hub/Editor/"$project_editor_series".*/Unity.app/Contents/MacOS/Unity; do
+      unity_editor_candidates+=("$candidate")
+    done
+  fi
+
+  for candidate in "${unity_editor_candidates[@]}"; do
     if [[ -x "$candidate" ]]; then
       UNITY_EDITOR="$candidate"
       break
@@ -32,8 +45,17 @@ if [[ -z "$UNITY_EDITOR" ]]; then
   done
 fi
 
-if [[ -z "$UNITY_EDITOR" || ! -x "$UNITY_EDITOR" ]]; then
-  echo "Unity Editor executable was not found. Set UNITY_EDITOR to the Unity executable path." >&2
+if [[ -z "$UNITY_EDITOR" ]]; then
+  if [[ -n "$PROJECT_EDITOR_VERSION" ]]; then
+    echo "Unity Editor $PROJECT_EDITOR_VERSION or compatible series was not found. Set UNITY_EDITOR to the Unity executable path." >&2
+  else
+    echo "Unity project version was not found. Set UNITY_EDITOR to the Unity executable path." >&2
+  fi
+  exit 1
+fi
+
+if [[ ! -x "$UNITY_EDITOR" ]]; then
+  echo "UNITY_EDITOR is not executable: $UNITY_EDITOR" >&2
   exit 1
 fi
 

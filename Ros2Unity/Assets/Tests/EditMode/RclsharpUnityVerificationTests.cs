@@ -26,6 +26,10 @@ namespace Rclsharp.UnityVerification.Tests
         private const int LeakMessagesPerCycle = 256;
         private const long ManagedLeakThresholdBytes = 8L * 1024L * 1024L;
         private const long UnityMonoLeakThresholdBytes = 64L * 1024L * 1024L;
+        private const int ParticipantPairFirstId = 40;
+        private const int ParticipantIdsPerPair = 2;
+        private const int ParticipantPairSlotCount =
+            (RtpsConstants.MaxParticipantId - ParticipantPairFirstId + 1) / ParticipantIdsPerPair;
         private static readonly TimeSpan ReceiveTimeout = TimeSpan.FromSeconds(5);
         private static readonly ThroughputScenario[] ThroughputScenarios =
         {
@@ -289,6 +293,9 @@ namespace Rclsharp.UnityVerification.Tests
             var spdpLocator = Locator.FromUdpV4(multicastIp, 7400u);
             var userMulticastLocator = Locator.FromUdpV4(multicastIp, 7401u);
             int pairId = Interlocked.Increment(ref s_participantPairSequence);
+            int pairSlot = (int)((uint)(pairId - 1) % ParticipantPairSlotCount);
+            int writerParticipantId = ParticipantPairFirstId + pairSlot * ParticipantIdsPerPair;
+            int readerParticipantId = writerParticipantId + 1;
 
             var writerSpdp = hub.Create(spdpLocator);
             var writerUnicast = hub.Create(Locator.FromUdpV4(IPAddress.Parse("10.42.0.1"), 7482u));
@@ -302,7 +309,7 @@ namespace Rclsharp.UnityVerification.Tests
             var writer = new DomainParticipant(new DomainParticipantOptions
             {
                 DomainId = 0,
-                ParticipantId = 40 + pairId * 2,
+                ParticipantId = writerParticipantId,
                 EntityName = "rclsharp_unity_writer_" + pairId,
                 MulticastGroup = multicastIp,
                 SpdpInterval = TimeSpan.FromMilliseconds(25),
@@ -316,7 +323,7 @@ namespace Rclsharp.UnityVerification.Tests
             var reader = new DomainParticipant(new DomainParticipantOptions
             {
                 DomainId = 0,
-                ParticipantId = 41 + pairId * 2,
+                ParticipantId = readerParticipantId,
                 EntityName = "rclsharp_unity_reader_" + pairId,
                 MulticastGroup = multicastIp,
                 SpdpInterval = TimeSpan.FromMilliseconds(25),
