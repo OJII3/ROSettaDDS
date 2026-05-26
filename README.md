@@ -212,3 +212,29 @@ ROS_LOCALHOST_ONLY=1 ROS_DOMAIN_ID=0 ros2 run demo_nodes_cpp talker
 ```
 
 SpdpDemo 側のログに `++ DISCOVERED ... unicast=UDPv4://127.0.0.1:7410` が出れば OK。
+
+<!-- rclsharp-local-performance:start -->
+## ローカル性能計測結果
+
+Unity EditMode のローカル計測結果です。実行環境や同時負荷で変動します。
+
+- 計測日時: 2026-05-26 09:58:14 UTC
+- Unity: 6000.3.7f1 (OSXEditor, Mono2x)
+- 実行環境: Mac OS X 26.5.0, Apple M2, 24,576 MB RAM
+
+### Throughput
+
+| Payload | Median messages/sec | Median serialized MiB/sec | Median mean ms/message | Samples |
+| --- | ---: | ---: | ---: | ---: |
+| 32 B | 59,938 | 2.3436 | 0.0167 | 5 |
+| 1024 B | 49,063 | 48.33 | 0.0204 | 5 |
+| 8192 B | 6,709 | 52.47 | 0.1491 | 5 |
+
+### Leak Guard
+
+| Metric | Final retained | Max retained |
+| --- | ---: | ---: |
+| Managed heap | 0 B | 0 B |
+| Unity mono used | 0 B | 0 B |
+
+<!-- rclsharp-local-performance:end -->

@@ -59,6 +59,17 @@ UNITY_USE_TEMP_PROJECT=1 scripts/unity/run_unity_editmode_tests.sh
 
 `artifacts/` は計測結果の生成物なのでコミットしない。
 
+`scripts/unity/run_unity_editmode_tests.sh` が成功した場合は、`editmode-results.xml`
+に埋め込まれた Unity Performance Testing の結果を読み取り、`README.md` 末尾の
+`rclsharp-local-performance` 管理ブロックを最新のローカル計測結果に差し替える。
+GitHub Actions には Unity 計測を組み込まず、性能値の更新はローカル実行時だけ行う。
+
+既存の `editmode-results.xml` から README だけ更新し直す場合:
+
+```sh
+scripts/unity/update_readme_performance.py
+```
+
 ## 判定方針
 
 Smoke test は件数・順序・タイムアウトで失敗させる。

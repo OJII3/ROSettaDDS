@@ -86,3 +86,7 @@ fi
   -testPlatform EditMode \
   -testResults "$ARTIFACT_DIR/editmode-results.xml" \
   -logFile "$ARTIFACT_DIR/unity-editmode.log"
+
+"$ROOT_DIR/scripts/unity/update_readme_performance.py" \
+  "$ARTIFACT_DIR/editmode-results.xml" \
+  "$ROOT_DIR/README.md"
