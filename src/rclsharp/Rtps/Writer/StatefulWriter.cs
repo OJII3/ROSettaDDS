@@ -38,6 +38,8 @@ public sealed class StatefulWriter : IDisposable
 
     private readonly object _matchedLock = new();
     private readonly Dictionary<Guid, ReaderProxy> _matched = new();
+    private readonly object _backgroundTasksLock = new();
+    private readonly HashSet<Task> _backgroundTasks = new();
 
     private CancellationTokenSource? _cts;
     private Task? _hbLoop;
@@ -94,7 +96,9 @@ public sealed class StatefulWriter : IDisposable
         }
         if (addedProxy is not null && _resendHistoryOnMatch)
         {
-            _ = SendHistoricalDataToReaderAsync(addedProxy, CancellationToken.None);
+            RunBackground(
+                token => SendHistoricalDataToReaderAsync(addedProxy, token),
+                "StatefulWriter historical DATA send");
         }
     }
 
@@ -147,10 +151,40 @@ public sealed class StatefulWriter : IDisposable
         try { _hbLoop?.Wait(TimeSpan.FromSeconds(1)); }
         catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException)) { }
         catch (Exception ex) { _logger.Warn("StatefulWriter heartbeat loop did not exit cleanly", ex); }
+        WaitForBackgroundTasks();
         _cts.Dispose();
         _cts = null;
         _hbLoop = null;
         _started = false;
+    }
+
+    private void WaitForBackgroundTasks()
+    {
+        Task[] tasks;
+        lock (_backgroundTasksLock)
+        {
+            tasks = _backgroundTasks.ToArray();
+        }
+
+        if (tasks.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!Task.WaitAll(tasks, TimeSpan.FromSeconds(1)))
+            {
+                _logger.Warn("StatefulWriter background tasks did not exit cleanly");
+            }
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException))
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("StatefulWriter background tasks did not exit cleanly", ex);
+        }
     }
 
     public void Dispose()
@@ -196,7 +230,9 @@ public sealed class StatefulWriter : IDisposable
             }
 
             // 再送
-            _ = ResendRequestedAsync(proxy, CancellationToken.None);
+            RunBackground(
+                token => ResendRequestedAsync(proxy, token),
+                "StatefulWriter requested resend");
         }
     }
 
@@ -229,6 +265,59 @@ public sealed class StatefulWriter : IDisposable
             try { await Task.Delay(_heartbeatPeriod, cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
             await SendHeartbeatToAllAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void RunBackground(Func<CancellationToken, Task> operation, string operationName)
+    {
+        CancellationToken token;
+        lock (_backgroundTasksLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            token = _cts?.Token ?? CancellationToken.None;
+        }
+
+        var task = RunBackgroundAsync(operation, operationName, token);
+        lock (_backgroundTasksLock)
+        {
+            _backgroundTasks.Add(task);
+        }
+
+        _ = task.ContinueWith(
+            completed =>
+            {
+                lock (_backgroundTasksLock)
+                {
+                    _backgroundTasks.Remove(completed);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private async Task RunBackgroundAsync(
+        Func<CancellationToken, Task> operation,
+        string operationName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await operation(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (_disposed || cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"{operationName} failed", ex);
         }
     }
 

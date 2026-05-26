@@ -508,6 +508,7 @@ public sealed class DomainParticipant : IDisposable
 
         _sedpPublicationsWriter.Start();
         _sedpSubscriptionsWriter.Start();
+        StartLocalUserWriters();
         StartLeaseExpiryLoop();
         _started = true;
     }
@@ -520,6 +521,7 @@ public sealed class DomainParticipant : IDisposable
             return;
         }
         StopLeaseExpiryLoop();
+        StopLocalUserWriters();
         _sedpPublicationsWriter.Stop();
         _sedpSubscriptionsWriter.Stop();
         _userMulticastTransport.Received -= OnUserDataPacketReceived;
@@ -537,6 +539,34 @@ public sealed class DomainParticipant : IDisposable
         _multicastTransport.Stop();
         _unicastTransport.Stop();
         _started = false;
+    }
+
+    private void StartLocalUserWriters()
+    {
+        LocalUserWriter[] writers;
+        lock (_localEndpointsLock)
+        {
+            writers = _localUserWriters.Values.SelectMany(static list => list).ToArray();
+        }
+
+        foreach (var local in writers)
+        {
+            local.Writer.Start();
+        }
+    }
+
+    private void StopLocalUserWriters()
+    {
+        LocalUserWriter[] writers;
+        lock (_localEndpointsLock)
+        {
+            writers = _localUserWriters.Values.SelectMany(static list => list).ToArray();
+        }
+
+        foreach (var local in writers)
+        {
+            local.Writer.Stop();
+        }
     }
 
     private void StartLeaseExpiryLoop()
@@ -688,7 +718,9 @@ public sealed class DomainParticipant : IDisposable
                 MatchLocalWriterWithRemoteReader(localWriter, remoteReader);
             }
         }
-        _ = _sedpPublicationsWriter.AddEndpointAsync(endpointData);
+        _ = RunSedpOperationAsync(
+            token => _sedpPublicationsWriter.AddEndpointAsync(endpointData, token),
+            "DomainParticipant failed to advertise local writer endpoint");
 
         var pub = new Publisher<T>(topicName, writer, serializer, UnregisterLocalWriter);
         pub.Start();
@@ -704,7 +736,8 @@ public sealed class DomainParticipant : IDisposable
         string topicName,
         ICdrSerializer<T> serializer,
         Action<T, GuidPrefix> handler,
-        string? typeName = null)
+        string? typeName = null,
+        SynchronizationContext? handlerContext = null)
     {
         ThrowIfDisposed();
         if (string.IsNullOrEmpty(topicName)) throw new ArgumentException("Value cannot be null or empty.", nameof(topicName));
@@ -757,17 +790,28 @@ public sealed class DomainParticipant : IDisposable
                 MatchLocalReaderWithRemoteWriter(localReader, remoteWriter);
             }
         }
-        _ = _sedpSubscriptionsWriter.AddEndpointAsync(endpointData);
+        _ = RunSedpOperationAsync(
+            token => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token),
+            "DomainParticipant failed to advertise local reader endpoint");
 
-        return new Subscription<T>(topicName, endpointGuid, reader, serializer, handler, UnregisterLocalReader);
+        return new Subscription<T>(
+            topicName,
+            endpointGuid,
+            reader,
+            serializer,
+            handler,
+            UnregisterLocalReader,
+            handlerContext,
+            _options.Logger);
     }
 
     /// <summary>ハンドラが GuidPrefix を必要としない場合のショートカット。</summary>
     public Subscription<T> CreateSubscription<T>(
         string topicName,
         ICdrSerializer<T> serializer,
-        Action<T> handler)
-        => CreateSubscription<T>(topicName, serializer, (value, _) => handler(value));
+        Action<T> handler,
+        SynchronizationContext? handlerContext = null)
+        => CreateSubscription<T>(topicName, serializer, (value, _) => handler(value), handlerContext: handlerContext);
 
     public void Dispose()
     {
@@ -960,6 +1004,27 @@ public sealed class DomainParticipant : IDisposable
         catch (Exception ex)
         {
             _options.Logger.Warn("DomainParticipant failed to send SEDP unregister", ex);
+        }
+    }
+
+    private async Task RunSedpOperationAsync(
+        Func<CancellationToken, ValueTask> operation,
+        string failureMessage)
+    {
+        var token = _leaseExpiryCts?.Token ?? CancellationToken.None;
+        try
+        {
+            await operation(token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (_disposed || token.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _options.Logger.Warn(failureMessage, ex);
         }
     }
 

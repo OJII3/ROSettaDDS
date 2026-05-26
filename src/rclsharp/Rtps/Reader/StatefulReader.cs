@@ -95,12 +95,22 @@ public sealed class StatefulReader : IDisposable
     /// <summary>transport.Received を購読してこれを呼ぶ。</summary>
     public void OnPacketReceived(ReadOnlyMemory<byte> packet, Locator source)
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         try { ProcessPacket(packet.Span); }
         catch (Exception ex) { _logger.Warn($"StatefulReader failed to parse packet from {source}", ex); }
     }
 
     public void ProcessPacket(ReadOnlySpan<byte> packet)
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         if (!RtpsHeader.TryRead(packet, out _, out _, out var sourcePrefix)) return;
         var reader = new RtpsMessageReader(packet);
         // 同 message 内で生成された ACKNACK を一旦バッファリングしてから送る (async と ref struct を分離)
@@ -220,9 +230,34 @@ public sealed class StatefulReader : IDisposable
         {
             foreach (var (proxy, packetBytes) in pendingAcknacks)
             {
+                if (_disposed)
+                {
+                    return;
+                }
+
                 var dest = proxy.UnicastReplyLocator ?? _ackNackFallbackDestination;
-                _ = _replyTransport.SendAsync(packetBytes, dest, CancellationToken.None);
+                _ = SendAckNackAsync(packetBytes, dest);
             }
+        }
+    }
+
+    private async Task SendAckNackAsync(byte[] packetBytes, Locator destination)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            await _replyTransport.SendAsync(packetBytes, destination, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("StatefulReader ACKNACK send failed", ex);
         }
     }
 
