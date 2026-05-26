@@ -6,7 +6,8 @@
 
 - Unity 6000.3 系 Editor で `com.ojii3.rclsharp` がパッケージとして解決・コンパイルできることを確認する。
 - `DomainParticipant`、`Publisher<T>`、`Subscription<T>` を Unity のテストランナーから起動し、`std_msgs/msg/String` 相当の publish/subscribe が成立することを確認する。
-- 通信処理のバッチ時間、messages/sec、管理ヒープ差分、Unity Profiler のメモリ指標を EditMode テストで記録する。
+- 通信処理のバッチ時間、messages/sec、serialized bytes/sec、管理ヒープ差分、Unity Profiler のメモリ指標を EditMode テストで記録する。
+- 反復 publish/subscribe と create/dispose の後に retained memory を確認し、明らかなリークを EditMode テストで失敗させる。
 - 外部 ROS 2 環境や OS の multicast 設定に依存しない計測を先に固定し、外部相互通信は別の手動/CI ジョブで拡張できる形にする。
 
 ## 検証範囲
@@ -17,7 +18,8 @@
 
 - Unity package import: `Ros2Unity/Packages/manifest.json` から `../../src/rclsharp` を参照する。
 - Smoke: 2 つの `DomainParticipant` 間で `StringMessage` を複数件送受信し、順序と件数を確認する。
-- Performance: warmup 後に複数メッセージを publish し、受信完了までの経過時間、messages/sec、managed heap delta、Unity allocated memory delta、Unity mono used memory delta を記録する。
+- Throughput: payload サイズ別に warmup 後の publish/subscribe batch を複数回実行し、受信完了までの経過時間、messages/sec、serialized bytes/sec、平均 ms/message を記録する。
+- Leak guard: participant / publisher / subscription / transport の create/dispose を繰り返し、full GC 後の managed heap と Unity mono used memory の retained delta を記録し、閾値を超えたら失敗させる。
 
 対象外:
 
@@ -61,7 +63,21 @@ UNITY_USE_TEMP_PROJECT=1 scripts/unity/run_unity_editmode_tests.sh
 
 Smoke test は件数・順序・タイムアウトで失敗させる。
 
-Performance test は現時点では閾値で失敗させず、Unity Performance Testing の sample group に数値を記録する。閾値は複数回のローカル/CI 実測から baseline を作ってから導入する。
+Throughput test は現時点では閾値で失敗させず、Unity Performance Testing の sample group に数値を記録する。閾値は複数回のローカル/CI 実測から baseline を作ってから導入する。
+
+Leak guard は throughput と違い、反復後に full GC を挟んだ retained delta に閾値を置く。Unity Editor 自体の一時キャッシュや package 側の初回初期化を避けるため、最初の cycle は warmup として baseline から外す。
+
+初期閾値は managed heap retained delta 8 MiB、Unity mono used retained delta 64 MiB とする。通信速度は 32 B、1024 B、8192 B の `StringMessage.Data` payload で測る。
+
+記録する主な sample group:
+
+- `rclsharp.throughput.<payload>B.elapsed_ms`
+- `rclsharp.throughput.<payload>B.messages_per_second`
+- `rclsharp.throughput.<payload>B.serialized_bytes_per_second`
+- `rclsharp.throughput.<payload>B.mean_message_ms`
+- `rclsharp.leak.managed_heap_retained_bytes`
+- `rclsharp.leak.unity_mono_used_retained_bytes`
+- `rclsharp.leak.unity_total_allocated_delta_bytes`
 
 ## Unity 公式 MCP
 
