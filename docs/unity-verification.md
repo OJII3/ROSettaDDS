@@ -42,6 +42,8 @@ UNITY_EDITOR=/Applications/Unity/Hub/Editor/6000.3.7f1/Unity.app/Contents/MacOS/
   scripts/unity/run_unity_editmode_tests.sh
 ```
 
+`Ros2Unity` を Unity Editor で開いている間は、Unity の制約で同じ project path を batchmode から開けない。その場合は Editor を閉じるか、検証用に複製した project path を `UNITY_PROJECT_PATH` で指定する。
+
 出力先:
 
 - `artifacts/unity/editmode-results.xml`
