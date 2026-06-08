@@ -4,8 +4,7 @@ namespace Rclsharp.Transport;
 
 /// <summary>
 /// RTPS パケットの送受信を担うトランスポート抽象。
-/// 実装例: <c>UdpUnicastTransport</c>, <c>UdpMulticastTransport</c> (Phase 2)、
-/// テスト用 <c>LoopbackTransport</c>。
+/// 実装例: <c>UdpTransport</c>、テスト用 <c>LoopbackTransport</c>。
 /// </summary>
 public interface IRtpsTransport : IDisposable
 {

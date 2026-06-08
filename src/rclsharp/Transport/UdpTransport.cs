@@ -69,7 +69,7 @@ public sealed class UdpTransport : IRtpsTransport
         if (bindAddress is null) throw new ArgumentNullException(nameof(bindAddress));
         if (bindAddress.AddressFamily != AddressFamily.InterNetwork)
         {
-            throw new ArgumentException("Only IPv4 bindAddress supported in Phase 2.", nameof(bindAddress));
+            throw new ArgumentException("Only IPv4 bindAddress supported.", nameof(bindAddress));
         }
 
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -111,7 +111,7 @@ public sealed class UdpTransport : IRtpsTransport
         if (multicastGroup is null) throw new ArgumentNullException(nameof(multicastGroup));
         if (multicastGroup.AddressFamily != AddressFamily.InterNetwork)
         {
-            throw new ArgumentException("Only IPv4 multicast supported in Phase 2.", nameof(multicastGroup));
+            throw new ArgumentException("Only IPv4 multicast supported.", nameof(multicastGroup));
         }
 
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);

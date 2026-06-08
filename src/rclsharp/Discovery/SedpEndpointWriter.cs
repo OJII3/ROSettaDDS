@@ -11,8 +11,7 @@ using Guid = Rclsharp.Common.Guid;
 namespace Rclsharp.Discovery;
 
 /// <summary>
-/// SEDP の Publications または Subscriptions Writer。
-/// Phase 8 で Reliable Stateful Writer ベースに変更:
+/// SEDP の Publications または Subscriptions Writer。Reliable Stateful Writer ベース。
 /// 各 endpoint = 1 サンプルとして history に追加し、新規 reader が match されたら NACK で再送される
 /// (TRANSIENT_LOCAL に近い挙動)。
 /// 同一 endpoint GUID の履歴は最新状態だけを保持し、古い alive/unregister は再送対象から外す。

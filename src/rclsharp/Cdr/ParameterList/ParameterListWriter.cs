@@ -10,7 +10,7 @@ namespace Rclsharp.Cdr.ParameterList;
 /// <remarks>
 /// パラメータ値の内部 alignment は外側の <see cref="CdrWriter"/> の <c>cdrOrigin</c> を継承する。
 /// PL_CDR で使われる主要な値型 (uint8/16/32, Time_t/Duration_t (= 4B+4B), Locator, Guid, ProtocolVersion, VendorId)
-/// は最大 4B 整列で十分なため、Phase 1 ではこの単純化で問題ない。
+/// は最大 4B 整列で十分なため、この単純化で問題ない。
 /// </remarks>
 public ref struct ParameterListWriter
 {

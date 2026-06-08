@@ -147,7 +147,7 @@ public sealed class StatefulReader : IDisposable
                                 kind,
                                 writerGuid,
                                 data.WriterSequenceNumber,
-                                Time.Zero, // INFO_TS は今回参照しない (Phase 7 簡易)
+                                Time.Zero,
                                 data.SerializedPayload);
                             PayloadReceived?.Invoke(change);
                         }
@@ -425,7 +425,6 @@ public sealed class StatefulReader : IDisposable
         int count = proxy.IncrementAckNackCount();
         var snSet = proxy.BuildAckNackBitmap();
 
-        // Final=true: 仕様上は Reliable で false が一般的だが、Phase 7 では応答必須を意味する false でも true でも実装に害なし
         var ack = new AckNackSubmessage(
             readerEntityId: _readerEntityId,
             writerEntityId: proxy.WriterGuid.EntityId,

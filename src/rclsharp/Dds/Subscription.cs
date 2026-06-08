@@ -9,7 +9,7 @@ namespace Rclsharp.Dds;
 
 /// <summary>
 /// 型付き Subscription。<see cref="StatelessReader"/> から SerializedPayload を受け取って
-/// <see cref="ICdrSerializer{T}"/> でデシリアライズし、ハンドラへ渡す。Best-Effort 専用 (Phase 5)。
+/// <see cref="ICdrSerializer{T}"/> でデシリアライズし、ハンドラへ渡す。Best-Effort 専用。
 /// </summary>
 public sealed class Subscription<T> : IDisposable
 {

@@ -7,7 +7,7 @@ namespace Rclsharp.Rtps.HistoryCache;
 /// <summary>
 /// Writer 側の履歴キャッシュ。SequenceNumber を 1 から自動採番し、
 /// (Reliable で) Reader からの再送要求に応えるためにサンプルを保持する。
-/// Phase 7 では KEEP_ALL 相当 (明示削除のみ)。<see cref="MaxSamples"/> を超えると古い順に自動削除される。
+/// KEEP_ALL 相当 (明示削除のみ)。<see cref="MaxSamples"/> を超えると古い順に自動削除される。
 /// </summary>
 public sealed class WriterHistoryCache
 {

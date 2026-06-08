@@ -65,7 +65,7 @@ public sealed class DomainParticipantOptions
     public IRtpsTransport? CustomUnicastTransport { get; init; }
 
     /// <summary>
-    /// ユーザートピック用 multicast transport の差し替えポイント (Phase 5)。null なら自動生成。
+    /// ユーザートピック用 multicast transport の差し替えポイント。null なら自動生成。
     /// </summary>
     public IRtpsTransport? CustomUserMulticastTransport { get; init; }
 
