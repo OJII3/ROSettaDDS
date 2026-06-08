@@ -8,7 +8,7 @@
 ## Unity メタファイル
 
 - Unity で取り込む `src/rclsharp` 配下のファイル・フォルダには `.meta` を必ずコミットすること。
-- `.meta` の不足や orphan は `scripts/check_unity_meta.sh` で確認すること。
+- `.meta` の不足や orphan は `.github/scripts/check_unity_meta.sh` で確認すること。
 
 ## msg 型の命名方針 (案 B)
 

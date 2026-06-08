@@ -22,7 +22,7 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Check Unity meta files
-        run: bash scripts/check_unity_meta.sh
+        run: bash .github/scripts/check_unity_meta.sh
 
       - name: Restore
         run: dotnet restore rclsharp.sln
