@@ -169,8 +169,7 @@ public sealed class DataSubmessage
     /// <summary>
     /// DATA の本体を読み出す。submessage の length=0 (= 末尾まで) の場合、body は呼び出し側で
     /// 既にメッセージ末尾までスライスされている前提。
-    /// InlineQos / SerializedPayload は新しい byte[] にコピーして返す
-    /// (ゼロコピー版は今後の最適化フェーズで検討)。
+    /// InlineQos / SerializedPayload は新しい byte[] にコピーして返す。
     /// </summary>
     public static DataSubmessage ReadBody(
         ReadOnlySpan<byte> body, CdrEndianness endianness, byte flags)

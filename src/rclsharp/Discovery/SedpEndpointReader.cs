@@ -10,8 +10,7 @@ namespace Rclsharp.Discovery;
 
 /// <summary>
 /// SEDP の Publications または Subscriptions Reader。
-/// Phase 8 で Reliable Stateful Reader ベースに変更。
-/// PayloadReceived → encap PL_CDR を解釈 → DiscoveryDb.UpsertEndpoint。
+/// Reliable Stateful Reader ベース。PayloadReceived → encap PL_CDR を解釈 → DiscoveryDb.UpsertEndpoint。
 /// </summary>
 public sealed class SedpEndpointReader : IDisposable
 {

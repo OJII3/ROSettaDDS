@@ -15,7 +15,6 @@ namespace Rclsharp.Dds;
 
 /// <summary>
 /// rclsharp の Domain Participant。SPDP / SEDP / ユーザートピック transport を一元管理する。
-/// Phase 6 で SEDP (Best-Effort) を追加。Reliable 化は Phase 7。
 /// </summary>
 public sealed class DomainParticipant : IDisposable
 {
@@ -71,13 +70,13 @@ public sealed class DomainParticipant : IDisposable
     public Guid Guid { get; }
     public DiscoveryDb DiscoveryDb => _discoveryDb;
 
-    /// <summary>ユーザートピックの multicast 送受信に使うトランスポート (Phase 5)。</summary>
+    /// <summary>ユーザートピックの multicast 送受信に使うトランスポート。</summary>
     public IRtpsTransport UserMulticastTransport => _userMulticastTransport;
 
     /// <summary>ユーザートピックの unicast 送受信に使うトランスポート。</summary>
     public IRtpsTransport UserUnicastTransport => _userUnicastTransport;
 
-    /// <summary>ユーザートピックの multicast 送信先 Locator (Phase 5)。</summary>
+    /// <summary>ユーザートピックの multicast 送信先 Locator。</summary>
     public Locator UserMulticastDestination => _userMulticastDestination;
 
     private sealed class LocalUserReader
@@ -204,9 +203,8 @@ public sealed class DomainParticipant : IDisposable
             interval: _options.SpdpInterval,
             logger: _options.Logger);
 
-        // SEDP (Phase 8 で Reliable 化)。
-        // - Writer: multicast transport で送信、unicast transport で ACKNACK を受信
-        // - Reader: multicast / unicast 両方で DATA/HB を受信、unicast で ACKNACK を返信
+        // SEDP: Writer は multicast transport で送信、unicast transport で ACKNACK を受信。
+        // Reader は multicast / unicast 両方で DATA/HB を受信、unicast で ACKNACK を返信。
         _sedpPublicationsWriter = new SedpEndpointWriter(
             transport: _multicastTransport,
             multicastDestination: _multicastDestination,
