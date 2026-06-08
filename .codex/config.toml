@@ -1,2 +1,0 @@
-[mcp_servers.unity-mcp]
-command = "scripts/unity/unity_mcp_relay.sh"
