@@ -19,6 +19,10 @@
           inherit system;
           overlays = [ nix-ros-overlay.overlays.default ];
         };
+        uloop-cli =
+          (pkgs.callPackage ./nix/uloop-cli {
+            nodejs = pkgs.nodejs;
+          })."uloop-cli-2.1.6";
         rosEnv = pkgs.rosPackages.humble.buildEnv {
           paths = with pkgs.rosPackages.humble; [
             ros-base
@@ -28,23 +32,27 @@
         };
       in
       {
-        devShells.default = pkgs.mkShell ({
-          name = "rclsharp";
-          packages = [
-            rosEnv
-            pkgs.colcon
-            pkgs.dotnet-sdk_8
-            pkgs.python3
-          ];
-          RMW_IMPLEMENTATION = "rmw_fastrtps_cpp";
-          DOTNET_CLI_TELEMETRY_OPTOUT = "1";
-          DOTNET_NOLOGO = "1";
-        } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
-          # Work around Nix dotnet aborting during ICU globalization init on macOS.
-          DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
-          # Some ROS 2 Humble binaries in nix-ros-overlay reference libyaml via @rpath.
-          DYLD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.libyaml ];
-        });
+        devShells.default = pkgs.mkShell (
+          {
+            name = "rclsharp";
+            packages = [
+              rosEnv
+              pkgs.colcon
+              pkgs.dotnet-sdk_8
+              pkgs.python3
+              uloop-cli
+            ];
+            RMW_IMPLEMENTATION = "rmw_fastrtps_cpp";
+            DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+            DOTNET_NOLOGO = "1";
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+            # Work around Nix dotnet aborting during ICU globalization init on macOS.
+            DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = "1";
+            # Some ROS 2 Humble binaries in nix-ros-overlay reference libyaml via @rpath.
+            DYLD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.libyaml ];
+          }
+        );
       }
     );
 

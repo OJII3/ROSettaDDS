@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "com.ojii3.rclsharp": "file:../../src/rclsharp",
+    "io.github.hatayama.uloopmcp": "https://github.com/hatayama/unity-cli-loop.git?path=/Packages/src",
     "com.unity.ai.assistant": "2.9.0-pre.2",
     "com.unity.ai.navigation": "2.0.9",
     "com.unity.collab-proxy": "2.11.3",
