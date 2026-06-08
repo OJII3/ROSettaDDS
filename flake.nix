@@ -22,7 +22,7 @@
         uloop-cli =
           (pkgs.callPackage ./nix/uloop-cli {
             nodejs = pkgs.nodejs;
-          })."uloop-cli-2.1.3";
+          })."uloop-cli-2.1.6";
         rosEnv = pkgs.rosPackages.humble.buildEnv {
           paths = with pkgs.rosPackages.humble; [
             ros-base

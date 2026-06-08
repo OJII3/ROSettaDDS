@@ -4,13 +4,13 @@
 
 let
   sources = {
-    "commander-14.0.3" = {
+    "commander-15.0.0" = {
       name = "commander";
       packageName = "commander";
-      version = "14.0.3";
+      version = "15.0.0";
       src = fetchurl {
-        url = "https://registry.npmjs.org/commander/-/commander-14.0.3.tgz";
-        sha512 = "H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==";
+        url = "https://registry.npmjs.org/commander/-/commander-15.0.0.tgz";
+        sha512 = "z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==";
       };
     };
     "launch-unity-0.17.1" = {
@@ -22,34 +22,34 @@ let
         sha512 = "Cfb2jgdkz/4K7AN/J9fYyzdVTKDavXzTRTNUEjSAriKyqsLyNkz0g/6SA475jIjjGyaZj50m/CFcU+ZK5rgmlg==";
       };
     };
-    "semver-7.8.0" = {
+    "semver-7.8.1" = {
       name = "semver";
       packageName = "semver";
-      version = "7.8.0";
+      version = "7.8.1";
       src = fetchurl {
-        url = "https://registry.npmjs.org/semver/-/semver-7.8.0.tgz";
-        sha512 = "AcM7dV/5ul4EekoQ29Agm5vri8JNqRyj39o0qpX6vDF2GZrtutZl5RwgD1XnZjiTAfncsJhMI48QQH3sN87YNA==";
+        url = "https://registry.npmjs.org/semver/-/semver-7.8.1.tgz";
+        sha512 = "rkVq3IXh+4FDGch+KwzX3aV9W3kO54GyEgpvBzSyctDA6Xtd7RJQV1xmXbeQp5v7+VzLOfVqiutSE6GICgPFvg==";
       };
     };
   };
 in
 {
-  "uloop-cli-2.1.3" = nodeEnv.buildNodePackage {
+  "uloop-cli-2.1.6" = nodeEnv.buildNodePackage {
     name = "uloop-cli";
     packageName = "uloop-cli";
-    version = "2.1.3";
+    version = "2.1.6";
     src = fetchurl {
-      url = "https://registry.npmjs.org/uloop-cli/-/uloop-cli-2.1.3.tgz";
-      sha512 = "iFbBkT0nKJIE7UgJq1Jakj4o8Zug3HE4ABd6g6itbgMwh4O2HyUSltEWmbaXkhclCD6fTOTVxWzlVfmNBCOn1g==";
+      url = "https://registry.npmjs.org/uloop-cli/-/uloop-cli-2.1.6.tgz";
+      sha512 = "e3bieo8Ps9lrYRqGqW/90ahrRmUc5+jhpM/m0y3bSOHB0NhZ60yRV6Qzk/iaw5GPbxhTqn3byjHouU+PTNYSYw==";
     };
     dependencies = [
-      sources."commander-14.0.3"
+      sources."commander-15.0.0"
       sources."launch-unity-0.17.1"
-      sources."semver-7.8.0"
+      sources."semver-7.8.1"
     ];
     buildInputs = globalBuildInputs;
     meta = {
-      description = "CLI tool for Unity Editor communication via uLoopMCP";
+      description = "CLI tool for Unity Editor communication via Unity CLI Loop";
       homepage = "https://github.com/hatayama/uLoopMCP#readme";
       license = "MIT";
     };
