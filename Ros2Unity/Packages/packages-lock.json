@@ -239,6 +239,16 @@
       },
       "url": "https://packages.unity.com"
     },
+    "io.github.hatayama.uloopmcp": {
+      "version": "https://github.com/hatayama/unity-cli-loop.git?path=/Packages/src",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {
+        "com.unity.ugui": "1.0.0",
+        "com.unity.nuget.newtonsoft-json": "3.2.1"
+      },
+      "hash": "83eadd2606c6f8c31f63daf7a65667c1f24a7051"
+    },
     "com.unity.modules.accessibility": {
       "version": "1.0.0",
       "depth": 0,
