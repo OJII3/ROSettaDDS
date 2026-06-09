@@ -21,8 +21,14 @@ for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
-        case "--input": input = args[++i]; break;
-        case "--output": output = args[++i]; break;
+        case "--input":
+            if (++i >= args.Length) { Console.Error.WriteLine("--input requires a value"); return 2; }
+            input = args[i];
+            break;
+        case "--output":
+            if (++i >= args.Length) { Console.Error.WriteLine("--output requires a value"); return 2; }
+            output = args[i];
+            break;
         case "--check": check = true; break;
         default:
             Console.Error.WriteLine($"Unknown argument: {args[i]}");

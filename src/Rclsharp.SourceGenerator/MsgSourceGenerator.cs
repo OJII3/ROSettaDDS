@@ -102,7 +102,8 @@ public sealed class MsgSourceGenerator : IIncrementalGenerator
         if (msgDir is not null && parent is not null &&
             string.Equals(Path.GetFileName(msgDir), "msg", StringComparison.Ordinal))
         {
-            return Path.GetFileName(parent);
+            string pkg = Path.GetFileName(parent);
+            if (pkg.Length > 0) return pkg;
         }
         // フォールバック: 直近のディレクトリ名。
         return msgDir is null ? "msgs" : Path.GetFileName(msgDir);

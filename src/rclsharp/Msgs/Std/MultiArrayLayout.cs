@@ -41,6 +41,7 @@ public sealed class MultiArrayLayoutSerializer : ICdrSerializer<MultiArrayLayout
             var serDim = MultiArrayDimensionSerializer.Instance;
             foreach (ref readonly var eDim in value.Dim.AsSpan())
             {
+                total += 3;
                 total += serDim.GetSerializedSize(in eDim);
             }
         }

@@ -252,23 +252,58 @@ public sealed class CSharpEmitter
                 }
                 return;
             case BaseTypeCategory.String:
-                sb.Append($"        if (value.{pname} is not null)\n");
-                sb.Append($"        {{\n");
-                sb.Append($"            foreach (var {ElemLocal(pname)} in value.{pname})\n");
-                sb.Append($"            {{\n");
-                sb.Append($"                total += 4 + ({ElemLocal(pname)} is null ? 0 : System.Text.Encoding.UTF8.GetByteCount({ElemLocal(pname)})) + 1;\n");
-                sb.Append($"            }}\n");
-                sb.Append($"        }}\n");
+                // WriteString → WriteUInt32 → AlignTo(4): 最大 3 バイトのパディングが各要素の前に発生する。
+                // fixed-size で null の場合は Serialize が new string[N] で代替するためそれに合わせる。
+                if (fixedSize)
+                {
+                    sb.Append($"        var {LocalArr(pname)} = value.{pname} ?? new string[{t.ArrayLength}];\n");
+                    sb.Append($"        foreach (var {ElemLocal(pname)} in {LocalArr(pname)})\n");
+                    sb.Append($"        {{\n");
+                    sb.Append($"            total += 3;\n");
+                    sb.Append($"            total += 4 + ({ElemLocal(pname)} is null ? 0 : System.Text.Encoding.UTF8.GetByteCount({ElemLocal(pname)})) + 1;\n");
+                    sb.Append($"        }}\n");
+                }
+                else
+                {
+                    sb.Append($"        if (value.{pname} is not null)\n");
+                    sb.Append($"        {{\n");
+                    sb.Append($"            foreach (var {ElemLocal(pname)} in value.{pname})\n");
+                    sb.Append($"            {{\n");
+                    sb.Append($"                total += 3;\n");
+                    sb.Append($"                total += 4 + ({ElemLocal(pname)} is null ? 0 : System.Text.Encoding.UTF8.GetByteCount({ElemLocal(pname)})) + 1;\n");
+                    sb.Append($"            }}\n");
+                    sb.Append($"        }}\n");
+                }
                 return;
             case BaseTypeCategory.Named:
-                sb.Append($"        if (value.{pname} is not null)\n");
-                sb.Append($"        {{\n");
-                sb.Append($"            var {SerLocal(pname)} = {SerializerRef(t, ownPkg)}.Instance;\n");
-                sb.Append($"            foreach (ref readonly var {ElemLocal(pname)} in value.{pname}.AsSpan())\n");
-                sb.Append($"            {{\n");
-                sb.Append($"                total += {SerLocal(pname)}.GetSerializedSize(in {ElemLocal(pname)});\n");
-                sb.Append($"            }}\n");
-                sb.Append($"        }}\n");
+                // 要素間アライメントパディング (要素先頭アライメント-1 バイト最大) を各要素に加える。
+                // fixed-size で null の場合は Serialize が new T[N] で代替するためそれに合わせる。
+                SizeInfo elemInfo = _metrics.OfMessage(t.Package ?? ownPkg, t.Name!);
+                int interPad = elemInfo.LeadingAlignment - 1;
+                if (fixedSize)
+                {
+                    sb.Append($"        var {LocalArr(pname)} = value.{pname} ?? new {ElementCSharpType(t, ownPkg)}[{t.ArrayLength}];\n");
+                    sb.Append($"        {{\n");
+                    sb.Append($"            var {SerLocal(pname)} = {SerializerRef(t, ownPkg)}.Instance;\n");
+                    sb.Append($"            foreach (ref readonly var {ElemLocal(pname)} in {LocalArr(pname)}.AsSpan())\n");
+                    sb.Append($"            {{\n");
+                    if (interPad > 0) sb.Append($"                total += {interPad};\n");
+                    sb.Append($"                total += {SerLocal(pname)}.GetSerializedSize(in {ElemLocal(pname)});\n");
+                    sb.Append($"            }}\n");
+                    sb.Append($"        }}\n");
+                }
+                else
+                {
+                    sb.Append($"        if (value.{pname} is not null)\n");
+                    sb.Append($"        {{\n");
+                    sb.Append($"            var {SerLocal(pname)} = {SerializerRef(t, ownPkg)}.Instance;\n");
+                    sb.Append($"            foreach (ref readonly var {ElemLocal(pname)} in value.{pname}.AsSpan())\n");
+                    sb.Append($"            {{\n");
+                    if (interPad > 0) sb.Append($"                total += {interPad};\n");
+                    sb.Append($"                total += {SerLocal(pname)}.GetSerializedSize(in {ElemLocal(pname)});\n");
+                    sb.Append($"            }}\n");
+                    sb.Append($"        }}\n");
+                }
                 return;
         }
     }
