@@ -168,6 +168,23 @@ using var pub = participant.CreatePublisher<StringMessage>(
     StringMessage.DdsTypeName);
 ```
 
+## msg コード生成 (rosidl 相当)
+
+`.msg` から CDR 互換な C# 型 (`struct` + `ICdrSerializer<T>`) を**コンパイル時生成**します
+(IL2CPP / AOT 互換)。`src/rclsharp/Msgs/` の標準型 (`std_msgs`, `builtin_interfaces`) は
+`msgs/` を入力とした生成物です。
+
+```sh
+# 標準 msg を再生成 (入力: msgs/, 出力: src/rclsharp/Msgs/)
+dotnet run --project tools/rclsharp-genmsg -- --input msgs --output src/rclsharp/Msgs
+```
+
+- CLI (`tools/rclsharp-genmsg`): 標準 msg の保守、Unity/任意プロジェクトへの生成
+- Source Generator (`src/Rclsharp.SourceGenerator`): .NET プロジェクトでの透過生成 (例: `samples/CustomMsgGen`)
+- Unity: CLI で Assets 配下へ生成 → Unity が通常コンパイル
+
+文法サポート範囲・命名ポリシー・各環境の使い方は [docs/msg-codegen.md](docs/msg-codegen.md) を参照してください。
+
 ## Unity 互換性
 
 Unity では API Compatibility Level を .NET Standard 2.1 に設定して利用します。

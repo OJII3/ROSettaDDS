@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\rclsharp\rclsharp.csproj" />
+    <ProjectReference Include="..\..\src\Rclsharp.MsgGen\Rclsharp.MsgGen.csproj" />
   </ItemGroup>
 
   <ItemGroup>
