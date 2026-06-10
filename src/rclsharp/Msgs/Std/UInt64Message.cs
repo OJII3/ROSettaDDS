@@ -4,51 +4,52 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/UInt64 の C# 表現 (生成コード)。
-/// </summary>
-public struct UInt64Message
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/UInt64";
-    public const string DdsTypeName = "std_msgs::msg::dds_::UInt64_";
-
-    public ulong Data;
-
-    public UInt64Message(ulong data)
+    /// <summary>
+    /// std_msgs/msg/UInt64 の C# 表現 (生成コード)。
+    /// </summary>
+    public struct UInt64Message
     {
-        Data = data;
+        public const string RosTypeName = "std_msgs/msg/UInt64";
+        public const string DdsTypeName = "std_msgs::msg::dds_::UInt64_";
+
+        public ulong Data;
+
+        public UInt64Message(ulong data)
+        {
+            Data = data;
+        }
+
+        public override string ToString() => $"UInt64Message(data={Data})";
     }
 
-    public override string ToString() => $"UInt64Message(data={Data})";
-}
-
-public sealed class UInt64MessageSerializer : ICdrSerializer<UInt64Message>
-{
-    public static readonly UInt64MessageSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in UInt64Message value)
+    public sealed class UInt64MessageSerializer : ICdrSerializer<UInt64Message>
     {
-        int total = 0;
-        total += 8;
-        return total;
-    }
+        public static readonly UInt64MessageSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in UInt64Message value)
-    {
-        writer.WriteUInt64(value.Data);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out UInt64Message value)
-    {
-        ulong data = reader.ReadUInt64();
-        value = new UInt64Message(data);
-    }
+        public int GetSerializedSize(in UInt64Message value)
+        {
+            int total = 0;
+            total += 8;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in UInt64Message value)
-    {
+        public void Serialize(ref CdrWriter writer, in UInt64Message value)
+        {
+            writer.WriteUInt64(value.Data);
+        }
+
+        public void Deserialize(ref CdrReader reader, out UInt64Message value)
+        {
+            ulong data = reader.ReadUInt64();
+            value = new UInt64Message(data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in UInt64Message value)
+        {
+        }
     }
 }

@@ -4,51 +4,52 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/Bool の C# 表現 (生成コード)。
-/// </summary>
-public struct BoolMessage
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/Bool";
-    public const string DdsTypeName = "std_msgs::msg::dds_::Bool_";
-
-    public bool Data;
-
-    public BoolMessage(bool data)
+    /// <summary>
+    /// std_msgs/msg/Bool の C# 表現 (生成コード)。
+    /// </summary>
+    public struct BoolMessage
     {
-        Data = data;
+        public const string RosTypeName = "std_msgs/msg/Bool";
+        public const string DdsTypeName = "std_msgs::msg::dds_::Bool_";
+
+        public bool Data;
+
+        public BoolMessage(bool data)
+        {
+            Data = data;
+        }
+
+        public override string ToString() => $"BoolMessage(data={Data})";
     }
 
-    public override string ToString() => $"BoolMessage(data={Data})";
-}
-
-public sealed class BoolMessageSerializer : ICdrSerializer<BoolMessage>
-{
-    public static readonly BoolMessageSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in BoolMessage value)
+    public sealed class BoolMessageSerializer : ICdrSerializer<BoolMessage>
     {
-        int total = 0;
-        total += 1;
-        return total;
-    }
+        public static readonly BoolMessageSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in BoolMessage value)
-    {
-        writer.WriteBool(value.Data);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out BoolMessage value)
-    {
-        bool data = reader.ReadBool();
-        value = new BoolMessage(data);
-    }
+        public int GetSerializedSize(in BoolMessage value)
+        {
+            int total = 0;
+            total += 1;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in BoolMessage value)
-    {
+        public void Serialize(ref CdrWriter writer, in BoolMessage value)
+        {
+            writer.WriteBool(value.Data);
+        }
+
+        public void Deserialize(ref CdrReader reader, out BoolMessage value)
+        {
+            bool data = reader.ReadBool();
+            value = new BoolMessage(data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in BoolMessage value)
+        {
+        }
     }
 }

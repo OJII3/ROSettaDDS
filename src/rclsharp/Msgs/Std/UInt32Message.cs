@@ -4,51 +4,52 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/UInt32 の C# 表現 (生成コード)。
-/// </summary>
-public struct UInt32Message
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/UInt32";
-    public const string DdsTypeName = "std_msgs::msg::dds_::UInt32_";
-
-    public uint Data;
-
-    public UInt32Message(uint data)
+    /// <summary>
+    /// std_msgs/msg/UInt32 の C# 表現 (生成コード)。
+    /// </summary>
+    public struct UInt32Message
     {
-        Data = data;
+        public const string RosTypeName = "std_msgs/msg/UInt32";
+        public const string DdsTypeName = "std_msgs::msg::dds_::UInt32_";
+
+        public uint Data;
+
+        public UInt32Message(uint data)
+        {
+            Data = data;
+        }
+
+        public override string ToString() => $"UInt32Message(data={Data})";
     }
 
-    public override string ToString() => $"UInt32Message(data={Data})";
-}
-
-public sealed class UInt32MessageSerializer : ICdrSerializer<UInt32Message>
-{
-    public static readonly UInt32MessageSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in UInt32Message value)
+    public sealed class UInt32MessageSerializer : ICdrSerializer<UInt32Message>
     {
-        int total = 0;
-        total += 4;
-        return total;
-    }
+        public static readonly UInt32MessageSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in UInt32Message value)
-    {
-        writer.WriteUInt32(value.Data);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out UInt32Message value)
-    {
-        uint data = reader.ReadUInt32();
-        value = new UInt32Message(data);
-    }
+        public int GetSerializedSize(in UInt32Message value)
+        {
+            int total = 0;
+            total += 4;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in UInt32Message value)
-    {
+        public void Serialize(ref CdrWriter writer, in UInt32Message value)
+        {
+            writer.WriteUInt32(value.Data);
+        }
+
+        public void Deserialize(ref CdrReader reader, out UInt32Message value)
+        {
+            uint data = reader.ReadUInt32();
+            value = new UInt32Message(data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in UInt32Message value)
+        {
+        }
     }
 }

@@ -4,76 +4,77 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/MultiArrayLayout の C# 表現 (生成コード)。
-/// </summary>
-public struct MultiArrayLayout
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/MultiArrayLayout";
-    public const string DdsTypeName = "std_msgs::msg::dds_::MultiArrayLayout_";
-
-    public MultiArrayDimension[] Dim;
-    public uint DataOffset;
-
-    public MultiArrayLayout(MultiArrayDimension[] dim, uint dataOffset)
+    /// <summary>
+    /// std_msgs/msg/MultiArrayLayout の C# 表現 (生成コード)。
+    /// </summary>
+    public struct MultiArrayLayout
     {
-        Dim = dim;
-        DataOffset = dataOffset;
+        public const string RosTypeName = "std_msgs/msg/MultiArrayLayout";
+        public const string DdsTypeName = "std_msgs::msg::dds_::MultiArrayLayout_";
+
+        public MultiArrayDimension[] Dim;
+        public uint DataOffset;
+
+        public MultiArrayLayout(MultiArrayDimension[] dim, uint dataOffset)
+        {
+            Dim = dim;
+            DataOffset = dataOffset;
+        }
+
+        public override string ToString() => $"MultiArrayLayout(dim=[{(Dim is null ? 0 : Dim.Length)}], data_offset={DataOffset})";
     }
 
-    public override string ToString() => $"MultiArrayLayout(dim=[{(Dim is null ? 0 : Dim.Length)}], data_offset={DataOffset})";
-}
-
-public sealed class MultiArrayLayoutSerializer : ICdrSerializer<MultiArrayLayout>
-{
-    public static readonly MultiArrayLayoutSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in MultiArrayLayout value)
+    public sealed class MultiArrayLayoutSerializer : ICdrSerializer<MultiArrayLayout>
     {
-        int total = 0;
-        total += 4;
-        if (value.Dim is not null)
+        public static readonly MultiArrayLayoutSerializer Instance = new();
+
+        public bool IsKeyed => false;
+
+        public int GetSerializedSize(in MultiArrayLayout value)
         {
-            var serDim = MultiArrayDimensionSerializer.Instance;
-            foreach (ref readonly var eDim in value.Dim.AsSpan())
+            int total = 0;
+            total += 4;
+            if (value.Dim is not null)
             {
-                total += 3;
-                total += serDim.GetSerializedSize(in eDim);
+                var serDim = MultiArrayDimensionSerializer.Instance;
+                foreach (ref readonly var eDim in value.Dim.AsSpan())
+                {
+                    total += 3;
+                    total += serDim.GetSerializedSize(in eDim);
+                }
             }
+            total += 3;
+            total += 4;
+            return total;
         }
-        total += 3;
-        total += 4;
-        return total;
-    }
 
-    public void Serialize(ref CdrWriter writer, in MultiArrayLayout value)
-    {
-        var arrDim = value.Dim ?? System.Array.Empty<MultiArrayDimension>();
-        writer.WriteSequenceLength(arrDim.Length);
-        foreach (var eDim in arrDim)
+        public void Serialize(ref CdrWriter writer, in MultiArrayLayout value)
         {
-            MultiArrayDimensionSerializer.Instance.Serialize(ref writer, in eDim);
+            var arrDim = value.Dim ?? System.Array.Empty<MultiArrayDimension>();
+            writer.WriteSequenceLength(arrDim.Length);
+            foreach (var eDim in arrDim)
+            {
+                MultiArrayDimensionSerializer.Instance.Serialize(ref writer, in eDim);
+            }
+            writer.WriteUInt32(value.DataOffset);
         }
-        writer.WriteUInt32(value.DataOffset);
-    }
 
-    public void Deserialize(ref CdrReader reader, out MultiArrayLayout value)
-    {
-        int dimCount = reader.ReadSequenceLength();
-        var dim = dimCount == 0 ? System.Array.Empty<MultiArrayDimension>() : new MultiArrayDimension[dimCount];
-        for (int i = 0; i < dimCount; i++)
+        public void Deserialize(ref CdrReader reader, out MultiArrayLayout value)
         {
-            MultiArrayDimensionSerializer.Instance.Deserialize(ref reader, out dim[i]);
+            int dimCount = reader.ReadSequenceLength();
+            var dim = dimCount == 0 ? System.Array.Empty<MultiArrayDimension>() : new MultiArrayDimension[dimCount];
+            for (int i = 0; i < dimCount; i++)
+            {
+                MultiArrayDimensionSerializer.Instance.Deserialize(ref reader, out dim[i]);
+            }
+            uint dataOffset = reader.ReadUInt32();
+            value = new MultiArrayLayout(dim, dataOffset);
         }
-        uint dataOffset = reader.ReadUInt32();
-        value = new MultiArrayLayout(dim, dataOffset);
-    }
 
-    public void SerializeKey(ref CdrWriter writer, in MultiArrayLayout value)
-    {
+        public void SerializeKey(ref CdrWriter writer, in MultiArrayLayout value)
+        {
+        }
     }
 }

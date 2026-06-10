@@ -5,57 +5,58 @@
 using Rclsharp.Cdr;
 using Rclsharp.Msgs.BuiltinInterfaces;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/Header の C# 表現 (生成コード)。
-/// </summary>
-public struct Header
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/Header";
-    public const string DdsTypeName = "std_msgs::msg::dds_::Header_";
-
-    public Time Stamp;
-    public string FrameId;
-
-    public Header(Time stamp, string frameId)
+    /// <summary>
+    /// std_msgs/msg/Header の C# 表現 (生成コード)。
+    /// </summary>
+    public struct Header
     {
-        Stamp = stamp;
-        FrameId = frameId;
+        public const string RosTypeName = "std_msgs/msg/Header";
+        public const string DdsTypeName = "std_msgs::msg::dds_::Header_";
+
+        public Time Stamp;
+        public string FrameId;
+
+        public Header(Time stamp, string frameId)
+        {
+            Stamp = stamp;
+            FrameId = frameId;
+        }
+
+        public override string ToString() => $"Header(stamp={Stamp}, frame_id={FrameId})";
     }
 
-    public override string ToString() => $"Header(stamp={Stamp}, frame_id={FrameId})";
-}
-
-public sealed class HeaderSerializer : ICdrSerializer<Header>
-{
-    public static readonly HeaderSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in Header value)
+    public sealed class HeaderSerializer : ICdrSerializer<Header>
     {
-        int total = 0;
-        total += TimeSerializer.Instance.GetSerializedSize(in value.Stamp);
-        int lenFrameId = value.FrameId is null ? 0 : System.Text.Encoding.UTF8.GetByteCount(value.FrameId);
-        total += 4 + lenFrameId + 1;
-        return total;
-    }
+        public static readonly HeaderSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in Header value)
-    {
-        TimeSerializer.Instance.Serialize(ref writer, in value.Stamp);
-        writer.WriteString(value.FrameId);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out Header value)
-    {
-        TimeSerializer.Instance.Deserialize(ref reader, out Time stamp);
-        string frameId = reader.ReadString();
-        value = new Header(stamp, frameId);
-    }
+        public int GetSerializedSize(in Header value)
+        {
+            int total = 0;
+            total += TimeSerializer.Instance.GetSerializedSize(in value.Stamp);
+            int lenFrameId = value.FrameId is null ? 0 : System.Text.Encoding.UTF8.GetByteCount(value.FrameId);
+            total += 4 + lenFrameId + 1;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in Header value)
-    {
+        public void Serialize(ref CdrWriter writer, in Header value)
+        {
+            TimeSerializer.Instance.Serialize(ref writer, in value.Stamp);
+            writer.WriteString(value.FrameId);
+        }
+
+        public void Deserialize(ref CdrReader reader, out Header value)
+        {
+            TimeSerializer.Instance.Deserialize(ref reader, out Time stamp);
+            string frameId = reader.ReadString();
+            value = new Header(stamp, frameId);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in Header value)
+        {
+        }
     }
 }

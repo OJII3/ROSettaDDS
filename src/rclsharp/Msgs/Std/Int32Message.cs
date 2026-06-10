@@ -4,51 +4,52 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/Int32 の C# 表現 (生成コード)。
-/// </summary>
-public struct Int32Message
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/Int32";
-    public const string DdsTypeName = "std_msgs::msg::dds_::Int32_";
-
-    public int Data;
-
-    public Int32Message(int data)
+    /// <summary>
+    /// std_msgs/msg/Int32 の C# 表現 (生成コード)。
+    /// </summary>
+    public struct Int32Message
     {
-        Data = data;
+        public const string RosTypeName = "std_msgs/msg/Int32";
+        public const string DdsTypeName = "std_msgs::msg::dds_::Int32_";
+
+        public int Data;
+
+        public Int32Message(int data)
+        {
+            Data = data;
+        }
+
+        public override string ToString() => $"Int32Message(data={Data})";
     }
 
-    public override string ToString() => $"Int32Message(data={Data})";
-}
-
-public sealed class Int32MessageSerializer : ICdrSerializer<Int32Message>
-{
-    public static readonly Int32MessageSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in Int32Message value)
+    public sealed class Int32MessageSerializer : ICdrSerializer<Int32Message>
     {
-        int total = 0;
-        total += 4;
-        return total;
-    }
+        public static readonly Int32MessageSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in Int32Message value)
-    {
-        writer.WriteInt32(value.Data);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out Int32Message value)
-    {
-        int data = reader.ReadInt32();
-        value = new Int32Message(data);
-    }
+        public int GetSerializedSize(in Int32Message value)
+        {
+            int total = 0;
+            total += 4;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in Int32Message value)
-    {
+        public void Serialize(ref CdrWriter writer, in Int32Message value)
+        {
+            writer.WriteInt32(value.Data);
+        }
+
+        public void Deserialize(ref CdrReader reader, out Int32Message value)
+        {
+            int data = reader.ReadInt32();
+            value = new Int32Message(data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in Int32Message value)
+        {
+        }
     }
 }

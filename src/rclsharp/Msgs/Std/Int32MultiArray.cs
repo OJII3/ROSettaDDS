@@ -4,68 +4,69 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/Int32MultiArray の C# 表現 (生成コード)。
-/// </summary>
-public struct Int32MultiArray
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/Int32MultiArray";
-    public const string DdsTypeName = "std_msgs::msg::dds_::Int32MultiArray_";
-
-    public MultiArrayLayout Layout;
-    public int[] Data;
-
-    public Int32MultiArray(MultiArrayLayout layout, int[] data)
+    /// <summary>
+    /// std_msgs/msg/Int32MultiArray の C# 表現 (生成コード)。
+    /// </summary>
+    public struct Int32MultiArray
     {
-        Layout = layout;
-        Data = data;
-    }
+        public const string RosTypeName = "std_msgs/msg/Int32MultiArray";
+        public const string DdsTypeName = "std_msgs::msg::dds_::Int32MultiArray_";
 
-    public override string ToString() => $"Int32MultiArray(layout={Layout}, data=[{(Data is null ? 0 : Data.Length)}])";
-}
+        public MultiArrayLayout Layout;
+        public int[] Data;
 
-public sealed class Int32MultiArraySerializer : ICdrSerializer<Int32MultiArray>
-{
-    public static readonly Int32MultiArraySerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in Int32MultiArray value)
-    {
-        int total = 0;
-        total += MultiArrayLayoutSerializer.Instance.GetSerializedSize(in value.Layout);
-        total += 3;
-        total += 4;
-        total += (value.Data is null ? 0 : value.Data.Length) * 4;
-        return total;
-    }
-
-    public void Serialize(ref CdrWriter writer, in Int32MultiArray value)
-    {
-        MultiArrayLayoutSerializer.Instance.Serialize(ref writer, in value.Layout);
-        var arrData = value.Data ?? System.Array.Empty<int>();
-        writer.WriteSequenceLength(arrData.Length);
-        foreach (var eData in arrData)
+        public Int32MultiArray(MultiArrayLayout layout, int[] data)
         {
-            writer.WriteInt32(eData);
+            Layout = layout;
+            Data = data;
         }
+
+        public override string ToString() => $"Int32MultiArray(layout={Layout}, data=[{(Data is null ? 0 : Data.Length)}])";
     }
 
-    public void Deserialize(ref CdrReader reader, out Int32MultiArray value)
+    public sealed class Int32MultiArraySerializer : ICdrSerializer<Int32MultiArray>
     {
-        MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
-        int dataCount = reader.ReadSequenceLength(4, 4);
-        var data = dataCount == 0 ? System.Array.Empty<int>() : new int[dataCount];
-        for (int i = 0; i < dataCount; i++)
+        public static readonly Int32MultiArraySerializer Instance = new();
+
+        public bool IsKeyed => false;
+
+        public int GetSerializedSize(in Int32MultiArray value)
         {
-            data[i] = reader.ReadInt32();
+            int total = 0;
+            total += MultiArrayLayoutSerializer.Instance.GetSerializedSize(in value.Layout);
+            total += 3;
+            total += 4;
+            total += (value.Data is null ? 0 : value.Data.Length) * 4;
+            return total;
         }
-        value = new Int32MultiArray(layout, data);
-    }
 
-    public void SerializeKey(ref CdrWriter writer, in Int32MultiArray value)
-    {
+        public void Serialize(ref CdrWriter writer, in Int32MultiArray value)
+        {
+            MultiArrayLayoutSerializer.Instance.Serialize(ref writer, in value.Layout);
+            var arrData = value.Data ?? System.Array.Empty<int>();
+            writer.WriteSequenceLength(arrData.Length);
+            foreach (var eData in arrData)
+            {
+                writer.WriteInt32(eData);
+            }
+        }
+
+        public void Deserialize(ref CdrReader reader, out Int32MultiArray value)
+        {
+            MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
+            int dataCount = reader.ReadSequenceLength(4, 4);
+            var data = dataCount == 0 ? System.Array.Empty<int>() : new int[dataCount];
+            for (int i = 0; i < dataCount; i++)
+            {
+                data[i] = reader.ReadInt32();
+            }
+            value = new Int32MultiArray(layout, data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in Int32MultiArray value)
+        {
+        }
     }
 }

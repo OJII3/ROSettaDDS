@@ -4,52 +4,53 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/String の C# 表現 (生成コード)。
-/// </summary>
-public struct StringMessage
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/String";
-    public const string DdsTypeName = "std_msgs::msg::dds_::String_";
-
-    public string Data;
-
-    public StringMessage(string data)
+    /// <summary>
+    /// std_msgs/msg/String の C# 表現 (生成コード)。
+    /// </summary>
+    public struct StringMessage
     {
-        Data = data;
+        public const string RosTypeName = "std_msgs/msg/String";
+        public const string DdsTypeName = "std_msgs::msg::dds_::String_";
+
+        public string Data;
+
+        public StringMessage(string data)
+        {
+            Data = data;
+        }
+
+        public override string ToString() => $"StringMessage(data={Data})";
     }
 
-    public override string ToString() => $"StringMessage(data={Data})";
-}
-
-public sealed class StringMessageSerializer : ICdrSerializer<StringMessage>
-{
-    public static readonly StringMessageSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in StringMessage value)
+    public sealed class StringMessageSerializer : ICdrSerializer<StringMessage>
     {
-        int total = 0;
-        int lenData = value.Data is null ? 0 : System.Text.Encoding.UTF8.GetByteCount(value.Data);
-        total += 4 + lenData + 1;
-        return total;
-    }
+        public static readonly StringMessageSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in StringMessage value)
-    {
-        writer.WriteString(value.Data);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out StringMessage value)
-    {
-        string data = reader.ReadString();
-        value = new StringMessage(data);
-    }
+        public int GetSerializedSize(in StringMessage value)
+        {
+            int total = 0;
+            int lenData = value.Data is null ? 0 : System.Text.Encoding.UTF8.GetByteCount(value.Data);
+            total += 4 + lenData + 1;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in StringMessage value)
-    {
+        public void Serialize(ref CdrWriter writer, in StringMessage value)
+        {
+            writer.WriteString(value.Data);
+        }
+
+        public void Deserialize(ref CdrReader reader, out StringMessage value)
+        {
+            string data = reader.ReadString();
+            value = new StringMessage(data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in StringMessage value)
+        {
+        }
     }
 }

@@ -41,13 +41,39 @@ public sealed class CSharpEmitter
             sb.Append($"using {u};\n");
         }
         sb.Append('\n');
-        sb.Append($"namespace {ns};\n\n");
 
-        EmitStruct(sb, def, typeName);
-        sb.Append('\n');
-        EmitSerializer(sb, def, typeName, serializerName);
+        // Unity (C# 9.0) 互換のためファイルスコープ名前空間ではなくブロック形式を使う。
+        // 本体は従来どおり生成してから 1 段インデントしてブロック内に収める。
+        sb.Append($"namespace {ns}\n{{\n");
+
+        var body = new StringBuilder();
+        EmitStruct(body, def, typeName);
+        body.Append('\n');
+        EmitSerializer(body, def, typeName, serializerName);
+
+        Indent(sb, body.ToString(), "    ");
+        sb.Append("}\n");
 
         return sb.ToString();
+    }
+
+    /// <summary><paramref name="text"/> の各非空行を <paramref name="prefix"/> でインデントして <paramref name="sb"/> に追記する。</summary>
+    private static void Indent(StringBuilder sb, string text, string prefix)
+    {
+        int start = 0;
+        while (start < text.Length)
+        {
+            int nl = text.IndexOf('\n', start);
+            int end = nl < 0 ? text.Length : nl;
+            if (end > start)
+            {
+                sb.Append(prefix);
+                sb.Append(text, start, end - start);
+            }
+            sb.Append('\n');
+            if (nl < 0) break;
+            start = nl + 1;
+        }
     }
 
     private IEnumerable<string> CollectUsings(MessageDefinition def, string ownNamespace)

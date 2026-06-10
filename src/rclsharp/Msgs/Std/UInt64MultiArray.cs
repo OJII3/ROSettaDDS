@@ -4,68 +4,69 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/UInt64MultiArray の C# 表現 (生成コード)。
-/// </summary>
-public struct UInt64MultiArray
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/UInt64MultiArray";
-    public const string DdsTypeName = "std_msgs::msg::dds_::UInt64MultiArray_";
-
-    public MultiArrayLayout Layout;
-    public ulong[] Data;
-
-    public UInt64MultiArray(MultiArrayLayout layout, ulong[] data)
+    /// <summary>
+    /// std_msgs/msg/UInt64MultiArray の C# 表現 (生成コード)。
+    /// </summary>
+    public struct UInt64MultiArray
     {
-        Layout = layout;
-        Data = data;
-    }
+        public const string RosTypeName = "std_msgs/msg/UInt64MultiArray";
+        public const string DdsTypeName = "std_msgs::msg::dds_::UInt64MultiArray_";
 
-    public override string ToString() => $"UInt64MultiArray(layout={Layout}, data=[{(Data is null ? 0 : Data.Length)}])";
-}
+        public MultiArrayLayout Layout;
+        public ulong[] Data;
 
-public sealed class UInt64MultiArraySerializer : ICdrSerializer<UInt64MultiArray>
-{
-    public static readonly UInt64MultiArraySerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in UInt64MultiArray value)
-    {
-        int total = 0;
-        total += MultiArrayLayoutSerializer.Instance.GetSerializedSize(in value.Layout);
-        total += 3;
-        total += 4;
-        total += (value.Data is null ? 0 : value.Data.Length) * 8;
-        return total;
-    }
-
-    public void Serialize(ref CdrWriter writer, in UInt64MultiArray value)
-    {
-        MultiArrayLayoutSerializer.Instance.Serialize(ref writer, in value.Layout);
-        var arrData = value.Data ?? System.Array.Empty<ulong>();
-        writer.WriteSequenceLength(arrData.Length);
-        foreach (var eData in arrData)
+        public UInt64MultiArray(MultiArrayLayout layout, ulong[] data)
         {
-            writer.WriteUInt64(eData);
+            Layout = layout;
+            Data = data;
         }
+
+        public override string ToString() => $"UInt64MultiArray(layout={Layout}, data=[{(Data is null ? 0 : Data.Length)}])";
     }
 
-    public void Deserialize(ref CdrReader reader, out UInt64MultiArray value)
+    public sealed class UInt64MultiArraySerializer : ICdrSerializer<UInt64MultiArray>
     {
-        MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
-        int dataCount = reader.ReadSequenceLength(8, 8);
-        var data = dataCount == 0 ? System.Array.Empty<ulong>() : new ulong[dataCount];
-        for (int i = 0; i < dataCount; i++)
+        public static readonly UInt64MultiArraySerializer Instance = new();
+
+        public bool IsKeyed => false;
+
+        public int GetSerializedSize(in UInt64MultiArray value)
         {
-            data[i] = reader.ReadUInt64();
+            int total = 0;
+            total += MultiArrayLayoutSerializer.Instance.GetSerializedSize(in value.Layout);
+            total += 3;
+            total += 4;
+            total += (value.Data is null ? 0 : value.Data.Length) * 8;
+            return total;
         }
-        value = new UInt64MultiArray(layout, data);
-    }
 
-    public void SerializeKey(ref CdrWriter writer, in UInt64MultiArray value)
-    {
+        public void Serialize(ref CdrWriter writer, in UInt64MultiArray value)
+        {
+            MultiArrayLayoutSerializer.Instance.Serialize(ref writer, in value.Layout);
+            var arrData = value.Data ?? System.Array.Empty<ulong>();
+            writer.WriteSequenceLength(arrData.Length);
+            foreach (var eData in arrData)
+            {
+                writer.WriteUInt64(eData);
+            }
+        }
+
+        public void Deserialize(ref CdrReader reader, out UInt64MultiArray value)
+        {
+            MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
+            int dataCount = reader.ReadSequenceLength(8, 8);
+            var data = dataCount == 0 ? System.Array.Empty<ulong>() : new ulong[dataCount];
+            for (int i = 0; i < dataCount; i++)
+            {
+                data[i] = reader.ReadUInt64();
+            }
+            value = new UInt64MultiArray(layout, data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in UInt64MultiArray value)
+        {
+        }
     }
 }

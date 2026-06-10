@@ -4,51 +4,52 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/UInt8 の C# 表現 (生成コード)。
-/// </summary>
-public struct UInt8Message
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/UInt8";
-    public const string DdsTypeName = "std_msgs::msg::dds_::UInt8_";
-
-    public byte Data;
-
-    public UInt8Message(byte data)
+    /// <summary>
+    /// std_msgs/msg/UInt8 の C# 表現 (生成コード)。
+    /// </summary>
+    public struct UInt8Message
     {
-        Data = data;
+        public const string RosTypeName = "std_msgs/msg/UInt8";
+        public const string DdsTypeName = "std_msgs::msg::dds_::UInt8_";
+
+        public byte Data;
+
+        public UInt8Message(byte data)
+        {
+            Data = data;
+        }
+
+        public override string ToString() => $"UInt8Message(data={Data})";
     }
 
-    public override string ToString() => $"UInt8Message(data={Data})";
-}
-
-public sealed class UInt8MessageSerializer : ICdrSerializer<UInt8Message>
-{
-    public static readonly UInt8MessageSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in UInt8Message value)
+    public sealed class UInt8MessageSerializer : ICdrSerializer<UInt8Message>
     {
-        int total = 0;
-        total += 1;
-        return total;
-    }
+        public static readonly UInt8MessageSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in UInt8Message value)
-    {
-        writer.WriteByte(value.Data);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out UInt8Message value)
-    {
-        byte data = reader.ReadByte();
-        value = new UInt8Message(data);
-    }
+        public int GetSerializedSize(in UInt8Message value)
+        {
+            int total = 0;
+            total += 1;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in UInt8Message value)
-    {
+        public void Serialize(ref CdrWriter writer, in UInt8Message value)
+        {
+            writer.WriteByte(value.Data);
+        }
+
+        public void Deserialize(ref CdrReader reader, out UInt8Message value)
+        {
+            byte data = reader.ReadByte();
+            value = new UInt8Message(data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in UInt8Message value)
+        {
+        }
     }
 }

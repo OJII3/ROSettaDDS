@@ -4,51 +4,52 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/Float64 の C# 表現 (生成コード)。
-/// </summary>
-public struct Float64Message
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/Float64";
-    public const string DdsTypeName = "std_msgs::msg::dds_::Float64_";
-
-    public double Data;
-
-    public Float64Message(double data)
+    /// <summary>
+    /// std_msgs/msg/Float64 の C# 表現 (生成コード)。
+    /// </summary>
+    public struct Float64Message
     {
-        Data = data;
+        public const string RosTypeName = "std_msgs/msg/Float64";
+        public const string DdsTypeName = "std_msgs::msg::dds_::Float64_";
+
+        public double Data;
+
+        public Float64Message(double data)
+        {
+            Data = data;
+        }
+
+        public override string ToString() => $"Float64Message(data={Data})";
     }
 
-    public override string ToString() => $"Float64Message(data={Data})";
-}
-
-public sealed class Float64MessageSerializer : ICdrSerializer<Float64Message>
-{
-    public static readonly Float64MessageSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in Float64Message value)
+    public sealed class Float64MessageSerializer : ICdrSerializer<Float64Message>
     {
-        int total = 0;
-        total += 8;
-        return total;
-    }
+        public static readonly Float64MessageSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in Float64Message value)
-    {
-        writer.WriteDouble(value.Data);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out Float64Message value)
-    {
-        double data = reader.ReadDouble();
-        value = new Float64Message(data);
-    }
+        public int GetSerializedSize(in Float64Message value)
+        {
+            int total = 0;
+            total += 8;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in Float64Message value)
-    {
+        public void Serialize(ref CdrWriter writer, in Float64Message value)
+        {
+            writer.WriteDouble(value.Data);
+        }
+
+        public void Deserialize(ref CdrReader reader, out Float64Message value)
+        {
+            double data = reader.ReadDouble();
+            value = new Float64Message(data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in Float64Message value)
+        {
+        }
     }
 }

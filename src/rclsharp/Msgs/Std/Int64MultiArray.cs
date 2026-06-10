@@ -4,68 +4,69 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/Int64MultiArray の C# 表現 (生成コード)。
-/// </summary>
-public struct Int64MultiArray
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/Int64MultiArray";
-    public const string DdsTypeName = "std_msgs::msg::dds_::Int64MultiArray_";
-
-    public MultiArrayLayout Layout;
-    public long[] Data;
-
-    public Int64MultiArray(MultiArrayLayout layout, long[] data)
+    /// <summary>
+    /// std_msgs/msg/Int64MultiArray の C# 表現 (生成コード)。
+    /// </summary>
+    public struct Int64MultiArray
     {
-        Layout = layout;
-        Data = data;
-    }
+        public const string RosTypeName = "std_msgs/msg/Int64MultiArray";
+        public const string DdsTypeName = "std_msgs::msg::dds_::Int64MultiArray_";
 
-    public override string ToString() => $"Int64MultiArray(layout={Layout}, data=[{(Data is null ? 0 : Data.Length)}])";
-}
+        public MultiArrayLayout Layout;
+        public long[] Data;
 
-public sealed class Int64MultiArraySerializer : ICdrSerializer<Int64MultiArray>
-{
-    public static readonly Int64MultiArraySerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in Int64MultiArray value)
-    {
-        int total = 0;
-        total += MultiArrayLayoutSerializer.Instance.GetSerializedSize(in value.Layout);
-        total += 3;
-        total += 4;
-        total += (value.Data is null ? 0 : value.Data.Length) * 8;
-        return total;
-    }
-
-    public void Serialize(ref CdrWriter writer, in Int64MultiArray value)
-    {
-        MultiArrayLayoutSerializer.Instance.Serialize(ref writer, in value.Layout);
-        var arrData = value.Data ?? System.Array.Empty<long>();
-        writer.WriteSequenceLength(arrData.Length);
-        foreach (var eData in arrData)
+        public Int64MultiArray(MultiArrayLayout layout, long[] data)
         {
-            writer.WriteInt64(eData);
+            Layout = layout;
+            Data = data;
         }
+
+        public override string ToString() => $"Int64MultiArray(layout={Layout}, data=[{(Data is null ? 0 : Data.Length)}])";
     }
 
-    public void Deserialize(ref CdrReader reader, out Int64MultiArray value)
+    public sealed class Int64MultiArraySerializer : ICdrSerializer<Int64MultiArray>
     {
-        MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
-        int dataCount = reader.ReadSequenceLength(8, 8);
-        var data = dataCount == 0 ? System.Array.Empty<long>() : new long[dataCount];
-        for (int i = 0; i < dataCount; i++)
+        public static readonly Int64MultiArraySerializer Instance = new();
+
+        public bool IsKeyed => false;
+
+        public int GetSerializedSize(in Int64MultiArray value)
         {
-            data[i] = reader.ReadInt64();
+            int total = 0;
+            total += MultiArrayLayoutSerializer.Instance.GetSerializedSize(in value.Layout);
+            total += 3;
+            total += 4;
+            total += (value.Data is null ? 0 : value.Data.Length) * 8;
+            return total;
         }
-        value = new Int64MultiArray(layout, data);
-    }
 
-    public void SerializeKey(ref CdrWriter writer, in Int64MultiArray value)
-    {
+        public void Serialize(ref CdrWriter writer, in Int64MultiArray value)
+        {
+            MultiArrayLayoutSerializer.Instance.Serialize(ref writer, in value.Layout);
+            var arrData = value.Data ?? System.Array.Empty<long>();
+            writer.WriteSequenceLength(arrData.Length);
+            foreach (var eData in arrData)
+            {
+                writer.WriteInt64(eData);
+            }
+        }
+
+        public void Deserialize(ref CdrReader reader, out Int64MultiArray value)
+        {
+            MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
+            int dataCount = reader.ReadSequenceLength(8, 8);
+            var data = dataCount == 0 ? System.Array.Empty<long>() : new long[dataCount];
+            for (int i = 0; i < dataCount; i++)
+            {
+                data[i] = reader.ReadInt64();
+            }
+            value = new Int64MultiArray(layout, data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in Int64MultiArray value)
+        {
+        }
     }
 }

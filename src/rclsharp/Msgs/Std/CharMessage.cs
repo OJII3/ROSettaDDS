@@ -4,51 +4,52 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/Char の C# 表現 (生成コード)。
-/// </summary>
-public struct CharMessage
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/Char";
-    public const string DdsTypeName = "std_msgs::msg::dds_::Char_";
-
-    public sbyte Data;
-
-    public CharMessage(sbyte data)
+    /// <summary>
+    /// std_msgs/msg/Char の C# 表現 (生成コード)。
+    /// </summary>
+    public struct CharMessage
     {
-        Data = data;
+        public const string RosTypeName = "std_msgs/msg/Char";
+        public const string DdsTypeName = "std_msgs::msg::dds_::Char_";
+
+        public sbyte Data;
+
+        public CharMessage(sbyte data)
+        {
+            Data = data;
+        }
+
+        public override string ToString() => $"CharMessage(data={Data})";
     }
 
-    public override string ToString() => $"CharMessage(data={Data})";
-}
-
-public sealed class CharMessageSerializer : ICdrSerializer<CharMessage>
-{
-    public static readonly CharMessageSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in CharMessage value)
+    public sealed class CharMessageSerializer : ICdrSerializer<CharMessage>
     {
-        int total = 0;
-        total += 1;
-        return total;
-    }
+        public static readonly CharMessageSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in CharMessage value)
-    {
-        writer.WriteSByte(value.Data);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out CharMessage value)
-    {
-        sbyte data = reader.ReadSByte();
-        value = new CharMessage(data);
-    }
+        public int GetSerializedSize(in CharMessage value)
+        {
+            int total = 0;
+            total += 1;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in CharMessage value)
-    {
+        public void Serialize(ref CdrWriter writer, in CharMessage value)
+        {
+            writer.WriteSByte(value.Data);
+        }
+
+        public void Deserialize(ref CdrReader reader, out CharMessage value)
+        {
+            sbyte data = reader.ReadSByte();
+            value = new CharMessage(data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in CharMessage value)
+        {
+        }
     }
 }

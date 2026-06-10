@@ -4,68 +4,69 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/UInt32MultiArray の C# 表現 (生成コード)。
-/// </summary>
-public struct UInt32MultiArray
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/UInt32MultiArray";
-    public const string DdsTypeName = "std_msgs::msg::dds_::UInt32MultiArray_";
-
-    public MultiArrayLayout Layout;
-    public uint[] Data;
-
-    public UInt32MultiArray(MultiArrayLayout layout, uint[] data)
+    /// <summary>
+    /// std_msgs/msg/UInt32MultiArray の C# 表現 (生成コード)。
+    /// </summary>
+    public struct UInt32MultiArray
     {
-        Layout = layout;
-        Data = data;
-    }
+        public const string RosTypeName = "std_msgs/msg/UInt32MultiArray";
+        public const string DdsTypeName = "std_msgs::msg::dds_::UInt32MultiArray_";
 
-    public override string ToString() => $"UInt32MultiArray(layout={Layout}, data=[{(Data is null ? 0 : Data.Length)}])";
-}
+        public MultiArrayLayout Layout;
+        public uint[] Data;
 
-public sealed class UInt32MultiArraySerializer : ICdrSerializer<UInt32MultiArray>
-{
-    public static readonly UInt32MultiArraySerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in UInt32MultiArray value)
-    {
-        int total = 0;
-        total += MultiArrayLayoutSerializer.Instance.GetSerializedSize(in value.Layout);
-        total += 3;
-        total += 4;
-        total += (value.Data is null ? 0 : value.Data.Length) * 4;
-        return total;
-    }
-
-    public void Serialize(ref CdrWriter writer, in UInt32MultiArray value)
-    {
-        MultiArrayLayoutSerializer.Instance.Serialize(ref writer, in value.Layout);
-        var arrData = value.Data ?? System.Array.Empty<uint>();
-        writer.WriteSequenceLength(arrData.Length);
-        foreach (var eData in arrData)
+        public UInt32MultiArray(MultiArrayLayout layout, uint[] data)
         {
-            writer.WriteUInt32(eData);
+            Layout = layout;
+            Data = data;
         }
+
+        public override string ToString() => $"UInt32MultiArray(layout={Layout}, data=[{(Data is null ? 0 : Data.Length)}])";
     }
 
-    public void Deserialize(ref CdrReader reader, out UInt32MultiArray value)
+    public sealed class UInt32MultiArraySerializer : ICdrSerializer<UInt32MultiArray>
     {
-        MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
-        int dataCount = reader.ReadSequenceLength(4, 4);
-        var data = dataCount == 0 ? System.Array.Empty<uint>() : new uint[dataCount];
-        for (int i = 0; i < dataCount; i++)
+        public static readonly UInt32MultiArraySerializer Instance = new();
+
+        public bool IsKeyed => false;
+
+        public int GetSerializedSize(in UInt32MultiArray value)
         {
-            data[i] = reader.ReadUInt32();
+            int total = 0;
+            total += MultiArrayLayoutSerializer.Instance.GetSerializedSize(in value.Layout);
+            total += 3;
+            total += 4;
+            total += (value.Data is null ? 0 : value.Data.Length) * 4;
+            return total;
         }
-        value = new UInt32MultiArray(layout, data);
-    }
 
-    public void SerializeKey(ref CdrWriter writer, in UInt32MultiArray value)
-    {
+        public void Serialize(ref CdrWriter writer, in UInt32MultiArray value)
+        {
+            MultiArrayLayoutSerializer.Instance.Serialize(ref writer, in value.Layout);
+            var arrData = value.Data ?? System.Array.Empty<uint>();
+            writer.WriteSequenceLength(arrData.Length);
+            foreach (var eData in arrData)
+            {
+                writer.WriteUInt32(eData);
+            }
+        }
+
+        public void Deserialize(ref CdrReader reader, out UInt32MultiArray value)
+        {
+            MultiArrayLayoutSerializer.Instance.Deserialize(ref reader, out MultiArrayLayout layout);
+            int dataCount = reader.ReadSequenceLength(4, 4);
+            var data = dataCount == 0 ? System.Array.Empty<uint>() : new uint[dataCount];
+            for (int i = 0; i < dataCount; i++)
+            {
+                data[i] = reader.ReadUInt32();
+            }
+            value = new UInt32MultiArray(layout, data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in UInt32MultiArray value)
+        {
+        }
     }
 }

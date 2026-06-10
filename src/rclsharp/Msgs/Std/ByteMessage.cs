@@ -4,51 +4,52 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/Byte の C# 表現 (生成コード)。
-/// </summary>
-public struct ByteMessage
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/Byte";
-    public const string DdsTypeName = "std_msgs::msg::dds_::Byte_";
-
-    public byte Data;
-
-    public ByteMessage(byte data)
+    /// <summary>
+    /// std_msgs/msg/Byte の C# 表現 (生成コード)。
+    /// </summary>
+    public struct ByteMessage
     {
-        Data = data;
+        public const string RosTypeName = "std_msgs/msg/Byte";
+        public const string DdsTypeName = "std_msgs::msg::dds_::Byte_";
+
+        public byte Data;
+
+        public ByteMessage(byte data)
+        {
+            Data = data;
+        }
+
+        public override string ToString() => $"ByteMessage(data={Data})";
     }
 
-    public override string ToString() => $"ByteMessage(data={Data})";
-}
-
-public sealed class ByteMessageSerializer : ICdrSerializer<ByteMessage>
-{
-    public static readonly ByteMessageSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in ByteMessage value)
+    public sealed class ByteMessageSerializer : ICdrSerializer<ByteMessage>
     {
-        int total = 0;
-        total += 1;
-        return total;
-    }
+        public static readonly ByteMessageSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in ByteMessage value)
-    {
-        writer.WriteByte(value.Data);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out ByteMessage value)
-    {
-        byte data = reader.ReadByte();
-        value = new ByteMessage(data);
-    }
+        public int GetSerializedSize(in ByteMessage value)
+        {
+            int total = 0;
+            total += 1;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in ByteMessage value)
-    {
+        public void Serialize(ref CdrWriter writer, in ByteMessage value)
+        {
+            writer.WriteByte(value.Data);
+        }
+
+        public void Deserialize(ref CdrReader reader, out ByteMessage value)
+        {
+            byte data = reader.ReadByte();
+            value = new ByteMessage(data);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in ByteMessage value)
+        {
+        }
     }
 }

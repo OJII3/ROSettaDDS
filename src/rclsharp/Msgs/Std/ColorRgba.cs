@@ -4,66 +4,67 @@
 // </auto-generated>
 using Rclsharp.Cdr;
 
-namespace Rclsharp.Msgs.Std;
-
-/// <summary>
-/// std_msgs/msg/ColorRGBA の C# 表現 (生成コード)。
-/// </summary>
-public struct ColorRgba
+namespace Rclsharp.Msgs.Std
 {
-    public const string RosTypeName = "std_msgs/msg/ColorRGBA";
-    public const string DdsTypeName = "std_msgs::msg::dds_::ColorRGBA_";
-
-    public float R;
-    public float G;
-    public float B;
-    public float A;
-
-    public ColorRgba(float r, float g, float b, float a)
+    /// <summary>
+    /// std_msgs/msg/ColorRGBA の C# 表現 (生成コード)。
+    /// </summary>
+    public struct ColorRgba
     {
-        R = r;
-        G = g;
-        B = b;
-        A = a;
+        public const string RosTypeName = "std_msgs/msg/ColorRGBA";
+        public const string DdsTypeName = "std_msgs::msg::dds_::ColorRGBA_";
+
+        public float R;
+        public float G;
+        public float B;
+        public float A;
+
+        public ColorRgba(float r, float g, float b, float a)
+        {
+            R = r;
+            G = g;
+            B = b;
+            A = a;
+        }
+
+        public override string ToString() => $"ColorRgba(r={R}, g={G}, b={B}, a={A})";
     }
 
-    public override string ToString() => $"ColorRgba(r={R}, g={G}, b={B}, a={A})";
-}
-
-public sealed class ColorRgbaSerializer : ICdrSerializer<ColorRgba>
-{
-    public static readonly ColorRgbaSerializer Instance = new();
-
-    public bool IsKeyed => false;
-
-    public int GetSerializedSize(in ColorRgba value)
+    public sealed class ColorRgbaSerializer : ICdrSerializer<ColorRgba>
     {
-        int total = 0;
-        total += 4;
-        total += 4;
-        total += 4;
-        total += 4;
-        return total;
-    }
+        public static readonly ColorRgbaSerializer Instance = new();
 
-    public void Serialize(ref CdrWriter writer, in ColorRgba value)
-    {
-        writer.WriteFloat(value.R);
-        writer.WriteFloat(value.G);
-        writer.WriteFloat(value.B);
-        writer.WriteFloat(value.A);
-    }
+        public bool IsKeyed => false;
 
-    public void Deserialize(ref CdrReader reader, out ColorRgba value)
-    {
-        float r = reader.ReadFloat();
-        float g = reader.ReadFloat();
-        float b = reader.ReadFloat();
-        float a = reader.ReadFloat();
-        value = new ColorRgba(r, g, b, a);
-    }
+        public int GetSerializedSize(in ColorRgba value)
+        {
+            int total = 0;
+            total += 4;
+            total += 4;
+            total += 4;
+            total += 4;
+            return total;
+        }
 
-    public void SerializeKey(ref CdrWriter writer, in ColorRgba value)
-    {
+        public void Serialize(ref CdrWriter writer, in ColorRgba value)
+        {
+            writer.WriteFloat(value.R);
+            writer.WriteFloat(value.G);
+            writer.WriteFloat(value.B);
+            writer.WriteFloat(value.A);
+        }
+
+        public void Deserialize(ref CdrReader reader, out ColorRgba value)
+        {
+            float r = reader.ReadFloat();
+            float g = reader.ReadFloat();
+            float b = reader.ReadFloat();
+            float a = reader.ReadFloat();
+            value = new ColorRgba(r, g, b, a);
+        }
+
+        public void SerializeKey(ref CdrWriter writer, in ColorRgba value)
+        {
+        }
     }
 }
