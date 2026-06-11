@@ -1,6 +1,7 @@
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Rtps.HistoryCache;
 using ROSettaDDS.Rtps.Submessages;
 using ROSettaDDS.Transport;
@@ -78,7 +79,13 @@ public sealed class StatefulWriter : IDisposable
         Guid = new Guid(localPrefix, writerEntityId);
     }
 
-    public void MatchReader(Guid readerGuid, Locator? unicastLocator = null)
+    /// <summary>
+    /// remote reader を match する。
+    /// <paramref name="reliability"/> は remote reader の Reliability 種別。
+    /// BestEffort reader は ACKNACK を送らないため purge/HB の対象から外される。
+    /// 既定値は Reliable (SEDP builtin reader や直接呼び出しの後方互換)。
+    /// </summary>
+    public void MatchReader(Guid readerGuid, Locator? unicastLocator = null, ReliabilityKind reliability = ReliabilityKind.Reliable)
     {
         ThrowIfDisposed();
         ReaderProxy? addedProxy = null;
@@ -87,10 +94,11 @@ public sealed class StatefulWriter : IDisposable
             if (_matched.TryGetValue(readerGuid, out var existing))
             {
                 existing.UpdateUnicastLocator(unicastLocator);
+                // reliability は proxy 生成時に確定するため再設定しない
             }
             else
             {
-                addedProxy = new ReaderProxy(readerGuid, unicastLocator);
+                addedProxy = new ReaderProxy(readerGuid, unicastLocator, reliability);
                 _matched[readerGuid] = addedProxy;
             }
         }
@@ -236,7 +244,12 @@ public sealed class StatefulWriter : IDisposable
         }
     }
 
-    /// <summary>全 matched reader がack 済みのサンプルを history から削除する。</summary>
+    /// <summary>
+    /// reliable な matched reader 全員が ack 済みのサンプルを history から削除する。
+    /// BestEffort reader は ACKNACK を送らないため HighestAcked が 0 のままになり、
+    /// purge を永久にブロックしてしまう。そのため reliable proxy のみを対象とする。
+    /// reliable proxy が 1 つも無い場合は purge しない (best-effort のみのときは MaxSamples eviction に任せる)。
+    /// </summary>
     private void PurgeAckedSamples()
     {
         long minAcked;
@@ -244,11 +257,16 @@ public sealed class StatefulWriter : IDisposable
         {
             if (_matched.Count == 0) return;
             minAcked = long.MaxValue;
+            bool hasReliable = false;
             foreach (var proxy in _matched.Values)
             {
+                if (!proxy.IsReliable) continue;
+                hasReliable = true;
                 var acked = proxy.HighestAcked.Value;
                 if (acked < minAcked) minAcked = acked;
             }
+            // reliable proxy が 1 つも無ければ purge しない
+            if (!hasReliable) return;
         }
         if (minAcked > 0 && minAcked < long.MaxValue)
         {
@@ -331,8 +349,10 @@ public sealed class StatefulWriter : IDisposable
             await SendHeartbeatToDestinationAsync(EntityId.Unknown, _multicastDestination, count: 1, cancellationToken).ConfigureAwait(false);
             return;
         }
+        // HEARTBEAT は reliable reader のみに送る。BestEffort reader に HB を送っても無意味。
         foreach (var proxy in proxies)
         {
+            if (!proxy.IsReliable) continue;
             int count = proxy.IncrementHeartbeatCount();
             var dest = proxy.UnicastLocator ?? _multicastDestination;
             await SendHeartbeatToDestinationAsync(proxy.ReaderGuid.EntityId, dest, count, cancellationToken).ConfigureAwait(false);

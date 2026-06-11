@@ -1,4 +1,5 @@
 using ROSettaDDS.Common;
+using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Rtps.Submessages;
 
 using Guid = ROSettaDDS.Common.Guid;
@@ -19,17 +20,24 @@ public sealed class ReaderProxy
 
     public Guid ReaderGuid { get; }
 
+    /// <summary>この reader の Reliability 種別。BestEffort reader は ACKNACK を送らない。</summary>
+    public ReliabilityKind Reliability { get; }
+
+    /// <summary>この reader が Reliable かどうか。</summary>
+    public bool IsReliable => Reliability == ReliabilityKind.Reliable;
+
     /// <summary>DATA / HEARTBEAT 送信先 unicast Locator (なければ multicast にフォールバック)。</summary>
     public Locator? UnicastLocator
     {
         get { lock (_lock) { return _unicastLocator; } }
     }
 
-    public ReaderProxy(Guid readerGuid, Locator? unicastLocator = null)
+    public ReaderProxy(Guid readerGuid, Locator? unicastLocator = null, ReliabilityKind reliability = ReliabilityKind.Reliable)
     {
         ReaderGuid = readerGuid;
         _unicastLocator = unicastLocator;
         _highestAcked = 0;
+        Reliability = reliability;
     }
 
     public void UpdateUnicastLocator(Locator? unicastLocator)
