@@ -1,5 +1,5 @@
 {
-  description = "rclsharp dev shell with ROS 2 Humble + .NET 8";
+  description = "rosettadds dev shell with ROS 2 Humble + .NET 8";
 
   inputs = {
     nix-ros-overlay.url = "github:lopsided98/nix-ros-overlay/master";
@@ -34,7 +34,7 @@
       {
         devShells.default = pkgs.mkShell (
           {
-            name = "rclsharp";
+            name = "rosettadds";
             packages = [
               rosEnv
               pkgs.colcon

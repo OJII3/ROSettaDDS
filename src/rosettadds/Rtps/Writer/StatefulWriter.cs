@@ -1,0 +1,611 @@
+using ROSettaDDS.Cdr;
+using ROSettaDDS.Common;
+using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Rtps.HistoryCache;
+using ROSettaDDS.Rtps.Submessages;
+using ROSettaDDS.Transport;
+
+using Guid = ROSettaDDS.Common.Guid;
+
+namespace ROSettaDDS.Rtps.Writer;
+
+/// <summary>
+/// Reliable Stateful RTPS Writer。
+/// - <see cref="WriteAsync"/> でサンプルを history に追加し、各 reader proxy へ DATA を送信
+/// - <see cref="HeartbeatPeriod"/> 間隔で HEARTBEAT を multicast/unicast に送信
+/// - reader からの ACKNACK を <see cref="OnPacketReceived"/> で受け取り、再送要求があれば retransmit
+///
+/// <para>
+/// reader proxy の matching は呼び出し側 (DomainParticipant) が <see cref="MatchReader"/> で明示。
+/// </para>
+/// </summary>
+public sealed class StatefulWriter : IDisposable
+{
+    public const int SendBufferSize = 1500;
+    public const int DataFragPayloadSize = 1024;
+
+    private readonly IRtpsTransport _transport;
+    private readonly Locator _multicastDestination;
+    private readonly ProtocolVersion _version;
+    private readonly VendorId _vendorId;
+    private readonly GuidPrefix _localPrefix;
+    private readonly EntityId _writerEntityId;
+    private readonly TimeSpan _heartbeatPeriod;
+    private readonly WriterHistoryCache _history;
+    private readonly ILogger _logger;
+    private readonly bool _purgeAckedSamples;
+    private readonly bool _resendHistoryOnMatch;
+
+    private readonly object _matchedLock = new();
+    private readonly Dictionary<Guid, ReaderProxy> _matched = new();
+    private readonly object _backgroundTasksLock = new();
+    private readonly HashSet<Task> _backgroundTasks = new();
+
+    private CancellationTokenSource? _cts;
+    private Task? _hbLoop;
+    private bool _started;
+    private bool _disposed;
+
+    public Guid Guid { get; }
+    public EntityId WriterEntityId => _writerEntityId;
+    public WriterHistoryCache History => _history;
+    public TimeSpan HeartbeatPeriod => _heartbeatPeriod;
+
+    public StatefulWriter(
+        IRtpsTransport sendTransport,
+        Locator multicastDestination,
+        ProtocolVersion version,
+        VendorId vendorId,
+        GuidPrefix localPrefix,
+        EntityId writerEntityId,
+        TimeSpan heartbeatPeriod,
+        WriterHistoryCache history,
+        ILogger? logger = null,
+        bool purgeAckedSamples = true,
+        bool resendHistoryOnMatch = false)
+    {
+        _transport = sendTransport;
+        _multicastDestination = multicastDestination;
+        _version = version;
+        _vendorId = vendorId;
+        _localPrefix = localPrefix;
+        _writerEntityId = writerEntityId;
+        _heartbeatPeriod = heartbeatPeriod;
+        _history = history;
+        _purgeAckedSamples = purgeAckedSamples;
+        _resendHistoryOnMatch = resendHistoryOnMatch;
+        _logger = logger ?? NullLogger.Instance;
+        Guid = new Guid(localPrefix, writerEntityId);
+    }
+
+    public void MatchReader(Guid readerGuid, Locator? unicastLocator = null)
+    {
+        ThrowIfDisposed();
+        ReaderProxy? addedProxy = null;
+        lock (_matchedLock)
+        {
+            if (_matched.TryGetValue(readerGuid, out var existing))
+            {
+                existing.UpdateUnicastLocator(unicastLocator);
+            }
+            else
+            {
+                addedProxy = new ReaderProxy(readerGuid, unicastLocator);
+                _matched[readerGuid] = addedProxy;
+            }
+        }
+        if (addedProxy is not null && _resendHistoryOnMatch)
+        {
+            RunBackground(
+                token => SendHistoricalDataToReaderAsync(addedProxy, token),
+                "StatefulWriter historical DATA send");
+        }
+    }
+
+    public void UnmatchReader(Guid readerGuid)
+    {
+        lock (_matchedLock) { _matched.Remove(readerGuid); }
+    }
+
+    public ReaderProxy? GetReaderProxy(Guid readerGuid)
+    {
+        lock (_matchedLock) { return _matched.TryGetValue(readerGuid, out var p) ? p : null; }
+    }
+
+    public IReadOnlyList<ReaderProxy> MatchedReaders
+    {
+        get { lock (_matchedLock) { return _matched.Values.ToArray(); } }
+    }
+
+    /// <summary>
+    /// 新規サンプルを history に追加し、全 matched reader へ DATA を送信する。
+    /// (HEARTBEAT は周期送信に任せる)
+    /// </summary>
+    public async ValueTask WriteAsync(ReadOnlyMemory<byte> serializedPayload, CancellationToken cancellationToken = default)
+        => await WriteAsync(serializedPayload, ChangeKind.Alive, cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask WriteAsync(
+        ReadOnlyMemory<byte> serializedPayload,
+        ChangeKind kind,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var change = _history.Add(kind, serializedPayload, Time.Now());
+        await SendDataAsync(change, cancellationToken).ConfigureAwait(false);
+    }
+
+    public void Start()
+    {
+        ThrowIfDisposed();
+        if (_started) return;
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+        _hbLoop = Task.Run(() => HeartbeatLoopAsync(token), token);
+        _started = true;
+    }
+
+    public void Stop()
+    {
+        if (_cts is null) return;
+        _cts.Cancel();
+        try { _hbLoop?.Wait(TimeSpan.FromSeconds(1)); }
+        catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException)) { }
+        catch (Exception ex) { _logger.Warn("StatefulWriter heartbeat loop did not exit cleanly", ex); }
+        WaitForBackgroundTasks();
+        _cts.Dispose();
+        _cts = null;
+        _hbLoop = null;
+        _started = false;
+    }
+
+    private void WaitForBackgroundTasks()
+    {
+        Task[] tasks;
+        lock (_backgroundTasksLock)
+        {
+            tasks = _backgroundTasks.ToArray();
+        }
+
+        if (tasks.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!Task.WaitAll(tasks, TimeSpan.FromSeconds(1)))
+            {
+                _logger.Warn("StatefulWriter background tasks did not exit cleanly");
+            }
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException))
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("StatefulWriter background tasks did not exit cleanly", ex);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        Stop();
+    }
+
+    /// <summary>
+    /// この writer 宛の ACKNACK を含む可能性のあるパケットを処理する。
+    /// 通常は transport.Received イベントを購読してこれを呼ぶ。
+    /// </summary>
+    public void OnPacketReceived(ReadOnlyMemory<byte> packet, Locator source)
+    {
+        if (_disposed) return;
+        try { ProcessPacket(packet.Span); }
+        catch (Exception ex) { _logger.Warn($"StatefulWriter failed to parse packet from {source}", ex); }
+    }
+
+    public void ProcessPacket(ReadOnlySpan<byte> packet)
+    {
+        if (!RtpsHeader.TryRead(packet, out _, out _, out var sourcePrefix)) return;
+        var reader = new RtpsMessageReader(packet);
+        while (reader.TryReadNext(out var hdr, out var body))
+        {
+            if (hdr.Kind != SubmessageKind.AckNack) continue;
+            var ack = AckNackSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
+            if (!ack.WriterEntityId.Equals(_writerEntityId)) continue;
+
+            // reader 側 EntityId + sourcePrefix で proxy を特定
+            var readerGuid = new Guid(sourcePrefix, ack.ReaderEntityId);
+            ReaderProxy? proxy;
+            lock (_matchedLock) { _matched.TryGetValue(readerGuid, out proxy); }
+            if (proxy is null) continue;
+
+            proxy.ProcessAckNack(ack.ReaderSnState);
+
+            if (_purgeAckedSamples)
+            {
+                // ack 済みサンプルを history から削除 (全 reader の最小 ack を基準)
+                PurgeAckedSamples();
+            }
+
+            // 再送
+            RunBackground(
+                token => ResendRequestedAsync(proxy, token),
+                "StatefulWriter requested resend");
+        }
+    }
+
+    /// <summary>全 matched reader がack 済みのサンプルを history から削除する。</summary>
+    private void PurgeAckedSamples()
+    {
+        long minAcked;
+        lock (_matchedLock)
+        {
+            if (_matched.Count == 0) return;
+            minAcked = long.MaxValue;
+            foreach (var proxy in _matched.Values)
+            {
+                var acked = proxy.HighestAcked.Value;
+                if (acked < minAcked) minAcked = acked;
+            }
+        }
+        if (minAcked > 0 && minAcked < long.MaxValue)
+        {
+            _history.RemoveBelowOrEqual(new SequenceNumber(minAcked));
+        }
+    }
+
+    private async Task HeartbeatLoopAsync(CancellationToken cancellationToken)
+    {
+        // 起動直後にも 1 度送る
+        await SendHeartbeatToAllAsync(cancellationToken).ConfigureAwait(false);
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try { await Task.Delay(_heartbeatPeriod, cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
+            await SendHeartbeatToAllAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void RunBackground(Func<CancellationToken, Task> operation, string operationName)
+    {
+        CancellationToken token;
+        lock (_backgroundTasksLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            token = _cts?.Token ?? CancellationToken.None;
+        }
+
+        var task = RunBackgroundAsync(operation, operationName, token);
+        lock (_backgroundTasksLock)
+        {
+            _backgroundTasks.Add(task);
+        }
+
+        _ = task.ContinueWith(
+            completed =>
+            {
+                lock (_backgroundTasksLock)
+                {
+                    _backgroundTasks.Remove(completed);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private async Task RunBackgroundAsync(
+        Func<CancellationToken, Task> operation,
+        string operationName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await operation(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (_disposed || cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"{operationName} failed", ex);
+        }
+    }
+
+    private async ValueTask SendHeartbeatToAllAsync(CancellationToken cancellationToken)
+    {
+        ReaderProxy[] proxies;
+        lock (_matchedLock) { proxies = _matched.Values.ToArray(); }
+        if (proxies.Length == 0)
+        {
+            // matched reader がいないが、multicast に向けて HB を出すこともある (初期発見支援)
+            await SendHeartbeatToDestinationAsync(EntityId.Unknown, _multicastDestination, count: 1, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        foreach (var proxy in proxies)
+        {
+            int count = proxy.IncrementHeartbeatCount();
+            var dest = proxy.UnicastLocator ?? _multicastDestination;
+            await SendHeartbeatToDestinationAsync(proxy.ReaderGuid.EntityId, dest, count, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask SendHeartbeatToDestinationAsync(EntityId readerEntityId, Locator destination, int count, CancellationToken cancellationToken)
+    {
+        var packet = BuildHeartbeatPacket(readerEntityId, count);
+        if (packet.Length == 0)
+        {
+            return;
+        }
+        try
+        {
+            await _transport.SendAsync(packet, destination, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Error("StatefulWriter HEARTBEAT send failed", ex);
+        }
+    }
+
+    /// <summary>HEARTBEAT メッセージを組み立てる (ref struct 使用は同期メソッドに閉じる)。</summary>
+    private byte[] BuildHeartbeatPacket(EntityId readerEntityId, int count)
+    {
+        var first = _history.FirstSequenceNumber;
+        var last = _history.LastSequenceNumber;
+        // Cache が空なら送らない
+        if (last.Value == 0)
+        {
+            return Array.Empty<byte>();
+        }
+        if (first.Value == 0)
+        {
+            first = new SequenceNumber(1L);
+        }
+
+        var hb = new HeartbeatSubmessage(
+            readerEntityId, _writerEntityId, first, last, count, final: false, liveliness: false);
+
+        var buffer = new byte[SendBufferSize];
+        var msg = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
+        msg.WriteHeartbeat(hb);
+        var packet = new byte[msg.BytesWritten];
+        msg.WrittenSpan.CopyTo(packet);
+        return packet;
+    }
+
+    private async ValueTask SendDataAsync(CacheChange change, CancellationToken cancellationToken)
+    {
+        ReaderProxy[] proxies;
+        lock (_matchedLock) { proxies = _matched.Values.ToArray(); }
+        if (proxies.Length == 0)
+        {
+            // matched reader がいなければ multicast へ
+            await SendDataToDestinationAsync(change, EntityId.Unknown, _multicastDestination, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        foreach (var proxy in proxies)
+        {
+            var dest = proxy.UnicastLocator ?? _multicastDestination;
+            await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task SendHistoricalDataToReaderAsync(ReaderProxy proxy, CancellationToken cancellationToken)
+    {
+        var first = _history.FirstSequenceNumber;
+        var last = _history.LastSequenceNumber;
+        if (first.Value == 0 || last.Value == 0 || first > last)
+        {
+            return;
+        }
+
+        var changes = _history.EnumerateRange(first, last);
+        foreach (var change in changes)
+        {
+            var dest = proxy.UnicastLocator ?? _multicastDestination;
+            await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask SendDataToDestinationAsync(CacheChange change, EntityId readerEntityId, Locator destination, CancellationToken cancellationToken)
+    {
+        foreach (var packet in BuildDataPackets(change, readerEntityId))
+        {
+            try
+            {
+                await _transport.SendAsync(packet, destination, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.Error("StatefulWriter DATA send failed", ex);
+            }
+        }
+    }
+
+    /// <summary>DATA または DATA_FRAG メッセージを組み立てる。</summary>
+    private IReadOnlyList<byte[]> BuildDataPackets(CacheChange change, EntityId readerEntityId)
+    {
+        bool isAlive = change.Kind == ChangeKind.Alive;
+        ReadOnlyMemory<byte> inlineQos = isAlive
+            ? default
+            : DataSubmessage.BuildStatusInfoInlineQos(ToStatusInfo(change.Kind), CdrEndianness.LittleEndian);
+
+        int dataMessageSize = RtpsHeader.Size
+            + SubmessageHeader.Size + Time.Size
+            + SubmessageHeader.Size + DataSubmessage.FixedHeaderSize
+            + inlineQos.Length
+            + change.SerializedPayload.Length;
+        if (dataMessageSize <= SendBufferSize)
+        {
+            return new[] { BuildDataPacket(change, readerEntityId, inlineQos, isAlive) };
+        }
+
+        return BuildDataFragPackets(change, readerEntityId, inlineQos, isAlive);
+    }
+
+    /// <summary>DATA メッセージ (INFO_TS + DATA) を組み立てる。</summary>
+    private byte[] BuildDataPacket(
+        CacheChange change,
+        EntityId readerEntityId,
+        ReadOnlyMemory<byte> inlineQos,
+        bool isAlive)
+    {
+        var buffer = new byte[SendBufferSize];
+        var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
+        writer.WriteInfoTimestamp(new InfoTimestampSubmessage(change.SourceTimestamp));
+        var data = new DataSubmessage(
+            readerEntityId: readerEntityId,
+            writerEntityId: _writerEntityId,
+            writerSn: change.SequenceNumber,
+            serializedPayload: change.SerializedPayload,
+            inlineQos: inlineQos,
+            dataPresent: isAlive,
+            keyPresent: !isAlive);
+        writer.WriteData(data);
+
+        var packet = new byte[writer.BytesWritten];
+        writer.WrittenSpan.CopyTo(packet);
+        return packet;
+    }
+
+    private IReadOnlyList<byte[]> BuildDataFragPackets(
+        CacheChange change,
+        EntityId readerEntityId,
+        ReadOnlyMemory<byte> inlineQos,
+        bool isAlive)
+    {
+        if (change.SerializedPayload.Length == 0)
+        {
+            return Array.Empty<byte[]>();
+        }
+        int firstFragmentCapacity = SendBufferSize
+            - RtpsHeader.Size
+            - SubmessageHeader.Size
+            - DataFragSubmessage.FixedHeaderSize
+            - inlineQos.Length;
+        int payloadFragmentSize = Math.Min(DataFragPayloadSize, firstFragmentCapacity);
+        if (payloadFragmentSize <= 0)
+        {
+            throw new InvalidOperationException(
+                $"DATA_FRAG inline QoS length {inlineQos.Length} leaves no room for payload.");
+        }
+
+        int fragmentCount = (change.SerializedPayload.Length + payloadFragmentSize - 1) / payloadFragmentSize;
+        var packets = new byte[fragmentCount][];
+        ushort fragmentSize = checked((ushort)payloadFragmentSize);
+        uint sampleSize = checked((uint)change.SerializedPayload.Length);
+
+        for (int i = 0; i < fragmentCount; i++)
+        {
+            int offset = i * payloadFragmentSize;
+            int length = Math.Min(payloadFragmentSize, change.SerializedPayload.Length - offset);
+            var fragmentPayload = change.SerializedPayload.Slice(offset, length);
+            var fragmentInlineQos = i == 0 ? inlineQos : default;
+            var dataFrag = new DataFragSubmessage(
+                readerEntityId: readerEntityId,
+                writerEntityId: _writerEntityId,
+                writerSn: change.SequenceNumber,
+                fragmentStartingNumber: checked((uint)i + 1u),
+                fragmentsInSubmessage: 1,
+                fragmentSize: fragmentSize,
+                sampleSize: sampleSize,
+                serializedPayloadFragment: fragmentPayload,
+                inlineQos: fragmentInlineQos,
+                keyPresent: !isAlive);
+
+            var buffer = new byte[SendBufferSize];
+            var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
+            writer.WriteDataFrag(dataFrag);
+            var packet = new byte[writer.BytesWritten];
+            writer.WrittenSpan.CopyTo(packet);
+            packets[i] = packet;
+        }
+
+        return packets;
+    }
+
+    private static uint ToStatusInfo(ChangeKind kind)
+    {
+        return kind switch
+        {
+            ChangeKind.NotAliveDisposed => DataSubmessage.StatusInfoDisposed,
+            ChangeKind.NotAliveUnregistered => DataSubmessage.StatusInfoUnregistered,
+            ChangeKind.NotAliveDisposedUnregistered =>
+                DataSubmessage.StatusInfoDisposed | DataSubmessage.StatusInfoUnregistered,
+            _ => 0u,
+        };
+    }
+
+    private async Task ResendRequestedAsync(ReaderProxy proxy, CancellationToken cancellationToken)
+    {
+        var requested = proxy.RequestedSequenceNumbers();
+        if (requested.Count == 0) return;
+        foreach (var sn in requested)
+        {
+            var change = _history.Get(sn);
+            if (change is null)
+            {
+                await SendGapToDestinationAsync(
+                    sn,
+                    proxy.ReaderGuid.EntityId,
+                    proxy.UnicastLocator ?? _multicastDestination,
+                    cancellationToken).ConfigureAwait(false);
+                proxy.ClearRequested(sn);
+                continue;
+            }
+            var dest = proxy.UnicastLocator ?? _multicastDestination;
+            await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);
+            proxy.ClearRequested(sn);
+        }
+    }
+
+    private async ValueTask SendGapToDestinationAsync(
+        SequenceNumber missingSequenceNumber,
+        EntityId readerEntityId,
+        Locator destination,
+        CancellationToken cancellationToken)
+    {
+        var packet = BuildGapPacket(missingSequenceNumber, readerEntityId);
+        try
+        {
+            await _transport.SendAsync(packet, destination, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Error("StatefulWriter GAP send failed", ex);
+        }
+    }
+
+    private byte[] BuildGapPacket(SequenceNumber missingSequenceNumber, EntityId readerEntityId)
+    {
+        var gap = new GapSubmessage(
+            readerEntityId: readerEntityId,
+            writerEntityId: _writerEntityId,
+            gapStart: missingSequenceNumber,
+            gapList: new SequenceNumberSet(missingSequenceNumber + 1, 0, Array.Empty<uint>()));
+
+        var buffer = new byte[SendBufferSize];
+        var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
+        writer.WriteGap(gap);
+        var packet = new byte[writer.BytesWritten];
+        writer.WrittenSpan.CopyTo(packet);
+        return packet;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed) throw new ObjectDisposedException(GetType().Name);
+    }
+}

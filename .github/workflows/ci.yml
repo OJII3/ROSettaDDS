@@ -25,13 +25,13 @@ jobs:
         run: bash .github/scripts/check_unity_meta.sh
 
       - name: Restore
-        run: dotnet restore rclsharp.sln
+        run: dotnet restore rosettadds.sln
 
       - name: Build
-        run: dotnet build rclsharp.sln --configuration Release --no-restore
+        run: dotnet build rosettadds.sln --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test tests/rclsharp.Tests/rclsharp.Tests.csproj --configuration Release --no-build --verbosity normal
+        run: dotnet test tests/rosettadds.Tests/rosettadds.Tests.csproj --configuration Release --no-build --verbosity normal
 
       - name: Pack
-        run: dotnet pack src/rclsharp/rclsharp.csproj --configuration Release --no-build --output artifacts/packages
+        run: dotnet pack src/rosettadds/rosettadds.csproj --configuration Release --no-build --output artifacts/packages

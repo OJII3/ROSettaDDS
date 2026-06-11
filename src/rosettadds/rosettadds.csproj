@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>ROSettaDDS</RootNamespace>
+    <AssemblyName>rosettadds</AssemblyName>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>rosettadds</PackageId>
+    <Version>0.0.1-alpha</Version>
+    <Authors>OJII3</Authors>
+    <Description>ROS 2 互換の Pure C# 通信ライブラリ (RTPS/DDS minimal implementation)</Description>
+    <RepositoryUrl>https://github.com/ojii3/rosettadds</RepositoryUrl>
+  </PropertyGroup>
+
+</Project>

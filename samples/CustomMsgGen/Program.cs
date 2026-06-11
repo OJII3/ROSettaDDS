@@ -1,7 +1,7 @@
-using Rclsharp.Cdr;
-using Rclsharp.Msgs.BuiltinInterfaces;
-using Rclsharp.Msgs.Sample; // sample_msgs → Rclsharp.Msgs.Sample (Source Generator が生成)
-using Rclsharp.Msgs.Std;
+using ROSettaDDS.Cdr;
+using ROSettaDDS.Msgs.BuiltinInterfaces;
+using ROSettaDDS.Msgs.Sample; // sample_msgs → ROSettaDDS.Msgs.Sample (Source Generator が生成)
+using ROSettaDDS.Msgs.Std;
 
 // msgs/sample_msgs/msg/Demo.msg から Source Generator が生成した Demo / DemoSerializer を使う。
 var demo = new Demo(

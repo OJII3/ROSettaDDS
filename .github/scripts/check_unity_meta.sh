@@ -4,7 +4,7 @@ set -euo pipefail
 # Project root
 cd "$(dirname "$0")/../.."
 
-TARGET_DIR="src/rclsharp"
+TARGET_DIR="src/rosettadds"
 ERROR=0
 
 echo "Checking for missing .meta files..."

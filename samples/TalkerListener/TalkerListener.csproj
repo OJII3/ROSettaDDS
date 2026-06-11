@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\rclsharp\rclsharp.csproj" />
+    <ProjectReference Include="..\..\src\rosettadds\rosettadds.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -8,16 +8,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\rclsharp\rclsharp.csproj" />
+    <ProjectReference Include="..\..\src\rosettadds\rosettadds.csproj" />
     <!-- Source Generator をアナライザとして参照 (アセンブリ自体は参照しない)。 -->
-    <ProjectReference Include="..\..\src\Rclsharp.SourceGenerator\Rclsharp.SourceGenerator.csproj"
+    <ProjectReference Include="..\..\src\ROSettaDDS.SourceGenerator\ROSettaDDS.SourceGenerator.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- .msg をコンパイル時に C# 化する。パッケージ名はメタデータで明示。 -->
-    <AdditionalFiles Include="msgs\**\*.msg" RclsharpMsgPackage="sample_msgs" />
-    <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="RclsharpMsgPackage" />
+    <AdditionalFiles Include="msgs\**\*.msg" ROSettaDDSMsgPackage="sample_msgs" />
+    <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="ROSettaDDSMsgPackage" />
   </ItemGroup>
 
 </Project>

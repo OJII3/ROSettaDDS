@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "com.ojii3.rclsharp": "file:../../src/rclsharp",
+    "com.ojii3.rosettadds": "file:../../src/rosettadds",
     "io.github.hatayama.uloopmcp": "https://github.com/hatayama/unity-cli-loop.git?path=/Packages/src",
     "com.unity.ai.assistant": "2.9.0-pre.2",
     "com.unity.ai.navigation": "2.0.9",

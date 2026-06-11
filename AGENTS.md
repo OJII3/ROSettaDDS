@@ -1,4 +1,4 @@
-# rclsharp
+# ROSettaDDS
 
 ## Git 戦略
 
@@ -7,12 +7,12 @@
 
 ## Unity メタファイル
 
-- Unity で取り込む `src/rclsharp` 配下のファイル・フォルダには `.meta` を必ずコミットすること。
+- Unity で取り込む `src/rosettadds` 配下のファイル・フォルダには `.meta` を必ずコミットすること。
 - `.meta` の不足や orphan は `.github/scripts/check_unity_meta.sh` で確認すること。
 
 ## msg 型の命名方針 (案 B)
 
-`Rclsharp.Msgs.*` 配下の msg 型は以下のルールに従う:
+`ROSettaDDS.Msgs.*` 配下の msg 型は以下のルールに従う:
 
 - **BCL 型と衝突する型のみ `Message` サフィックスを付ける**
   例: `StringMessage`, `BoolMessage`, `Int32Message`, `Float32Message`, `ByteMessage`, `CharMessage`, `EmptyMessage` など

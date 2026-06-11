@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Source Generator から参照するため netstandard2.0。依存ゼロ・Unity Editor からも取り込み可能にする。 -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>ROSettaDDS.MsgGen</RootNamespace>
+    <AssemblyName>ROSettaDDS.MsgGen</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

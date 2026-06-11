@@ -1,20 +1,20 @@
-// rclsharp SPDP demo
+// rosettadds SPDP demo
 // Usage: dotnet run --project samples/SpdpDemo -- [domainId] [participantId] [entityName]
 // 例: dotnet run --project samples/SpdpDemo -- 0 1 my_node
 //
 // 動作:
 // - 指定ドメインの SPDP マルチキャスト (239.255.0.1:7400+250*domain) に参加
 // - ParticipantData を 3 秒周期で送信
-// - 他の Participant (rclsharp 同士、または ROS 2 ノード) を検出してログ出力
+// - 他の Participant (rosettadds 同士、または ROS 2 ノード) を検出してログ出力
 //
 // Wireshark で 239.255.0.1 / udp.port == 7400 をキャプチャすると送受信パケットを確認可能。
 using System.Net;
-using Rclsharp.Common.Logging;
-using Rclsharp.Dds;
+using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Dds;
 
 int domainId = args.Length > 0 ? int.Parse(args[0]) : 0;
 int participantId = args.Length > 1 ? int.Parse(args[1]) : 1;
-string entityName = args.Length > 2 ? args[2] : $"rclsharp_demo_{Environment.ProcessId}";
+string entityName = args.Length > 2 ? args[2] : $"rosettadds_demo_{Environment.ProcessId}";
 
 var logger = new ConsoleLogger("SpdpDemo", LogLevel.Info);
 
@@ -42,7 +42,7 @@ participant.DiscoveryDb.ParticipantLost += rp =>
 
 logger.Info($"Starting SPDP: domain={domainId} participant={participantId} name={entityName}");
 logger.Info($"Local Guid:    {participant.Guid}");
-logger.Info($"Multicast:     {options.MulticastGroup}:{Rclsharp.Transport.RtpsPorts.DiscoveryMulticast(domainId)}");
+logger.Info($"Multicast:     {options.MulticastGroup}:{ROSettaDDS.Transport.RtpsPorts.DiscoveryMulticast(domainId)}");
 
 participant.Start();
 

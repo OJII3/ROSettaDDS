@@ -1,4 +1,4 @@
-// rclsharp talker/listener サンプル (std_msgs/String, topic = /chatter)
+// rosettadds talker/listener サンプル (std_msgs/String, topic = /chatter)
 // Usage:
 //   dotnet run --project samples/TalkerListener -- talker   [domainId] [participantId] [entityName]
 //   dotnet run --project samples/TalkerListener -- listener [domainId] [participantId] [entityName]
@@ -7,9 +7,9 @@
 //   ROS_LOCALHOST_ONLY=1 ros2 run demo_nodes_cpp listener
 //   ROS_LOCALHOST_ONLY=1 ros2 run demo_nodes_cpp talker
 using System.Net;
-using Rclsharp.Common.Logging;
-using Rclsharp.Dds;
-using Rclsharp.Msgs.Std;
+using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Dds;
+using ROSettaDDS.Msgs.Std;
 
 if (args.Length < 1 || (args[0] != "talker" && args[0] != "listener"))
 {
@@ -21,7 +21,7 @@ if (args.Length < 1 || (args[0] != "talker" && args[0] != "listener"))
 string mode = args[0];
 int domainId = args.Length > 1 ? int.Parse(args[1]) : 0;
 int participantId = args.Length > 2 ? int.Parse(args[2]) : (mode == "talker" ? 1 : 2);
-string entityName = args.Length > 3 ? args[3] : $"rclsharp_{mode}_{Environment.ProcessId}";
+string entityName = args.Length > 3 ? args[3] : $"rosettadds_{mode}_{Environment.ProcessId}";
 
 var logger = new ConsoleLogger(mode, LogLevel.Info);
 
@@ -59,7 +59,7 @@ if (mode == "talker")
     {
         while (!cts.IsCancellationRequested)
         {
-            var msg = new StringMessage($"Hello rclsharp: {++counter}");
+            var msg = new StringMessage($"Hello rosettadds: {++counter}");
             await pub.PublishAsync(msg, cts.Token);
             logger.Info($"Publishing: '{msg.Data}'");
             await Task.Delay(TimeSpan.FromSeconds(1), cts.Token);

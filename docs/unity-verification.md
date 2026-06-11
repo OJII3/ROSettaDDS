@@ -1,10 +1,10 @@
 # Unity 検証・計測計画
 
-`Ros2Unity` は rclsharp を Unity Package Manager のローカルパッケージとして読み込み、Unity Editor 上でコンパイル、通信動作、基本的な性能指標を継続確認するための検証プロジェクトとして使う。
+`Ros2Unity` は rosettadds を Unity Package Manager のローカルパッケージとして読み込み、Unity Editor 上でコンパイル、通信動作、基本的な性能指標を継続確認するための検証プロジェクトとして使う。
 
 ## 目的
 
-- Unity 6000.3 系 Editor で `com.ojii3.rclsharp` がパッケージとして解決・コンパイルできることを確認する。
+- Unity 6000.3 系 Editor で `com.ojii3.rosettadds` がパッケージとして解決・コンパイルできることを確認する。
 - `DomainParticipant`、`Publisher<T>`、`Subscription<T>` を Unity のテストランナーから起動し、`std_msgs/msg/String` 相当の publish/subscribe が成立することを確認する。
 - 通信処理のバッチ時間、messages/sec、serialized bytes/sec、管理ヒープ差分、Unity Profiler のメモリ指標を EditMode テストで記録する。
 - 反復 publish/subscribe と create/dispose の後に retained memory を確認し、明らかなリークを EditMode テストで失敗させる。
@@ -19,7 +19,7 @@
 
 計測対象:
 
-- Unity package import: `Ros2Unity/Packages/manifest.json` から `../../src/rclsharp` を参照する。
+- Unity package import: `Ros2Unity/Packages/manifest.json` から `../../src/rosettadds` を参照する。
 - Smoke: 2 つの `DomainParticipant` 間で `StringMessage` を複数件送受信し、順序と件数を確認する。
 - Throughput: payload サイズ別に warmup 後の publish/subscribe batch を複数回実行し、受信完了までの経過時間、messages/sec、serialized bytes/sec、平均 ms/message を記録する。
 - Leak guard: participant / publisher / subscription / transport の create/dispose を繰り返し、full GC 後の managed heap と Unity mono used memory の retained delta を記録し、閾値を超えたら失敗させる。
@@ -71,7 +71,7 @@ UNITY_USE_TEMP_PROJECT=1 scripts/unity/run_unity_playmode_tests.sh
 
 `scripts/unity/run_unity_editmode_tests.sh` が成功した場合は、`editmode-results.xml`
 に埋め込まれた Unity Performance Testing の結果を読み取り、`README.md` 末尾の
-`rclsharp-local-performance` 管理ブロックを最新のローカル計測結果に差し替える。
+`rosettadds-local-performance` 管理ブロックを最新のローカル計測結果に差し替える。
 GitHub Actions には Unity 計測を組み込まず、性能値の更新はローカル実行時だけ行う。
 
 既存の `editmode-results.xml` から README だけ更新し直す場合:
@@ -92,11 +92,11 @@ Leak guard は throughput と違い、反復後に full GC を挟んだ retained
 
 記録する主な sample group:
 
-- `rclsharp.throughput.<payload>B.elapsed_ms`
-- `rclsharp.throughput.<payload>B.messages_per_second`
-- `rclsharp.throughput.<payload>B.serialized_bytes_per_second`
-- `rclsharp.throughput.<payload>B.mean_message_ms`
-- `rclsharp.leak.managed_heap_retained_bytes`
-- `rclsharp.leak.unity_mono_used_retained_bytes`
-- `rclsharp.leak.unity_total_allocated_delta_bytes`
+- `rosettadds.throughput.<payload>B.elapsed_ms`
+- `rosettadds.throughput.<payload>B.messages_per_second`
+- `rosettadds.throughput.<payload>B.serialized_bytes_per_second`
+- `rosettadds.throughput.<payload>B.mean_message_ms`
+- `rosettadds.leak.managed_heap_retained_bytes`
+- `rosettadds.leak.unity_mono_used_retained_bytes`
+- `rosettadds.leak.unity_total_allocated_delta_bytes`
  

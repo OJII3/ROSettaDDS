@@ -1,7 +1,7 @@
 {
   "dependencies": {
-    "com.ojii3.rclsharp": {
-      "version": "file:../../src/rclsharp",
+    "com.ojii3.rosettadds": {
+      "version": "file:../../src/rosettadds",
       "depth": 0,
       "source": "local",
       "dependencies": {}

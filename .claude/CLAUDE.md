@@ -1,4 +1,4 @@
-# rclsharp
+# rosettadds
 
 ## Git 戦略
 
@@ -7,7 +7,7 @@
 
 ## msg 型の命名方針 (案 B)
 
-`Rclsharp.Msgs.*` 配下の msg 型は以下のルールに従う:
+`ROSettaDDS.Msgs.*` 配下の msg 型は以下のルールに従う:
 
 - **BCL 型と衝突する型のみ `Message` サフィックスを付ける**
   例: `StringMessage`, `BoolMessage`, `Int32Message`, `Float32Message`, `ByteMessage`, `CharMessage`, `EmptyMessage` など
