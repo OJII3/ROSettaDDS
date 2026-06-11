@@ -75,7 +75,9 @@ public sealed class UdpTransport : IRtpsTransport
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         try
         {
-            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            // SO_REUSEADDR は設定しない。
+            // Linux では双方に SO_REUSEADDR があると同一ポートへの二重 bind が成功してしまい、
+            // ParticipantId auto-probe の前提である AddressAlreadyInUse が発生しなくなるため。
             socket.Bind(new IPEndPoint(bindAddress, port));
             var ep = (IPEndPoint)socket.LocalEndPoint!;
             var locator = Locator.FromUdpV4(ep.Address, (uint)ep.Port);
