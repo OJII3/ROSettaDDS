@@ -1,5 +1,6 @@
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Rtps.Reader;
 using ROSettaDDS.Rtps.Writer;
@@ -211,19 +212,24 @@ internal sealed class UserEndpointManager
 
     private void Match(LocalWriter local, RemoteEndpoint remoteReader)
     {
-        if (!TypeMatches(local.EndpointData.TypeName, remoteReader.TypeName))
+        if (!TypeMatches(local.EndpointData.TypeName, remoteReader.TypeName)
+            || !QosCompatibility.IsCompatible(local.EndpointData, remoteReader.Data))
         {
             local.Writer.UnmatchReader(remoteReader.Data.EndpointGuid);
             return;
         }
 
-        local.Writer.MatchReader(remoteReader.Data.EndpointGuid, ResolveRemoteReaderUnicastLocator(remoteReader));
+        local.Writer.MatchReader(
+            remoteReader.Data.EndpointGuid,
+            ResolveRemoteReaderUnicastLocator(remoteReader),
+            remoteReader.Data.Reliability.Kind);
         _logger.Debug($"DomainParticipant: matched local writer with remote reader on topic={remoteReader.TopicName} reader={remoteReader.Data.EndpointGuid}");
     }
 
     private void Match(LocalReader local, RemoteEndpoint remoteWriter)
     {
-        if (!TypeMatches(local.EndpointData.TypeName, remoteWriter.TypeName))
+        if (!TypeMatches(local.EndpointData.TypeName, remoteWriter.TypeName)
+            || !QosCompatibility.IsCompatible(remoteWriter.Data, local.EndpointData))
         {
             local.Reader.UnmatchWriter(remoteWriter.Data.EndpointGuid);
             return;
@@ -235,7 +241,8 @@ internal sealed class UserEndpointManager
 
     private void Match(LocalReader reader, LocalWriter writer)
     {
-        if (!TypeMatches(reader.EndpointData.TypeName, writer.EndpointData.TypeName))
+        if (!TypeMatches(reader.EndpointData.TypeName, writer.EndpointData.TypeName)
+            || !QosCompatibility.IsCompatible(writer.EndpointData, reader.EndpointData))
         {
             reader.Reader.UnmatchWriter(writer.EndpointData.EndpointGuid);
             writer.Writer.UnmatchReader(reader.EndpointData.EndpointGuid);
@@ -243,7 +250,10 @@ internal sealed class UserEndpointManager
         }
 
         reader.Reader.MatchWriter(writer.EndpointData.EndpointGuid);
-        writer.Writer.MatchReader(reader.EndpointData.EndpointGuid, FirstUdpLocator(reader.EndpointData.UnicastLocators));
+        writer.Writer.MatchReader(
+            reader.EndpointData.EndpointGuid,
+            FirstUdpLocator(reader.EndpointData.UnicastLocators),
+            reader.EndpointData.Reliability.Kind);
         _logger.Debug($"DomainParticipant: matched local reader with local writer on topic={reader.EndpointData.TopicName} writer={writer.EndpointData.EndpointGuid}");
     }
 

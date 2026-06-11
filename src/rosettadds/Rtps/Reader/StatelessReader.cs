@@ -1,3 +1,4 @@
+using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Rtps.Submessages;
@@ -12,9 +13,10 @@ namespace ROSettaDDS.Rtps.Reader;
 /// SEDP で match した Writer からの DATA / DATA_FRAG submessage を受信すると、
 /// SerializedPayload をハンドラへ届ける。
 /// </summary>
-public sealed class StatelessReader : IDisposable
+public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
 {
     private readonly IRtpsTransport? _transport;
+    private readonly GuidPrefix _localPrefix;
     private readonly EntityId _readerEntityId;
     private readonly ILogger _logger;
     private readonly DataFragReassemblyOptions _dataFragOptions;
@@ -44,8 +46,18 @@ public sealed class StatelessReader : IDisposable
         EntityId readerEntityId,
         ILogger? logger = null,
         DataFragReassemblyOptions? dataFragOptions = null)
+        : this(GuidPrefix.Unknown, readerEntityId, logger, dataFragOptions)
+    {
+    }
+
+    public StatelessReader(
+        GuidPrefix localPrefix,
+        EntityId readerEntityId,
+        ILogger? logger = null,
+        DataFragReassemblyOptions? dataFragOptions = null)
     {
         _transport = null;
+        _localPrefix = localPrefix;
         _readerEntityId = readerEntityId;
         _logger = logger ?? NullLogger.Instance;
         _dataFragOptions = dataFragOptions ?? DataFragReassemblyOptions.Default;
@@ -54,12 +66,14 @@ public sealed class StatelessReader : IDisposable
 
     public StatelessReader(
         IRtpsTransport transport,
+        GuidPrefix localPrefix,
         EntityId readerEntityId,
         ILogger? logger = null,
         DataFragReassemblyOptions? dataFragOptions = null)
     {
         if (transport is null) throw new ArgumentNullException(nameof(transport));
         _transport = transport;
+        _localPrefix = localPrefix;
         _readerEntityId = readerEntityId;
         _logger = logger ?? NullLogger.Instance;
         _dataFragOptions = dataFragOptions ?? DataFragReassemblyOptions.Default;
@@ -144,7 +158,7 @@ public sealed class StatelessReader : IDisposable
         }
         try
         {
-            ProcessPacketBorrowed(packet);
+            ProcessPacket(packet);
         }
         catch (Exception ex)
         {
@@ -156,63 +170,19 @@ public sealed class StatelessReader : IDisposable
         => OnPacketReceived(packet, source);
 
     /// <summary>パケットを RTPS message として解釈し、マッチする DATA を上位へ転送する。</summary>
-    public void ProcessPacket(ReadOnlySpan<byte> packet)
+    public void ProcessPacket(ReadOnlyMemory<byte> packet)
     {
         if (_disposed)
         {
             return;
         }
-        if (!RtpsHeader.TryRead(packet, out _, out _, out var sourcePrefix))
-        {
-            return;
-        }
-        var reader = new RtpsMessageReader(packet);
-        while (reader.TryReadNext(out var hdr, out var body))
-        {
-            switch (hdr.Kind)
-            {
-                case SubmessageKind.Data:
-                    HandleData(sourcePrefix, body, hdr);
-                    break;
-                case SubmessageKind.DataFrag:
-                    HandleDataFrag(sourcePrefix, body, hdr);
-                    break;
-                default:
-                    break;
-            }
-        }
+        RtpsMessageDispatcher.Dispatch(packet, _localPrefix, this);
     }
 
-    private void ProcessPacketBorrowed(ReadOnlyMemory<byte> packet)
-    {
-        if (_disposed)
-        {
-            return;
-        }
-        if (!RtpsHeader.TryRead(packet.Span, out _, out _, out var sourcePrefix))
-        {
-            return;
-        }
-        var reader = RtpsMessageReader.FromMemory(packet);
-        while (reader.TryReadNextMemory(out var hdr, out var body))
-        {
-            switch (hdr.Kind)
-            {
-                case SubmessageKind.Data:
-                    HandleData(sourcePrefix, body, hdr);
-                    break;
-                case SubmessageKind.DataFrag:
-                    HandleDataFrag(sourcePrefix, body, hdr);
-                    break;
-                default:
-                    break;
-            }
-        }
-    }
+    // IRtpsSubmessageHandler 実装
 
-    private void HandleData(GuidPrefix sourcePrefix, ReadOnlySpan<byte> body, SubmessageHeader hdr)
+    void IRtpsSubmessageHandler.OnData(in RtpsReceiverContext ctx, DataSubmessage data, Cdr.CdrEndianness endianness)
     {
-        var data = DataSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
         if (!IsTargetReader(data.ReaderEntityId))
         {
             return;
@@ -222,85 +192,42 @@ public sealed class StatelessReader : IDisposable
             return;
         }
 
-        var writerGuid = new Guid(sourcePrefix, data.WriterEntityId);
+        var writerGuid = new Guid(ctx.SourceGuidPrefix, data.WriterEntityId);
         if (!IsMatchedWriter(writerGuid))
         {
-            BufferPendingPayload(writerGuid, data.SerializedPayload, sourcePrefix, data.WriterSequenceNumber);
+            BufferPendingPayload(writerGuid, data.SerializedPayload, ctx.SourceGuidPrefix, data.WriterSequenceNumber);
             return;
         }
-        DeliverPayload(writerGuid, data.WriterSequenceNumber, data.SerializedPayload, sourcePrefix);
+        DeliverPayload(writerGuid, data.WriterSequenceNumber, data.SerializedPayload, ctx.SourceGuidPrefix);
     }
 
-    private void HandleData(GuidPrefix sourcePrefix, ReadOnlyMemory<byte> body, SubmessageHeader hdr)
+    void IRtpsSubmessageHandler.OnDataFrag(in RtpsReceiverContext ctx, DataFragSubmessage dataFrag, Cdr.CdrEndianness endianness)
     {
-        var data = DataSubmessage.ReadBodyBorrowed(body, hdr.Endianness, hdr.Flags);
-        if (!IsTargetReader(data.ReaderEntityId))
-        {
-            return;
-        }
-        if (data.SerializedPayload.IsEmpty)
-        {
-            return;
-        }
-
-        var writerGuid = new Guid(sourcePrefix, data.WriterEntityId);
-        if (!IsMatchedWriter(writerGuid))
-        {
-            BufferPendingPayload(writerGuid, data.SerializedPayload, sourcePrefix, data.WriterSequenceNumber);
-            return;
-        }
-        DeliverPayload(writerGuid, data.WriterSequenceNumber, data.SerializedPayload, sourcePrefix);
-    }
-
-    private void HandleDataFrag(GuidPrefix sourcePrefix, ReadOnlySpan<byte> body, SubmessageHeader hdr)
-    {
-        var dataFrag = DataFragSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
         if (!IsTargetReader(dataFrag.ReaderEntityId))
         {
             return;
         }
 
-        var writerGuid = new Guid(sourcePrefix, dataFrag.WriterEntityId);
+        var writerGuid = new Guid(ctx.SourceGuidPrefix, dataFrag.WriterEntityId);
         DataFragReassemblyResult? completed;
         lock (_reassemblyLock)
         {
-            completed = _dataFragReassembly.Add(writerGuid, dataFrag, hdr.Endianness);
+            completed = _dataFragReassembly.Add(writerGuid, dataFrag, endianness);
         }
         if (completed is not null)
         {
             if (!IsMatchedWriter(writerGuid))
             {
-                BufferPendingPayload(writerGuid, completed.Value.Payload, sourcePrefix, dataFrag.WriterSequenceNumber);
+                BufferPendingPayload(writerGuid, completed.Value.Payload, ctx.SourceGuidPrefix, dataFrag.WriterSequenceNumber);
                 return;
             }
-            DeliverPayload(writerGuid, dataFrag.WriterSequenceNumber, completed.Value.Payload, sourcePrefix);
+            DeliverPayload(writerGuid, dataFrag.WriterSequenceNumber, completed.Value.Payload, ctx.SourceGuidPrefix);
         }
     }
 
-    private void HandleDataFrag(GuidPrefix sourcePrefix, ReadOnlyMemory<byte> body, SubmessageHeader hdr)
-    {
-        var dataFrag = DataFragSubmessage.ReadBodyBorrowed(body, hdr.Endianness, hdr.Flags);
-        if (!IsTargetReader(dataFrag.ReaderEntityId))
-        {
-            return;
-        }
-
-        var writerGuid = new Guid(sourcePrefix, dataFrag.WriterEntityId);
-        DataFragReassemblyResult? completed;
-        lock (_reassemblyLock)
-        {
-            completed = _dataFragReassembly.Add(writerGuid, dataFrag, hdr.Endianness);
-        }
-        if (completed is not null)
-        {
-            if (!IsMatchedWriter(writerGuid))
-            {
-                BufferPendingPayload(writerGuid, completed.Value.Payload, sourcePrefix, dataFrag.WriterSequenceNumber);
-                return;
-            }
-            DeliverPayload(writerGuid, dataFrag.WriterSequenceNumber, completed.Value.Payload, sourcePrefix);
-        }
-    }
+    void IRtpsSubmessageHandler.OnHeartbeat(in RtpsReceiverContext ctx, HeartbeatSubmessage hb) { }
+    void IRtpsSubmessageHandler.OnAckNack(in RtpsReceiverContext ctx, AckNackSubmessage ack) { }
+    void IRtpsSubmessageHandler.OnGap(in RtpsReceiverContext ctx, GapSubmessage gap) { }
 
     private bool IsTargetReader(EntityId readerEntityId)
         => readerEntityId.Equals(EntityId.Unknown) || readerEntityId.Equals(_readerEntityId);

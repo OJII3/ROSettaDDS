@@ -1,6 +1,7 @@
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Rtps.HistoryCache;
 using ROSettaDDS.Rtps.Submessages;
 using ROSettaDDS.Transport;
@@ -19,7 +20,7 @@ namespace ROSettaDDS.Rtps.Writer;
 /// reader proxy の matching は呼び出し側 (DomainParticipant) が <see cref="MatchReader"/> で明示。
 /// </para>
 /// </summary>
-public sealed class StatefulWriter : IDisposable
+public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
 {
     public const int SendBufferSize = 1500;
     public const int DataFragPayloadSize = 1024;
@@ -78,7 +79,13 @@ public sealed class StatefulWriter : IDisposable
         Guid = new Guid(localPrefix, writerEntityId);
     }
 
-    public void MatchReader(Guid readerGuid, Locator? unicastLocator = null)
+    /// <summary>
+    /// remote reader を match する。
+    /// <paramref name="reliability"/> は remote reader の Reliability 種別。
+    /// BestEffort reader は ACKNACK を送らないため purge/HB の対象から外される。
+    /// 既定値は Reliable (SEDP builtin reader や直接呼び出しの後方互換)。
+    /// </summary>
+    public void MatchReader(Guid readerGuid, Locator? unicastLocator = null, ReliabilityKind reliability = ReliabilityKind.Reliable)
     {
         ThrowIfDisposed();
         ReaderProxy? addedProxy = null;
@@ -87,10 +94,11 @@ public sealed class StatefulWriter : IDisposable
             if (_matched.TryGetValue(readerGuid, out var existing))
             {
                 existing.UpdateUnicastLocator(unicastLocator);
+                // reliability は proxy 生成時に確定するため再設定しない
             }
             else
             {
-                addedProxy = new ReaderProxy(readerGuid, unicastLocator);
+                addedProxy = new ReaderProxy(readerGuid, unicastLocator, reliability);
                 _matched[readerGuid] = addedProxy;
             }
         }
@@ -201,42 +209,53 @@ public sealed class StatefulWriter : IDisposable
     public void OnPacketReceived(ReadOnlyMemory<byte> packet, Locator source)
     {
         if (_disposed) return;
-        try { ProcessPacket(packet.Span); }
+        try { ProcessPacket(packet); }
         catch (Exception ex) { _logger.Warn($"StatefulWriter failed to parse packet from {source}", ex); }
     }
 
-    public void ProcessPacket(ReadOnlySpan<byte> packet)
+    public void ProcessPacket(ReadOnlyMemory<byte> packet)
     {
-        if (!RtpsHeader.TryRead(packet, out _, out _, out var sourcePrefix)) return;
-        var reader = new RtpsMessageReader(packet);
-        while (reader.TryReadNext(out var hdr, out var body))
-        {
-            if (hdr.Kind != SubmessageKind.AckNack) continue;
-            var ack = AckNackSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
-            if (!ack.WriterEntityId.Equals(_writerEntityId)) continue;
-
-            // reader 側 EntityId + sourcePrefix で proxy を特定
-            var readerGuid = new Guid(sourcePrefix, ack.ReaderEntityId);
-            ReaderProxy? proxy;
-            lock (_matchedLock) { _matched.TryGetValue(readerGuid, out proxy); }
-            if (proxy is null) continue;
-
-            proxy.ProcessAckNack(ack.ReaderSnState);
-
-            if (_purgeAckedSamples)
-            {
-                // ack 済みサンプルを history から削除 (全 reader の最小 ack を基準)
-                PurgeAckedSamples();
-            }
-
-            // 再送
-            RunBackground(
-                token => ResendRequestedAsync(proxy, token),
-                "StatefulWriter requested resend");
-        }
+        RtpsMessageDispatcher.Dispatch(packet, _localPrefix, this);
     }
 
-    /// <summary>全 matched reader がack 済みのサンプルを history から削除する。</summary>
+    // IRtpsSubmessageHandler 実装
+
+    void IRtpsSubmessageHandler.OnData(in RtpsReceiverContext ctx, DataSubmessage data, CdrEndianness endianness) { }
+    void IRtpsSubmessageHandler.OnDataFrag(in RtpsReceiverContext ctx, DataFragSubmessage dataFrag, CdrEndianness endianness) { }
+    void IRtpsSubmessageHandler.OnHeartbeat(in RtpsReceiverContext ctx, HeartbeatSubmessage hb) { }
+
+    void IRtpsSubmessageHandler.OnAckNack(in RtpsReceiverContext ctx, AckNackSubmessage ack)
+    {
+        if (!ack.WriterEntityId.Equals(_writerEntityId)) return;
+
+        // reader 側 EntityId + sourcePrefix で proxy を特定
+        var readerGuid = new Guid(ctx.SourceGuidPrefix, ack.ReaderEntityId);
+        ReaderProxy? proxy;
+        lock (_matchedLock) { _matched.TryGetValue(readerGuid, out proxy); }
+        if (proxy is null) return;
+
+        proxy.ProcessAckNack(ack.ReaderSnState);
+
+        if (_purgeAckedSamples)
+        {
+            // ack 済みサンプルを history から削除 (全 reader の最小 ack を基準)
+            PurgeAckedSamples();
+        }
+
+        // 再送
+        RunBackground(
+            token => ResendRequestedAsync(proxy, token),
+            "StatefulWriter requested resend");
+    }
+
+    void IRtpsSubmessageHandler.OnGap(in RtpsReceiverContext ctx, GapSubmessage gap) { }
+
+    /// <summary>
+    /// reliable な matched reader 全員が ack 済みのサンプルを history から削除する。
+    /// BestEffort reader は ACKNACK を送らないため HighestAcked が 0 のままになり、
+    /// purge を永久にブロックしてしまう。そのため reliable proxy のみを対象とする。
+    /// reliable proxy が 1 つも無い場合は purge しない (best-effort のみのときは MaxSamples eviction に任せる)。
+    /// </summary>
     private void PurgeAckedSamples()
     {
         long minAcked;
@@ -244,11 +263,16 @@ public sealed class StatefulWriter : IDisposable
         {
             if (_matched.Count == 0) return;
             minAcked = long.MaxValue;
+            bool hasReliable = false;
             foreach (var proxy in _matched.Values)
             {
+                if (!proxy.IsReliable) continue;
+                hasReliable = true;
                 var acked = proxy.HighestAcked.Value;
                 if (acked < minAcked) minAcked = acked;
             }
+            // reliable proxy が 1 つも無ければ purge しない
+            if (!hasReliable) return;
         }
         if (minAcked > 0 && minAcked < long.MaxValue)
         {
@@ -331,8 +355,10 @@ public sealed class StatefulWriter : IDisposable
             await SendHeartbeatToDestinationAsync(EntityId.Unknown, _multicastDestination, count: 1, cancellationToken).ConfigureAwait(false);
             return;
         }
+        // HEARTBEAT は reliable reader のみに送る。BestEffort reader に HB を送っても無意味。
         foreach (var proxy in proxies)
         {
+            if (!proxy.IsReliable) continue;
             int count = proxy.IncrementHeartbeatCount();
             var dest = proxy.UnicastLocator ?? _multicastDestination;
             await SendHeartbeatToDestinationAsync(proxy.ReaderGuid.EntityId, dest, count, cancellationToken).ConfigureAwait(false);
@@ -362,12 +388,15 @@ public sealed class StatefulWriter : IDisposable
     {
         var first = _history.FirstSequenceNumber;
         var last = _history.LastSequenceNumber;
-        // Cache が空なら送らない
+        // RTPS 仕様: 空 cache でも firstSN=1, lastSN=0 の HB は合法で、
+        // reader が writer 状態を確定するために必要。送信をスキップしない。
         if (last.Value == 0)
         {
-            return Array.Empty<byte>();
+            // 空 cache: firstSN=1, lastSN=0
+            first = new SequenceNumber(1L);
+            last = new SequenceNumber(0L);
         }
-        if (first.Value == 0)
+        else if (first.Value == 0)
         {
             first = new SequenceNumber(1L);
         }

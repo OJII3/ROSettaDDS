@@ -13,7 +13,7 @@ namespace ROSettaDDS.Discovery;
 /// SPDP_BUILTIN_PARTICIPANT_WRITER から送信された DATA submessage を解釈して
 /// <see cref="DiscoveryDb"/> へ Upsert する。
 /// </summary>
-public sealed class SpdpBuiltinParticipantReader : IDisposable
+public sealed class SpdpBuiltinParticipantReader : IDisposable, IRtpsSubmessageHandler
 {
     private readonly IRtpsTransport _transport;
     private readonly DiscoveryDb _discoveryDb;
@@ -75,11 +75,11 @@ public sealed class SpdpBuiltinParticipantReader : IDisposable
         Stop();
     }
 
-    private void OnPacketReceived(ReadOnlyMemory<byte> packet, Locator source)
+    public void OnPacketReceived(ReadOnlyMemory<byte> packet, Locator source)
     {
         try
         {
-            ProcessPacketBorrowed(packet);
+            ProcessPacket(packet);
         }
         catch (Exception ex)
         {
@@ -90,60 +90,30 @@ public sealed class SpdpBuiltinParticipantReader : IDisposable
     /// <summary>
     /// 受信パケットを RTPS メッセージとして解釈し、SPDP DATA を抽出して DB へ反映する。
     /// </summary>
-    public void ProcessPacket(ReadOnlySpan<byte> packet)
+    public void ProcessPacket(ReadOnlyMemory<byte> packet)
     {
-        if (!RtpsHeader.TryRead(packet, out _, out _, out _))
-        {
-            // RTPS ヘッダではない (他のプロトコル等)
-            return;
-        }
-
-        var reader = new RtpsMessageReader(packet);
-        while (reader.TryReadNext(out var hdr, out var body))
-        {
-            if (hdr.Kind != SubmessageKind.Data)
-            {
-                continue;
-            }
-            var data = DataSubmessage.ReadBody(body, hdr.Endianness, hdr.Flags);
-            if (!data.WriterEntityId.Equals(BuiltinEntityIds.SpdpBuiltinParticipantWriter))
-            {
-                continue;
-            }
-            if (data.SerializedPayload.IsEmpty)
-            {
-                continue;
-            }
-            HandleSpdpData(data.SerializedPayload.Span);
-        }
+        RtpsMessageDispatcher.Dispatch(packet, _localPrefix, this);
     }
 
-    private void ProcessPacketBorrowed(ReadOnlyMemory<byte> packet)
+    // IRtpsSubmessageHandler 実装
+
+    void IRtpsSubmessageHandler.OnData(in RtpsReceiverContext ctx, DataSubmessage data, CdrEndianness endianness)
     {
-        if (!RtpsHeader.TryRead(packet.Span, out _, out _, out _))
+        if (!data.WriterEntityId.Equals(BuiltinEntityIds.SpdpBuiltinParticipantWriter))
         {
             return;
         }
-
-        var reader = RtpsMessageReader.FromMemory(packet);
-        while (reader.TryReadNextMemory(out var hdr, out var body))
+        if (data.SerializedPayload.IsEmpty)
         {
-            if (hdr.Kind != SubmessageKind.Data)
-            {
-                continue;
-            }
-            var data = DataSubmessage.ReadBodyBorrowed(body, hdr.Endianness, hdr.Flags);
-            if (!data.WriterEntityId.Equals(BuiltinEntityIds.SpdpBuiltinParticipantWriter))
-            {
-                continue;
-            }
-            if (data.SerializedPayload.IsEmpty)
-            {
-                continue;
-            }
-            HandleSpdpData(data.SerializedPayload.Span);
+            return;
         }
+        HandleSpdpData(data.SerializedPayload.Span);
     }
+
+    void IRtpsSubmessageHandler.OnDataFrag(in RtpsReceiverContext ctx, DataFragSubmessage dataFrag, CdrEndianness endianness) { }
+    void IRtpsSubmessageHandler.OnHeartbeat(in RtpsReceiverContext ctx, HeartbeatSubmessage hb) { }
+    void IRtpsSubmessageHandler.OnAckNack(in RtpsReceiverContext ctx, AckNackSubmessage ack) { }
+    void IRtpsSubmessageHandler.OnGap(in RtpsReceiverContext ctx, GapSubmessage gap) { }
 
     private void HandleSpdpData(ReadOnlySpan<byte> serializedPayload)
     {

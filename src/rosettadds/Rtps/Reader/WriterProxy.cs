@@ -140,6 +140,37 @@ public sealed class WriterProxy
         }
     }
 
+    /// <summary>
+    /// 欠損 SN が 1 つでも存在するか。
+    /// HEARTBEAT 受信時に ACKNACK の final フラグを決定するために使用する。
+    /// </summary>
+    public bool HasMissingSequences()
+    {
+        lock (_lock)
+        {
+            long base_ = ComputeHighestContiguous() + 1;
+            if (base_ > _lastAvailable)
+            {
+                return false;
+            }
+            int rangeIndex = 0;
+            for (long sn = Math.Max(base_, _firstAvailable); sn <= _lastAvailable; sn++)
+            {
+                while (rangeIndex < _satisfiedRanges.Count && _satisfiedRanges[rangeIndex].End < sn)
+                {
+                    rangeIndex++;
+                }
+                bool isSatisfied = rangeIndex < _satisfiedRanges.Count
+                    && _satisfiedRanges[rangeIndex].Contains(sn);
+                if (!isSatisfied)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
     /// <summary>このプロキシで欠損とみなしている SN のリスト (テスト/診断用)。</summary>
     public IReadOnlyList<SequenceNumber> MissingSequenceNumbers()
     {

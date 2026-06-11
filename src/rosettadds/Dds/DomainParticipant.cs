@@ -218,6 +218,9 @@ public sealed class DomainParticipant : IDisposable
         }
         _transports.Start();
         _spdpReader.Start();
+        // SPDP DATA は multicast (自己購読済み) に加えて、
+        // FastDDS 等が unicast へ直接返信する DATA(p) も受信する
+        _transports.MetatrafficUnicast.Received += _spdpReader.OnPacketReceived;
         _spdpWriter.Start();
 
         // SEDP の DATA/HB は multicast (初期) と unicast (ACKNACK 返信先) の両方で受信する
@@ -259,6 +262,7 @@ public sealed class DomainParticipant : IDisposable
         _transports.MetatrafficUnicast.Received -= _sedpSubscriptionsReader.OnPacketReceived;
         _transports.MetatrafficUnicast.Received -= _sedpPublicationsWriter.OnPacketReceived;
         _transports.MetatrafficUnicast.Received -= _sedpSubscriptionsWriter.OnPacketReceived;
+        _transports.MetatrafficUnicast.Received -= _spdpReader.OnPacketReceived;
         _spdpWriter.Stop();
         _spdpReader.Stop();
         _transports.Stop();
@@ -417,7 +421,7 @@ public sealed class DomainParticipant : IDisposable
         var ddsTopic = TopicNameMangler.MangleTopic(topicName);
         var ddsTypeName = ResolveDdsTypeName<T>(typeName);
         var readerEntityId = _userEntityIds.AllocateReader();
-        var reader = new StatelessReader(readerEntityId, _options.Logger, _options.DataFragReassembly);
+        var reader = new StatelessReader(GuidPrefix, readerEntityId, _options.Logger, _options.DataFragReassembly);
 
         // SEDP 用に登録 (即時 publish)
         var endpointGuid = new Guid(GuidPrefix, readerEntityId);
