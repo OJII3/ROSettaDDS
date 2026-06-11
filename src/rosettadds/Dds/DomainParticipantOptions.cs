@@ -14,7 +14,13 @@ namespace ROSettaDDS.Dds;
 public sealed class DomainParticipantOptions
 {
     public int DomainId { get; init; }
-    public int ParticipantId { get; init; } = 1;
+    public int ParticipantId { get; init; } = 0;
+
+    /// <summary>
+    /// true の場合、指定した <see cref="ParticipantId"/> のユニキャストポートが使用中なら
+    /// 空きが見つかるまで ID をインクリメントして再試行する。既定 true。
+    /// </summary>
+    public bool AutoProbeParticipantId { get; init; } = true;
 
     /// <summary>SPDP の送信間隔。既定 3 秒 (ROS 2 既定値)。</summary>
     public TimeSpan SpdpInterval { get; init; } = TimeSpan.FromSeconds(3);
