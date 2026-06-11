@@ -1,4 +1,3 @@
-using System.Net;
 using Rclsharp.Cdr;
 using Rclsharp.Common;
 using Rclsharp.Common.Logging;
@@ -22,14 +21,7 @@ public sealed class DomainParticipant : IDisposable
     private static readonly TimeSpan MinLeaseExpiryCheckPeriod = TimeSpan.FromMilliseconds(50);
 
     private readonly DomainParticipantOptions _options;
-    private readonly IRtpsTransport _multicastTransport;
-    private readonly IRtpsTransport _unicastTransport;
-    private readonly IRtpsTransport _userMulticastTransport;
-    private readonly IRtpsTransport _userUnicastTransport;
-    private readonly bool _ownsMulticastTransport;
-    private readonly bool _ownsUnicastTransport;
-    private readonly bool _ownsUserMulticastTransport;
-    private readonly bool _ownsUserUnicastTransport;
+    private readonly ParticipantTransportSet _transports;
     private readonly DiscoveryDb _discoveryDb;
     private readonly SpdpBuiltinParticipantReader _spdpReader;
     private readonly SpdpBuiltinParticipantWriter _spdpWriter;
@@ -37,12 +29,6 @@ public sealed class DomainParticipant : IDisposable
     private readonly SedpEndpointReader _sedpPublicationsReader;
     private readonly SedpEndpointWriter _sedpSubscriptionsWriter;
     private readonly SedpEndpointReader _sedpSubscriptionsReader;
-    private readonly Locator _multicastDestination;
-    private readonly Locator _userMulticastDestination;
-    private readonly Locator _metatrafficUnicastLocator;
-    private readonly Locator _metatrafficMulticastLocator;
-    private readonly Locator _defaultMulticastLocator;
-    private readonly Locator _defaultUnicastLocator;
     private readonly TimeSpan _leaseExpiryCheckPeriod;
     private readonly UserEntityIdAllocator _userEntityIds = new();
 
@@ -71,13 +57,13 @@ public sealed class DomainParticipant : IDisposable
     public DiscoveryDb DiscoveryDb => _discoveryDb;
 
     /// <summary>ユーザートピックの multicast 送受信に使うトランスポート。</summary>
-    public IRtpsTransport UserMulticastTransport => _userMulticastTransport;
+    public IRtpsTransport UserMulticastTransport => _transports.UserMulticast;
 
     /// <summary>ユーザートピックの unicast 送受信に使うトランスポート。</summary>
-    public IRtpsTransport UserUnicastTransport => _userUnicastTransport;
+    public IRtpsTransport UserUnicastTransport => _transports.UserUnicast;
 
     /// <summary>ユーザートピックの multicast 送信先 Locator。</summary>
-    public Locator UserMulticastDestination => _userMulticastDestination;
+    public Locator UserMulticastDestination => _transports.UserMulticastDestination;
 
     private sealed class LocalUserReader
     {
@@ -112,90 +98,16 @@ public sealed class DomainParticipant : IDisposable
         GuidPrefix = GuidPrefix.CreateForCurrentProcess(_options.VendorId);
         Guid = new Guid(GuidPrefix, BuiltinEntityIds.Participant);
 
-        int discoveryMulticastPort = RtpsPorts.DiscoveryMulticast(_options.DomainId);
-        int discoveryUnicastPort = RtpsPorts.DiscoveryUnicast(_options.DomainId, _options.ParticipantId);
-        int userMulticastPort = RtpsPorts.UserMulticast(_options.DomainId);
-        int userUnicastPort = RtpsPorts.UserUnicast(_options.DomainId, _options.ParticipantId);
-
-        // Multicast transport (受信用に bind、送信先 Locator も同じ)
-        if (_options.CustomMulticastTransport is not null)
-        {
-            _multicastTransport = _options.CustomMulticastTransport;
-            _ownsMulticastTransport = false;
-        }
-        else
-        {
-            _multicastTransport = UdpTransport.CreateMulticast(
-                _options.MulticastGroup,
-                discoveryMulticastPort,
-                _options.MulticastInterface,
-                _options.Logger);
-            _ownsMulticastTransport = true;
-        }
-
-        // Unicast transport (Metatraffic 受信用)
-        if (_options.CustomUnicastTransport is not null)
-        {
-            _unicastTransport = _options.CustomUnicastTransport;
-            _ownsUnicastTransport = false;
-        }
-        else
-        {
-            var localAddr = _options.LocalUnicastAddress ?? IPAddress.Loopback;
-            _unicastTransport = UdpTransport.CreateUnicast(
-                localAddr,
-                discoveryUnicastPort,
-                _options.Logger);
-            _ownsUnicastTransport = true;
-        }
-
-        // ユーザートピック用 Multicast transport (port = 7401 + 250*domain)
-        if (_options.CustomUserMulticastTransport is not null)
-        {
-            _userMulticastTransport = _options.CustomUserMulticastTransport;
-            _ownsUserMulticastTransport = false;
-        }
-        else
-        {
-            _userMulticastTransport = UdpTransport.CreateMulticast(
-                _options.MulticastGroup,
-                userMulticastPort,
-                _options.MulticastInterface,
-                _options.Logger);
-            _ownsUserMulticastTransport = true;
-        }
-
-        // ユーザートピック用 Unicast transport (port = 7411 + 250*domain + 2*participant)
-        if (_options.CustomUserUnicastTransport is not null)
-        {
-            _userUnicastTransport = _options.CustomUserUnicastTransport;
-            _ownsUserUnicastTransport = false;
-        }
-        else
-        {
-            var localAddr = _options.LocalUnicastAddress ?? IPAddress.Loopback;
-            _userUnicastTransport = UdpTransport.CreateUnicast(
-                localAddr,
-                userUnicastPort,
-                _options.Logger);
-            _ownsUserUnicastTransport = true;
-        }
-
-        _multicastDestination = Locator.FromUdpV4(_options.MulticastGroup, (uint)discoveryMulticastPort);
-        _userMulticastDestination = Locator.FromUdpV4(_options.MulticastGroup, (uint)userMulticastPort);
-        _metatrafficMulticastLocator = _multicastDestination;
-        _metatrafficUnicastLocator = _unicastTransport.LocalLocator;
-        _defaultMulticastLocator = _userMulticastDestination;
-        _defaultUnicastLocator = _userUnicastTransport.LocalLocator;
+        _transports = ParticipantTransportSet.Create(_options);
 
         _discoveryDb = new DiscoveryDb(_options.DiscoveryLimits);
 
         _spdpReader = new SpdpBuiltinParticipantReader(
-            _multicastTransport, _discoveryDb, GuidPrefix, _options.Logger, limits: _options.DiscoveryLimits);
+            _transports.MetatrafficMulticast, _discoveryDb, GuidPrefix, _options.Logger, limits: _options.DiscoveryLimits);
 
         _spdpWriter = new SpdpBuiltinParticipantWriter(
-            transport: _multicastTransport,
-            multicastDestination: _multicastDestination,
+            transport: _transports.MetatrafficMulticast,
+            multicastDestination: _transports.MetatrafficMulticastDestination,
             version: _options.ProtocolVersion,
             vendorId: _options.VendorId,
             localPrefix: GuidPrefix,
@@ -206,8 +118,8 @@ public sealed class DomainParticipant : IDisposable
         // SEDP: Writer は multicast transport で送信、unicast transport で ACKNACK を受信。
         // Reader は multicast / unicast 両方で DATA/HB を受信、unicast で ACKNACK を返信。
         _sedpPublicationsWriter = new SedpEndpointWriter(
-            transport: _multicastTransport,
-            multicastDestination: _multicastDestination,
+            transport: _transports.MetatrafficMulticast,
+            multicastDestination: _transports.MetatrafficMulticastDestination,
             version: _options.ProtocolVersion,
             vendorId: _options.VendorId,
             localPrefix: GuidPrefix,
@@ -216,20 +128,20 @@ public sealed class DomainParticipant : IDisposable
             logger: _options.Logger);
 
         _sedpPublicationsReader = new SedpEndpointReader(
-            replyTransport: _unicastTransport,
+            replyTransport: _transports.MetatrafficUnicast,
             discoveryDb: _discoveryDb,
             version: _options.ProtocolVersion,
             vendorId: _options.VendorId,
             localPrefix: GuidPrefix,
             readerEntityId: BuiltinEntityIds.SedpBuiltinPublicationsReader,
-            ackNackFallbackDestination: _multicastDestination,
+            ackNackFallbackDestination: _transports.MetatrafficMulticastDestination,
             producedEndpointKind: EndpointKind.Writer,
             logger: _options.Logger,
             limits: _options.DiscoveryLimits);
 
         _sedpSubscriptionsWriter = new SedpEndpointWriter(
-            transport: _multicastTransport,
-            multicastDestination: _multicastDestination,
+            transport: _transports.MetatrafficMulticast,
+            multicastDestination: _transports.MetatrafficMulticastDestination,
             version: _options.ProtocolVersion,
             vendorId: _options.VendorId,
             localPrefix: GuidPrefix,
@@ -238,13 +150,13 @@ public sealed class DomainParticipant : IDisposable
             logger: _options.Logger);
 
         _sedpSubscriptionsReader = new SedpEndpointReader(
-            replyTransport: _unicastTransport,
+            replyTransport: _transports.MetatrafficUnicast,
             discoveryDb: _discoveryDb,
             version: _options.ProtocolVersion,
             vendorId: _options.VendorId,
             localPrefix: GuidPrefix,
             readerEntityId: BuiltinEntityIds.SedpBuiltinSubscriptionsReader,
-            ackNackFallbackDestination: _multicastDestination,
+            ackNackFallbackDestination: _transports.MetatrafficMulticastDestination,
             producedEndpointKind: EndpointKind.Reader,
             logger: _options.Logger,
             limits: _options.DiscoveryLimits);
@@ -482,25 +394,22 @@ public sealed class DomainParticipant : IDisposable
         {
             return;
         }
-        _multicastTransport.Start();
-        _unicastTransport.Start();
-        _userMulticastTransport.Start();
-        _userUnicastTransport.Start();
+        _transports.Start();
         _spdpReader.Start();
         _spdpWriter.Start();
 
         // SEDP の DATA/HB は multicast (初期) と unicast (ACKNACK 返信先) の両方で受信する
-        _multicastTransport.Received += _sedpPublicationsReader.OnPacketReceived;
-        _multicastTransport.Received += _sedpSubscriptionsReader.OnPacketReceived;
-        _unicastTransport.Received += _sedpPublicationsReader.OnPacketReceived;
-        _unicastTransport.Received += _sedpSubscriptionsReader.OnPacketReceived;
+        _transports.MetatrafficMulticast.Received += _sedpPublicationsReader.OnPacketReceived;
+        _transports.MetatrafficMulticast.Received += _sedpSubscriptionsReader.OnPacketReceived;
+        _transports.MetatrafficUnicast.Received += _sedpPublicationsReader.OnPacketReceived;
+        _transports.MetatrafficUnicast.Received += _sedpSubscriptionsReader.OnPacketReceived;
         // SEDP writer は ACKNACK を unicast metatraffic で受ける
-        _unicastTransport.Received += _sedpPublicationsWriter.OnPacketReceived;
-        _unicastTransport.Received += _sedpSubscriptionsWriter.OnPacketReceived;
+        _transports.MetatrafficUnicast.Received += _sedpPublicationsWriter.OnPacketReceived;
+        _transports.MetatrafficUnicast.Received += _sedpSubscriptionsWriter.OnPacketReceived;
 
         // ユーザーデータは multicast / unicast の両方を同じ dispatcher で処理する
-        _userMulticastTransport.Received += OnUserDataPacketReceived;
-        _userUnicastTransport.Received += OnUserDataPacketReceived;
+        _transports.UserMulticast.Received += OnUserDataPacketReceived;
+        _transports.UserUnicast.Received += OnUserDataPacketReceived;
 
         _sedpPublicationsWriter.Start();
         _sedpSubscriptionsWriter.Start();
@@ -520,20 +429,17 @@ public sealed class DomainParticipant : IDisposable
         StopLocalUserWriters();
         _sedpPublicationsWriter.Stop();
         _sedpSubscriptionsWriter.Stop();
-        _userMulticastTransport.Received -= OnUserDataPacketReceived;
-        _userUnicastTransport.Received -= OnUserDataPacketReceived;
-        _multicastTransport.Received -= _sedpPublicationsReader.OnPacketReceived;
-        _multicastTransport.Received -= _sedpSubscriptionsReader.OnPacketReceived;
-        _unicastTransport.Received -= _sedpPublicationsReader.OnPacketReceived;
-        _unicastTransport.Received -= _sedpSubscriptionsReader.OnPacketReceived;
-        _unicastTransport.Received -= _sedpPublicationsWriter.OnPacketReceived;
-        _unicastTransport.Received -= _sedpSubscriptionsWriter.OnPacketReceived;
+        _transports.UserMulticast.Received -= OnUserDataPacketReceived;
+        _transports.UserUnicast.Received -= OnUserDataPacketReceived;
+        _transports.MetatrafficMulticast.Received -= _sedpPublicationsReader.OnPacketReceived;
+        _transports.MetatrafficMulticast.Received -= _sedpSubscriptionsReader.OnPacketReceived;
+        _transports.MetatrafficUnicast.Received -= _sedpPublicationsReader.OnPacketReceived;
+        _transports.MetatrafficUnicast.Received -= _sedpSubscriptionsReader.OnPacketReceived;
+        _transports.MetatrafficUnicast.Received -= _sedpPublicationsWriter.OnPacketReceived;
+        _transports.MetatrafficUnicast.Received -= _sedpSubscriptionsWriter.OnPacketReceived;
         _spdpWriter.Stop();
         _spdpReader.Stop();
-        _userUnicastTransport.Stop();
-        _userMulticastTransport.Stop();
-        _multicastTransport.Stop();
-        _unicastTransport.Stop();
+        _transports.Stop();
         _started = false;
     }
 
@@ -629,10 +535,10 @@ public sealed class DomainParticipant : IDisposable
             LeaseDuration = _options.LeaseDuration,
             EntityName = _options.EntityName,
         };
-        data.MetatrafficMulticastLocators.Add(_metatrafficMulticastLocator);
-        data.MetatrafficUnicastLocators.Add(_metatrafficUnicastLocator);
-        data.DefaultUnicastLocators.Add(_defaultUnicastLocator);
-        data.DefaultMulticastLocators.Add(_defaultMulticastLocator);
+        data.MetatrafficMulticastLocators.Add(_transports.MetatrafficMulticastDestination);
+        data.MetatrafficUnicastLocators.Add(_transports.MetatrafficUnicastLocator);
+        data.DefaultUnicastLocators.Add(_transports.DefaultUnicastLocator);
+        data.DefaultMulticastLocators.Add(_transports.UserMulticastDestination);
         return data;
     }
 
@@ -664,8 +570,8 @@ public sealed class DomainParticipant : IDisposable
         var writerGuid = new Guid(GuidPrefix, writerEntityId);
         var history = new Rtps.HistoryCache.WriterHistoryCache(writerGuid, maxSamples: 1000);
         var writer = new StatefulWriter(
-            sendTransport: _userUnicastTransport,
-            multicastDestination: _userMulticastDestination,
+            sendTransport: _transports.UserUnicast,
+            multicastDestination: _transports.UserMulticastDestination,
             version: _options.ProtocolVersion,
             vendorId: _options.VendorId,
             localPrefix: GuidPrefix,
@@ -685,8 +591,8 @@ public sealed class DomainParticipant : IDisposable
             Reliability = reliability,
             Durability = DurabilityQos.Volatile,
         };
-        endpointData.UnicastLocators.Add(_defaultUnicastLocator);
-        endpointData.MulticastLocators.Add(_defaultMulticastLocator);
+        endpointData.UnicastLocators.Add(_transports.DefaultUnicastLocator);
+        endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
         var localWriter = new LocalUserWriter(endpointData, writer);
         LocalUserReader[] localReaders;
         lock (_localEndpointsLock)
@@ -758,8 +664,8 @@ public sealed class DomainParticipant : IDisposable
             Reliability = ReliabilityQos.BestEffort,
             Durability = DurabilityQos.Volatile,
         };
-        endpointData.UnicastLocators.Add(_defaultUnicastLocator);
-        endpointData.MulticastLocators.Add(_defaultMulticastLocator);
+        endpointData.UnicastLocators.Add(_transports.DefaultUnicastLocator);
+        endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
         var localReader = new LocalUserReader(endpointData, reader);
         LocalUserWriter[] localWriters;
         lock (_localEndpointsLock)
@@ -827,22 +733,7 @@ public sealed class DomainParticipant : IDisposable
         _sedpSubscriptionsReader.Dispose();
         _spdpWriter.Dispose();
         _spdpReader.Dispose();
-        if (_ownsUserUnicastTransport)
-        {
-            _userUnicastTransport.Dispose();
-        }
-        if (_ownsUserMulticastTransport)
-        {
-            _userMulticastTransport.Dispose();
-        }
-        if (_ownsMulticastTransport)
-        {
-            _multicastTransport.Dispose();
-        }
-        if (_ownsUnicastTransport)
-        {
-            _unicastTransport.Dispose();
-        }
+        _transports.Dispose();
     }
 
     private void UnregisterAllLocalEndpoints()
