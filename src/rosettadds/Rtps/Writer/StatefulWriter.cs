@@ -362,12 +362,15 @@ public sealed class StatefulWriter : IDisposable
     {
         var first = _history.FirstSequenceNumber;
         var last = _history.LastSequenceNumber;
-        // Cache が空なら送らない
+        // RTPS 仕様: 空 cache でも firstSN=1, lastSN=0 の HB は合法で、
+        // reader が writer 状態を確定するために必要。送信をスキップしない。
         if (last.Value == 0)
         {
-            return Array.Empty<byte>();
+            // 空 cache: firstSN=1, lastSN=0
+            first = new SequenceNumber(1L);
+            last = new SequenceNumber(0L);
         }
-        if (first.Value == 0)
+        else if (first.Value == 0)
         {
             first = new SequenceNumber(1L);
         }

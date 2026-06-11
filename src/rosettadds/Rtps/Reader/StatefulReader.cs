@@ -202,10 +202,24 @@ public sealed class StatefulReader : IDisposable
 
                         proxy.UpdateHeartbeatRange(hb.FirstSequenceNumber, hb.LastSequenceNumber);
 
-                        // ACKNACK パケット組立
-                        var ackPacket = BuildAckNackPacket(proxy);
-                        pendingAcknacks ??= new List<(WriterProxy, byte[])>();
-                        pendingAcknacks.Add((proxy, ackPacket));
+                        // RTPS 8.4.12 / 9.4.5 に準拠した ACKNACK 送信判定:
+                        // - 欠損あり       → final=false で送信 (再送を要求)
+                        // - 欠損なし かつ HB.Final=false → final=true で送信 (pure ack、往復増幅を防ぐ)
+                        // - 欠損なし かつ HB.Final=true  → 送信しない (writer は応答不要と通知)
+                        bool hasMissing = proxy.HasMissingSequences();
+                        if (hasMissing)
+                        {
+                            var ackPacket = BuildAckNackPacket(proxy, final: false);
+                            pendingAcknacks ??= new List<(WriterProxy, byte[])>();
+                            pendingAcknacks.Add((proxy, ackPacket));
+                        }
+                        else if (!hb.Final)
+                        {
+                            var ackPacket = BuildAckNackPacket(proxy, final: true);
+                            pendingAcknacks ??= new List<(WriterProxy, byte[])>();
+                            pendingAcknacks.Add((proxy, ackPacket));
+                        }
+                        // hb.Final=true かつ 欠損なし → ACKNACK 不要
                         break;
                     }
                 case SubmessageKind.Gap:
@@ -337,9 +351,24 @@ public sealed class StatefulReader : IDisposable
 
                         proxy.UpdateHeartbeatRange(hb.FirstSequenceNumber, hb.LastSequenceNumber);
 
-                        var ackPacket = BuildAckNackPacket(proxy);
-                        pendingAcknacks ??= new List<(WriterProxy, byte[])>();
-                        pendingAcknacks.Add((proxy, ackPacket));
+                        // RTPS 8.4.12 / 9.4.5 に準拠した ACKNACK 送信判定 (ProcessPacketBorrowed 版):
+                        // - 欠損あり       → final=false で送信 (再送を要求)
+                        // - 欠損なし かつ HB.Final=false → final=true で送信 (pure ack、往復増幅を防ぐ)
+                        // - 欠損なし かつ HB.Final=true  → 送信しない (writer は応答不要と通知)
+                        bool hasMissing = proxy.HasMissingSequences();
+                        if (hasMissing)
+                        {
+                            var ackPacket = BuildAckNackPacket(proxy, final: false);
+                            pendingAcknacks ??= new List<(WriterProxy, byte[])>();
+                            pendingAcknacks.Add((proxy, ackPacket));
+                        }
+                        else if (!hb.Final)
+                        {
+                            var ackPacket = BuildAckNackPacket(proxy, final: true);
+                            pendingAcknacks ??= new List<(WriterProxy, byte[])>();
+                            pendingAcknacks.Add((proxy, ackPacket));
+                        }
+                        // hb.Final=true かつ 欠損なし → ACKNACK 不要
                         break;
                     }
                 case SubmessageKind.Gap:
@@ -420,7 +449,7 @@ public sealed class StatefulReader : IDisposable
         return unregistered ? ChangeKind.NotAliveUnregistered : ChangeKind.Alive;
     }
 
-    private byte[] BuildAckNackPacket(WriterProxy proxy)
+    private byte[] BuildAckNackPacket(WriterProxy proxy, bool final)
     {
         int count = proxy.IncrementAckNackCount();
         var snSet = proxy.BuildAckNackBitmap();
@@ -430,7 +459,7 @@ public sealed class StatefulReader : IDisposable
             writerEntityId: proxy.WriterGuid.EntityId,
             readerSnState: snSet,
             count: count,
-            final: false);
+            final: final);
 
         var buffer = new byte[SendBufferSize];
         var msg = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
