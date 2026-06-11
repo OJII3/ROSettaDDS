@@ -44,6 +44,9 @@ public sealed class DomainParticipant : IDisposable
     public Guid Guid { get; }
     public DiscoveryDb DiscoveryDb => _discoveryDb;
 
+    /// <summary>実際に使用された Participant ID。auto-probe により入力値と異なる場合がある。</summary>
+    public int ResolvedParticipantId => _transports.ResolvedParticipantId;
+
     /// <summary>ユーザートピックの multicast 送受信に使うトランスポート。</summary>
     public IRtpsTransport UserMulticastTransport => _transports.UserMulticast;
 

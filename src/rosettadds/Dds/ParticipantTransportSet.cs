@@ -1,5 +1,7 @@
 using System.Net;
+using System.Net.Sockets;
 using ROSettaDDS.Common;
+using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Transport;
 
 namespace ROSettaDDS.Dds;
@@ -22,7 +24,8 @@ internal sealed class ParticipantTransportSet : IDisposable
         OwnedTransport userMulticast,
         OwnedTransport userUnicast,
         Locator metatrafficMulticastDestination,
-        Locator userMulticastDestination)
+        Locator userMulticastDestination,
+        int resolvedParticipantId)
     {
         _metatrafficMulticast = metatrafficMulticast;
         _metatrafficUnicast = metatrafficUnicast;
@@ -30,6 +33,7 @@ internal sealed class ParticipantTransportSet : IDisposable
         _userUnicast = userUnicast;
         MetatrafficMulticastDestination = metatrafficMulticastDestination;
         UserMulticastDestination = userMulticastDestination;
+        ResolvedParticipantId = resolvedParticipantId;
     }
 
     public IRtpsTransport MetatrafficMulticast => _metatrafficMulticast.Transport;
@@ -41,6 +45,9 @@ internal sealed class ParticipantTransportSet : IDisposable
     public Locator MetatrafficUnicastLocator => MetatrafficUnicast.LocalLocator;
     public Locator DefaultUnicastLocator => UserUnicast.LocalLocator;
 
+    /// <summary>実際に使用された Participant ID。auto-probe により入力値と異なる場合がある。</summary>
+    public int ResolvedParticipantId { get; }
+
     public static ParticipantTransportSet Create(DomainParticipantOptions options)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
@@ -49,9 +56,7 @@ internal sealed class ParticipantTransportSet : IDisposable
         try
         {
             int discoveryMulticastPort = RtpsPorts.DiscoveryMulticast(options.DomainId);
-            int discoveryUnicastPort = RtpsPorts.DiscoveryUnicast(options.DomainId, options.ParticipantId);
             int userMulticastPort = RtpsPorts.UserMulticast(options.DomainId);
-            int userUnicastPort = RtpsPorts.UserUnicast(options.DomainId, options.ParticipantId);
             var localAddress = options.LocalUnicastAddress ?? IPAddress.Loopback;
 
             var metatrafficMulticast = Add(
@@ -62,10 +67,6 @@ internal sealed class ParticipantTransportSet : IDisposable
                     discoveryMulticastPort,
                     options.MulticastInterface,
                     options.Logger));
-            var metatrafficUnicast = Add(
-                created,
-                options.CustomUnicastTransport,
-                () => UdpTransport.CreateUnicast(localAddress, discoveryUnicastPort, options.Logger));
             var userMulticast = Add(
                 created,
                 options.CustomUserMulticastTransport,
@@ -74,10 +75,38 @@ internal sealed class ParticipantTransportSet : IDisposable
                     userMulticastPort,
                     options.MulticastInterface,
                     options.Logger));
-            var userUnicast = Add(
-                created,
-                options.CustomUserUnicastTransport,
-                () => UdpTransport.CreateUnicast(localAddress, userUnicastPort, options.Logger));
+
+            bool hasCustomUnicast = options.CustomUnicastTransport is not null
+                                    && options.CustomUserUnicastTransport is not null;
+            int resolvedId = options.ParticipantId;
+
+            OwnedTransport metatrafficUnicast;
+            OwnedTransport userUnicast;
+
+            if (hasCustomUnicast || !options.AutoProbeParticipantId)
+            {
+                int discoveryUnicastPort = RtpsPorts.DiscoveryUnicast(options.DomainId, resolvedId);
+                int userUnicastPort = RtpsPorts.UserUnicast(options.DomainId, resolvedId);
+                metatrafficUnicast = Add(
+                    created,
+                    options.CustomUnicastTransport,
+                    () => UdpTransport.CreateUnicast(localAddress, discoveryUnicastPort, options.Logger));
+                userUnicast = Add(
+                    created,
+                    options.CustomUserUnicastTransport,
+                    () => UdpTransport.CreateUnicast(localAddress, userUnicastPort, options.Logger));
+            }
+            else
+            {
+                (metatrafficUnicast, userUnicast, resolvedId) =
+                    ProbeUnicastTransports(created, options, localAddress);
+            }
+
+            if (resolvedId != options.ParticipantId)
+            {
+                options.Logger.Info(
+                    $"ParticipantTransportSet: auto-probed ParticipantId {options.ParticipantId} -> {resolvedId}");
+            }
 
             return new ParticipantTransportSet(
                 metatrafficMulticast,
@@ -85,13 +114,43 @@ internal sealed class ParticipantTransportSet : IDisposable
                 userMulticast,
                 userUnicast,
                 Locator.FromUdpV4(options.MulticastGroup, (uint)discoveryMulticastPort),
-                Locator.FromUdpV4(options.MulticastGroup, (uint)userMulticastPort));
+                Locator.FromUdpV4(options.MulticastGroup, (uint)userMulticastPort),
+                resolvedId);
         }
         catch
         {
             DisposeOwned(created);
             throw;
         }
+    }
+
+    private static (OwnedTransport metatraffic, OwnedTransport user, int participantId)
+        ProbeUnicastTransports(
+            List<OwnedTransport> created,
+            DomainParticipantOptions options,
+            IPAddress localAddress)
+    {
+        for (int id = options.ParticipantId; id <= RtpsConstants.MaxParticipantId; id++)
+        {
+            int discoveryPort = RtpsPorts.DiscoveryUnicast(options.DomainId, id);
+            int userPort = RtpsPorts.UserUnicast(options.DomainId, id);
+            var probed = new List<OwnedTransport>(2);
+            try
+            {
+                var mt = Add(probed, options.CustomUnicastTransport,
+                    () => UdpTransport.CreateUnicast(localAddress, discoveryPort, options.Logger));
+                var ut = Add(probed, options.CustomUserUnicastTransport,
+                    () => UdpTransport.CreateUnicast(localAddress, userPort, options.Logger));
+                created.AddRange(probed);
+                return (mt, ut, id);
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            {
+                DisposeOwned(probed);
+            }
+        }
+
+        throw new SocketException((int)SocketError.AddressAlreadyInUse);
     }
 
     public void Start()
