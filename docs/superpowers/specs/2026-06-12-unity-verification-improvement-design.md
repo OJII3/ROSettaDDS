@@ -29,7 +29,8 @@ Unity 側の責務は次の 2 点に絞り、.NET テストと重複させない
 - GitHub Actions への Unity テスト組み込み (CI は引き続き .NET のみ)
 - 外部 ROS 2 / Fast DDS との相互運用検証
 - README への性能値自動反映 (`update_readme_performance.py` は廃止。
-  計測結果は `artifacts/unity/` の XML を直接参照する運用とし、docs もそのように更新する)
+  計測結果は `artifacts/unity/` の XML を直接参照する運用とし、docs もそのように更新する。
+  README に残っている古い性能ブロックは Phase 1 で削除する)
 
 ## フェーズ構成
 
@@ -41,7 +42,9 @@ Unity 側の責務は次の 2 点に絞り、.NET テストと重複させない
   - `run_editmode.sh` / `run_playmode.sh`
     - 起動中の Unity Editor があれば **uloop-cli 経由**で実行する
     - Editor 不在時は **batchmode にフォールバック**する
-    - NUnit カテゴリフィルタを引数で渡せるようにする (Soak 除外/指定に使う)
+    - テストフィルタ (exact / regex / assembly) を引数で渡せるようにする
+      (uloop の `run-tests` は NUnit カテゴリ非対応のため、Soak の分離は
+      Phase 3 で専用テストアセンブリにより実現する)
   - 共通処理 (Editor 検出、`artifacts/unity/` への結果出力) は `common.sh` に集約
 - `docs/unity-verification.md` を実態に同期する:
   - 削除済みスクリプトと `update_readme_performance.py` への参照を一掃
@@ -77,7 +80,8 @@ Unity 側の責務は次の 2 点に絞り、.NET テストと重複させない
   2 回連続 Play しても、static 残留状態が原因で失敗しないこと。
 - **Play 停止時クリーンアップ**: Play 終了後に background receive スレッドが
   残っていないこと。
-- **Soak テスト**: `[Category("Soak")]` で通常実行から分離する。
+- **Soak テスト**: 専用テストアセンブリ (`ROSettaDDS.UnitySoak.Tests`) に分離し、
+  通常実行から除外する (assembly フィルタで明示実行)。
   60 秒程度の連続 publish (50 Hz 目安) + 周期的 create/dispose を行い、
   エラーなし・retained memory 閾値内・受信継続を確認する。
 - **フレーム影響**: publish 負荷中のフレーム時間スパイクを
