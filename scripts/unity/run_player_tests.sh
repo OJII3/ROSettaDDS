@@ -60,6 +60,7 @@ run_player_tests() {
   local log_file="$ARTIFACT_DIR/unity-player-$BACKEND.log"
 
   rm -rf "$build_dir"
+  rm -f "$results_file" "$log_file"
   mkdir -p "$build_dir"
 
   echo "StandaloneOSX $BACKEND Player テストを実行する (結果: $results_file)"
@@ -79,7 +80,11 @@ run_player_tests() {
     echo "Player テスト結果が生成されなかった。$log_file を確認すること" >&2
     return 1
   fi
-  if ! grep -q 'result="Passed"' "$results_file" || ! grep -q 'failed="0"' "$results_file"; then
+  local test_run
+  test_run="$(grep -m 1 '<test-run ' "$results_file" || true)"
+  if [[ "$test_run" != *'result="Passed"'* \
+     || "$test_run" != *'failed="0"'* \
+     || "$test_run" == *'total="0"'* ]]; then
     echo "Player テストが失敗した。$results_file と $log_file を確認すること" >&2
     return 1
   fi
