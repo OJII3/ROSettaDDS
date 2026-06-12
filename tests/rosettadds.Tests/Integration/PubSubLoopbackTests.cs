@@ -2,6 +2,7 @@ using System.Net;
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Dds;
+using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Msgs.Std;
 using ROSettaDDS.Rtps;
@@ -358,7 +359,8 @@ public class PubSubLoopbackTests
             "chatter",
             StringMessageSerializer.Instance,
             (msg, _) => receivedTcs.TrySetResult(msg),
-            StringMessage.DdsTypeName);
+            StringMessage.DdsTypeName,
+            reliability: ReliabilityQos.BestEffort);
 
         pB.Start();
 
@@ -395,7 +397,8 @@ public class PubSubLoopbackTests
             "image_text",
             StringMessageSerializer.Instance,
             (msg, _) => receivedTcs.TrySetResult(msg),
-            StringMessage.DdsTypeName);
+            StringMessage.DdsTypeName,
+            reliability: ReliabilityQos.BestEffort);
 
         pB.Start();
 
@@ -450,7 +453,8 @@ public class PubSubLoopbackTests
             "image_text_unicast",
             StringMessageSerializer.Instance,
             (msg, _) => receivedTcs.TrySetResult(msg),
-            StringMessage.DdsTypeName);
+            StringMessage.DdsTypeName,
+            reliability: ReliabilityQos.BestEffort);
 
         pB.Start();
 

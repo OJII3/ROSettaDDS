@@ -35,6 +35,10 @@ public readonly struct RtpsReceiverContext
 
     public RtpsReceiverContext WithTimestamp(Time? ts)
         => new(SourceGuidPrefix, DestGuidPrefix, Version, VendorId, ts);
+
+    /// <summary>INFO_SRC により送信元 (GuidPrefix / Version / VendorId) を上書きする。</summary>
+    public RtpsReceiverContext WithSource(GuidPrefix source, ProtocolVersion version, VendorId vendorId)
+        => new(source, DestGuidPrefix, version, vendorId, Timestamp);
 }
 
 /// <summary>
@@ -101,6 +105,12 @@ public static class RtpsMessageDispatcher
                         ctx = ctx.WithTimestamp(infoTs.Invalidate ? null : infoTs.Timestamp);
                         break;
                     }
+                case SubmessageKind.InfoSource:
+                    {
+                        var infoSrc = InfoSourceSubmessage.ReadBody(body.Span, hdr.Endianness, hdr.Flags);
+                        ctx = ctx.WithSource(infoSrc.GuidPrefix, infoSrc.Version, infoSrc.VendorId);
+                        break;
+                    }
                 case SubmessageKind.Data:
                 case SubmessageKind.DataFrag:
                 case SubmessageKind.Heartbeat:
@@ -150,7 +160,7 @@ public static class RtpsMessageDispatcher
                         break;
                     }
                 default:
-                    // Pad, InfoSource, InfoReply 等は無視
+                    // Pad, InfoReply 等は無視
                     break;
             }
         }
