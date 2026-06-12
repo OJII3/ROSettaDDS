@@ -35,50 +35,51 @@
 
 ## 実行方法
 
-Unity Editor が標準の Hub パスにある場合:
+実行スクリプトは、起動中の Unity Editor に uloop (uLoopMCP) で接続できればそれを使い、
+接続できなければ Unity Editor を batchmode で起動する。
+uloop CLI は nix devshell に含まれ、Unity 側には uLoopMCP パッケージ
+(`io.github.hatayama.uloopmcp`) が導入済み。uloop が使えない場合は自動的に
+batchmode にフォールバックする。
 
 ```sh
-scripts/unity/run_unity_editmode_tests.sh
-scripts/unity/run_unity_playmode_tests.sh
+scripts/unity/run_editmode.sh
+scripts/unity/run_playmode.sh
 ```
 
-Editor パスを明示する場合:
+batchmode を強制する場合 (`Ros2Unity` を開いている Editor は閉じておくこと):
+
+```sh
+scripts/unity/run_editmode.sh --batch
+```
+
+特定のテストだけ実行する場合:
+
+```sh
+scripts/unity/run_editmode.sh --filter-type regex --filter-value 'Loopback_pubsub'
+scripts/unity/run_playmode.sh --filter-type assembly --filter-value ROSettaDDS.UnityPlayMode.Tests
+```
+
+batchmode 用の Unity Editor は `ProjectSettings/ProjectVersion.txt` のバージョンを基に
+Unity Hub の標準パスから自動検出する。完全一致するバージョンが見つからない場合は
+同系列 (例: 6000.3.*) の Editor にフォールバックする。明示する場合:
 
 ```sh
 UNITY_EDITOR=/Applications/Unity/Hub/Editor/6000.3.7f1/Unity.app/Contents/MacOS/Unity \
-  scripts/unity/run_unity_editmode_tests.sh
-UNITY_EDITOR=/Applications/Unity/Hub/Editor/6000.3.7f1/Unity.app/Contents/MacOS/Unity \
-  scripts/unity/run_unity_playmode_tests.sh
-```
-
-`Ros2Unity` を Unity Editor で開いている間は、Unity の制約で同じ project path を batchmode から開けない。その場合は Editor を閉じるか、検証用に複製した project path を `UNITY_PROJECT_PATH` で指定する。
-
-同じ処理をスクリプト側で行う場合:
-
-```sh
-UNITY_USE_TEMP_PROJECT=1 scripts/unity/run_unity_editmode_tests.sh
-UNITY_USE_TEMP_PROJECT=1 scripts/unity/run_unity_playmode_tests.sh
+  scripts/unity/run_editmode.sh --batch
 ```
 
 出力先:
 
-- `artifacts/unity/editmode-results.xml`
-- `artifacts/unity/unity-editmode.log`
-- `artifacts/unity/playmode-results.xml`
-- `artifacts/unity/unity-playmode.log`
+- uloop 実行: `artifacts/unity/uloop-editmode-tests.json` / `artifacts/unity/uloop-playmode-tests.json`
+  (テスト件数と pass/fail のサマリ JSON)
+- batchmode 実行: `artifacts/unity/editmode-results.xml` + `artifacts/unity/unity-editmode.log` /
+  `artifacts/unity/playmode-results.xml` + `artifacts/unity/unity-playmode.log`
 
 `artifacts/` は計測結果の生成物なのでコミットしない。
 
-`scripts/unity/run_unity_editmode_tests.sh` が成功した場合は、`editmode-results.xml`
-に埋め込まれた Unity Performance Testing の結果を読み取り、`README.md` 末尾の
-`rosettadds-local-performance` 管理ブロックを最新のローカル計測結果に差し替える。
-GitHub Actions には Unity 計測を組み込まず、性能値の更新はローカル実行時だけ行う。
-
-既存の `editmode-results.xml` から README だけ更新し直す場合:
-
-```sh
-scripts/unity/update_readme_performance.py
-```
+Unity Performance Testing の sample group (throughput / leak guard の計測値) は
+batchmode 実行で生成される results XML にのみ埋め込まれる。性能値を確認するときは
+`--batch` で実行し、XML を直接参照する。README への性能値の自動反映は行わない。
 
 ## 判定方針
 
