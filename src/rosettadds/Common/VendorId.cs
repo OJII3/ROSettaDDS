@@ -31,11 +31,14 @@ public readonly struct VendorId : IEquatable<VendorId>
     public static readonly VendorId EclipseCycloneDds = new(0x01, 0x10);
 
     /// <summary>
-    /// rosettadds の既定 Vendor ID。
-    /// 当面は eProsima Fast-DDS の値を借用 (ROS 2 ツール群と互換性確認のため)。
-    /// 動作検証完了後に独自 ID へ切替予定。
+    /// rosettadds の既定 Vendor ID (独自値 0x010F → 0x013F)。
+    /// 以前は eProsima Fast-DDS (0x010F) を借用していたが、
+    /// vendorId が eProsima のとき相手実装が自社拡張 PID の解釈や互換動作を有効化し、
+    /// 「eProsima なのに拡張が無い」状態で誤動作するリスクがあった。
+    /// OMG 未登録の独自値へ切替え、Fast DDS / Cyclone DDS との interop を検証済み。
+    /// 先頭バイトは OMG 慣習に合わせ 0x01、2 バイト目は割当済み範囲を避けた 0x3F。
     /// </summary>
-    public static readonly VendorId ROSettaDDS = EProsimaFastDds;
+    public static readonly VendorId ROSettaDDS = new(0x01, 0x3F);
 
     public bool Equals(VendorId other) => V0 == other.V0 && V1 == other.V1;
     public override bool Equals(object? obj) => obj is VendorId v && Equals(v);

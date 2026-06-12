@@ -42,8 +42,38 @@ Publisher は `ReliabilityQos` を SEDP の advertised QoS として公開する
 `StatefulWriter` を使う。`ReliabilityQos.BestEffort` は remote endpoint matching 用の metadata として扱い、
 Best Effort 専用の `StatelessWriter` 経路へ切り替える API はまだ持たない。
 
-Subscription は `StatelessReader` で受信し、SEDP では Best Effort reader として広告する。
-Publisher の writer history depth は内部固定値 `1000` samples で、public QoS として depth を指定する API はまだ持たない。
+`CreatePublisher` は `DurabilityQos` を受け取る。`DurabilityQos.TransientLocal` を指定すると
+`StatefulWriter(resendHistoryOnMatch: true)` へ配線され、後発でマッチした reader に history を再送する
+(`/tf_static` 相当)。既定は `Volatile`。
+
+`CreateSubscription` は `ReliabilityQos` を受け取る (既定は ROS 2 と同じ `Reliable`)。
+`Reliable` 指定時は HEARTBEAT に ACKNACK を返す `StatefulReader` 経路へ、`BestEffort` 指定時は
+`StatelessReader` 経路へ接続する。
+
+Publisher の writer history depth と HEARTBEAT 周期は `DomainParticipantOptions` の
+`UserWriterHistoryDepth` (既定 1000) / `UserWriterHeartbeatPeriod` (既定 1 秒) で調整する。
+
+> Volatile reader への late-join 抑止は未実装。Volatile publisher は新規サンプルを reader に積極再送しないが、
+> Reliable reader が HEARTBEAT に対し未受信 SN を NACK した場合、join 前のサンプルが再送され得る
+> (GAP による pre-join sample の明示的除外は今後の課題)。
+
+## RTPS Receiver の集約
+
+受信経路は participant 単位で 1 つの `ParticipantRtpsReceiver` に集約する。
+全 transport (metatraffic / user の multicast・unicast) の受信を 1 経路で受け、パケットを 1 度だけ
+パースする。各 submessage は宛先 EntityId に応じて該当 endpoint へ fan-out する
+(reader 宛で readerEntityId が UNKNOWN の場合は全 reader へブロードキャストし、各 reader が
+matched writer で内部フィルタする)。INFO_DST による宛先フィルタと INFO_SRC / INFO_TS の
+Receiver 状態引き継ぎも中央で処理する。
+
+## Vendor ID
+
+rosettadds は独自 Vendor ID `0x013F` を使う (`VendorId.ROSettaDDS`)。
+以前は eProsima Fast-DDS の `0x010F` を借用していたが、vendorId が eProsima のとき相手実装が
+自社拡張 PID の解釈や互換動作を有効化し誤動作するリスクがあったため、OMG 未登録の独自値へ切替えた。
+Fast DDS (`rmw_fastrtps_cpp`) との pub/sub・discovery が双方向で成立することを確認済み
+(`demo_nodes_cpp` talker/listener と `samples/TalkerListener`)。`GuidPrefix` 先頭 2 バイトにもこの値が入るため、
+GUID 空間も eProsima と分離される。
 
 ## User data CDR 読み取り上限
 

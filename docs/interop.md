@@ -53,10 +53,17 @@ interop の成功条件は introspection 結果ではなく、実際の受信ロ
 - rosettadds listener 側で `Hello World` または `Hello rosettadds` を受信している
 - large payload 検証では rosettadds listener 側で `large-payload-` を含む message を受信している
 
+## Vendor ID 切替の検証
+
+`VendorId.ROSettaDDS` を eProsima 借用 (`0x010F`) から独自値 (`0x013F`) へ切替えた後も、
+Fast DDS (`rmw_fastrtps_cpp`) と双方向で疎通することを確認する。
+ローカル検証では `demo_nodes_cpp` の talker/listener バイナリと `samples/TalkerListener` を
+`ROS_LOCALHOST_ONLY=1` / 同一 `ROS_DOMAIN_ID` で対向させ、両方向で実 message が届くことを確認した。
+
 ## 次に追加する検証
 
 - Best Effort publisher/subscriber の組み合わせ
-- Cyclone DDS (`rmw_cyclonedds_cpp`)
+- Cyclone DDS (`rmw_cyclonedds_cpp`) ※本環境では未提供のため未検証
 - `std_msgs/Header` など string 以外の msg
 - discovery unregister の反映
 - Linux CI または self-hosted runner での定期実行
