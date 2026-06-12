@@ -93,32 +93,6 @@ dotnet run --project samples/TalkerListener -- talker
 
 listener 側に `I heard: 'Hello rosettadds: N'` が出れば送受信できています。
 
-## ROS 2 ノードと通信する
-
-ローカル PC 内で ROS 2 と疎通する場合は、ROS 2 側も同じ domain と localhost 設定にします。
-
-```sh
-export ROS_DOMAIN_ID=0
-export ROS_LOCALHOST_ONLY=1
-```
-
-ROS 2 の listener に rosettadds から送信する例:
-
-```sh
-ros2 run demo_nodes_cpp listener
-dotnet run --project MyROSettaDDSApp -- talker
-```
-
-ROS 2 の talker を rosettadds で購読する例:
-
-```sh
-ros2 run demo_nodes_cpp talker
-dotnet run --project MyROSettaDDSApp -- listener
-```
-
-別ホストと通信する場合は `ROS_LOCALHOST_ONLY` を無効にし、`LocalUnicastAddress` と
-`MulticastInterface` に実際に使う NIC の IPv4 アドレスを指定してください。
-
 ## カスタムメッセージを生成する
 
 `.msg` から CDR 互換な C# 型 (`struct` + `ICdrSerializer<T>`) をコンパイル時生成します

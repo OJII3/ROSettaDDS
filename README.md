@@ -93,33 +93,6 @@ dotnet run --project samples/TalkerListener -- talker
 
 If the listener prints `I heard: 'Hello rosettadds: N'`, messages are flowing.
 
-## Talking to ROS 2 nodes
-
-To talk to ROS 2 on the same machine, use the same domain and localhost settings on the ROS 2
-side as well.
-
-```sh
-export ROS_DOMAIN_ID=0
-export ROS_LOCALHOST_ONLY=1
-```
-
-Send from rosettadds to a ROS 2 listener:
-
-```sh
-ros2 run demo_nodes_cpp listener
-dotnet run --project MyROSettaDDSApp -- talker
-```
-
-Subscribe to a ROS 2 talker from rosettadds:
-
-```sh
-ros2 run demo_nodes_cpp talker
-dotnet run --project MyROSettaDDSApp -- listener
-```
-
-To talk to another host, unset `ROS_LOCALHOST_ONLY` and set `LocalUnicastAddress` and
-`MulticastInterface` to the IPv4 address of the NIC you actually use.
-
 ## Generating custom messages
 
 CDR-compatible C# types (`struct` + `ICdrSerializer<T>`) are generated from `.msg` at compile
