@@ -79,7 +79,8 @@ Unity 側の責務は次の 2 点に絞り、.NET テストと重複させない
 - **Domain Reload 無効**: Enter Play Mode Options で Domain Reload を無効にした状態で
   2 回連続 Play しても、static 残留状態が原因で失敗しないこと。
 - **Play 停止時クリーンアップ**: Play 終了後に background receive スレッドが
-  残っていないこと。
+  残っていないこと。UDP receive loop の内部診断カウンタが開始前の baseline に
+  戻ることで直接確認する。
 - **Soak テスト**: 専用テストアセンブリ (`ROSettaDDS.UnitySoak.Tests`) に分離し、
   通常実行から除外する (assembly フィルタで明示実行)。
   60 秒程度の連続 publish (50 Hz 目安) + 周期的 create/dispose を行い、

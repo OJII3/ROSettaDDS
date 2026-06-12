@@ -12,4 +12,9 @@ if [[ "$HELP" == "1" ]]; then
   exit 0
 fi
 
+if [[ -z "$FILTER_TYPE" ]]; then
+  FILTER_TYPE="assembly"
+  FILTER_VALUE="ROSettaDDS.UnityPlayMode.Tests"
+fi
+
 run_unity_tests PlayMode
