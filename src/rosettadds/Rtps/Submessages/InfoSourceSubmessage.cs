@@ -10,7 +10,7 @@ namespace ROSettaDDS.Rtps.Submessages;
 /// </summary>
 public readonly struct InfoSourceSubmessage
 {
-    public const int BodySize = 4 + 2 + 2 + GuidPrefix.Size;
+    public const int Size = 4 + 2 + 2 + GuidPrefix.Size;
 
     public ProtocolVersion Version { get; }
     public VendorId VendorId { get; }
@@ -21,6 +21,22 @@ public readonly struct InfoSourceSubmessage
         Version = version;
         VendorId = vendorId;
         GuidPrefix = guidPrefix;
+    }
+
+    /// <summary>追加 flags ビットなし。</summary>
+    public byte ExtraFlags => 0;
+
+    public int BodySize => Size;
+
+    public void WriteBody(Span<byte> destination, CdrEndianness endianness)
+    {
+        _ = endianness;
+        destination[..4].Clear(); // unused
+        destination[4] = Version.Major;
+        destination[5] = Version.Minor;
+        destination[6] = VendorId.V0;
+        destination[7] = VendorId.V1;
+        GuidPrefix.CopyTo(destination.Slice(8, GuidPrefix.Size));
     }
 
     public static InfoSourceSubmessage ReadBody(

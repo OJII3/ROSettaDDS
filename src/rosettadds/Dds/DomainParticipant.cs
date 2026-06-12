@@ -443,12 +443,10 @@ public sealed class DomainParticipant : IDisposable
         };
         endpointData.UnicastLocators.Add(_transports.DefaultUnicastLocator);
         endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
-        _userEndpoints.RegisterReader(endpointData, reader);
-        _ = RunSedpOperationAsync(
-            token => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token),
-            "DomainParticipant failed to advertise local reader endpoint");
 
-        return new Subscription<T>(
+        // Subscription を先に生成して PayloadReceived を購読してから reader を receiver へ登録する。
+        // 逆順だと、登録直後に届く writer の (TransientLocal) 履歴再送を取りこぼす競合がある。
+        var subscription = new Subscription<T>(
             topicName,
             endpointGuid,
             reader,
@@ -458,6 +456,13 @@ public sealed class DomainParticipant : IDisposable
             handlerContext,
             _options.Logger,
             cdrReadLimits: _options.CdrReadLimits);
+
+        _userEndpoints.RegisterReader(endpointData, reader);
+        _ = RunSedpOperationAsync(
+            token => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token),
+            "DomainParticipant failed to advertise local reader endpoint");
+
+        return subscription;
     }
 
     /// <summary>ハンドラが GuidPrefix を必要としない場合のショートカット。</summary>

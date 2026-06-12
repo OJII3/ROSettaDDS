@@ -43,6 +43,10 @@ public ref struct RtpsMessageWriter
         => WriteSubmessage(SubmessageKind.InfoDestination, submessage.ExtraFlags, submessage.BodySize, endianness,
             (b, e) => submessage.WriteBody(b, e));
 
+    public void WriteInfoSource(InfoSourceSubmessage submessage, CdrEndianness endianness = CdrEndianness.LittleEndian)
+        => WriteSubmessage(SubmessageKind.InfoSource, submessage.ExtraFlags, submessage.BodySize, endianness,
+            (b, e) => submessage.WriteBody(b, e));
+
     public void WriteHeartbeat(HeartbeatSubmessage submessage, CdrEndianness endianness = CdrEndianness.LittleEndian)
         => WriteSubmessage(SubmessageKind.Heartbeat, submessage.ExtraFlags, HeartbeatSubmessage.BodySize, endianness,
             (b, e) => submessage.WriteBody(b, e));
