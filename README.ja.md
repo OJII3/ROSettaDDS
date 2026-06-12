@@ -54,92 +54,44 @@ dotnet new console -n MyROSettaDDSApp
 dotnet add MyROSettaDDSApp/MyROSettaDDSApp.csproj reference src/rosettadds/rosettadds.csproj
 ```
 
-`Program.cs` を次の内容に置き換えると、`std_msgs/msg/String` の talker / listener として動作します。
+`Program.cs` を次のように書くと、`std_msgs/msg/String` を publish / subscribe できます。
 
 ```csharp
-using System;
 using System.Net;
-using System.Threading;
-using System.Threading.Tasks;
-using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Msgs.Std;
 
-if (args.Length != 1 || (args[0] != "talker" && args[0] != "listener"))
-{
-    Console.Error.WriteLine("Usage: dotnet run -- <talker|listener>");
-    return;
-}
-
-var mode = args[0];
-var logger = new ConsoleLogger(mode, LogLevel.Info);
-
-var options = new DomainParticipantOptions
+var participant = new DomainParticipant(new DomainParticipantOptions
 {
     DomainId = 0,
-    ParticipantId = mode == "talker" ? 1 : 2,
-    EntityName = $"rosettadds_{mode}",
-    Logger = logger,
-
-    // ROS_LOCALHOST_ONLY=1 の ROS 2 ノードとローカルで通信する設定。
+    EntityName = "rosettadds_demo",
+    // ROS_LOCALHOST_ONLY=1 のノードとローカルで通信する場合に指定。
     LocalUnicastAddress = IPAddress.Loopback,
     MulticastInterface = IPAddress.Loopback,
-};
-
-using var cts = new CancellationTokenSource();
-Console.CancelKeyPress += (_, e) =>
-{
-    e.Cancel = true;
-    cts.Cancel();
-};
-
-using var participant = new DomainParticipant(options);
+});
 participant.Start();
 
-try
-{
-    if (mode == "talker")
-    {
-        using var pub = participant.CreatePublisher<StringMessage>(
-            "chatter",
-            StringMessageSerializer.Instance,
-            StringMessage.DdsTypeName);
+// subscribe
+participant.CreateSubscription<StringMessage>(
+    "chatter", StringMessageSerializer.Instance,
+    (msg, source) => Console.WriteLine($"I heard: '{msg.Data}' from {source}"),
+    StringMessage.DdsTypeName);
 
-        var count = 0;
-        while (!cts.IsCancellationRequested)
-        {
-            var message = new StringMessage($"Hello rosettadds: {++count}");
-            await pub.PublishAsync(message, cts.Token);
-            logger.Info($"Publishing: '{message.Data}'");
-            await Task.Delay(TimeSpan.FromSeconds(1), cts.Token);
-        }
-    }
-    else
-    {
-        using var sub = participant.CreateSubscription<StringMessage>(
-            "chatter",
-            StringMessageSerializer.Instance,
-            (message, source) => logger.Info($"I heard: '{message.Data}' from {source}"),
-            StringMessage.DdsTypeName);
-
-        await Task.Delay(Timeout.Infinite, cts.Token);
-    }
-}
-catch (OperationCanceledException) when (cts.IsCancellationRequested)
-{
-    logger.Info("Stopping...");
-}
+// publish
+var pub = participant.CreatePublisher<StringMessage>(
+    "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+await pub.PublishAsync(new StringMessage("Hello rosettadds"));
 ```
 
-2 つのシェルで listener と talker を起動します。
+talker / listener を別プロセスに分けた完成版サンプルは
+[`samples/TalkerListener`](samples/TalkerListener) にあります。別シェルで起動してください。
 
 ```sh
-dotnet run --project MyROSettaDDSApp -- listener
-dotnet run --project MyROSettaDDSApp -- talker
+dotnet run --project samples/TalkerListener -- listener
+dotnet run --project samples/TalkerListener -- talker
 ```
 
 listener 側に `I heard: 'Hello rosettadds: N'` が出れば送受信できています。
-すぐ動かせるサンプルは [`samples/TalkerListener`](samples/TalkerListener) にあります。
 
 ## ROS 2 ノードと通信する
 
