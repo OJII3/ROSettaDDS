@@ -17,20 +17,27 @@ namespace ROSettaDDS.UnityPlayMode.Tests
         [UnityTest]
         public IEnumerator MonoBehaviour_lifecycleで実UDP_pubsubを開始停止できる()
         {
+            int receiveLoopBaseline = UdpTransport.ActiveReceiveLoopCount;
+            int mainThreadId = Thread.CurrentThread.ManagedThreadId;
             var go = new GameObject("rosettadds-udp-lifecycle-probe");
             var probe = go.AddComponent<ROSettaDDSUdpLifecycleProbe>();
 
             yield return WaitUntil(() => probe.IsRunning || probe.Error != null, TimeSpan.FromSeconds(5));
             Assert.IsNull(probe.Error);
             Assert.IsTrue(probe.IsRunning);
+            Assert.Greater(UdpTransport.ActiveReceiveLoopCount, receiveLoopBaseline);
 
             yield return PublishUntilReceived(probe, "first");
             Assert.AreEqual("first", probe.LastReceived);
+            Assert.AreNotEqual(mainThreadId, probe.CallbackThreadId);
 
             go.SetActive(false);
-            yield return null;
+            yield return WaitUntil(
+                () => UdpTransport.ActiveReceiveLoopCount == receiveLoopBaseline,
+                TimeSpan.FromSeconds(3));
             Assert.IsFalse(probe.IsRunning);
             Assert.AreEqual(1, probe.DisableCount);
+            Assert.AreEqual(receiveLoopBaseline, UdpTransport.ActiveReceiveLoopCount);
 
             go.SetActive(true);
             yield return WaitUntil(() => probe.IsRunning || probe.Error != null, TimeSpan.FromSeconds(5));
@@ -40,8 +47,33 @@ namespace ROSettaDDS.UnityPlayMode.Tests
             Assert.AreEqual("second", probe.LastReceived);
 
             UnityEngine.Object.Destroy(go);
-            yield return null;
+            yield return WaitUntil(
+                () => UdpTransport.ActiveReceiveLoopCount == receiveLoopBaseline,
+                TimeSpan.FromSeconds(3));
             Assert.GreaterOrEqual(ROSettaDDSUdpLifecycleProbe.DestroyCount, 1);
+            Assert.AreEqual(receiveLoopBaseline, UdpTransport.ActiveReceiveLoopCount);
+        }
+
+        [UnityTest]
+        public IEnumerator Domain_Reload無効でも2回連続lifecycleを実行できる()
+        {
+            int receiveLoopBaseline = UdpTransport.ActiveReceiveLoopCount;
+
+            for (int cycle = 0; cycle < 2; cycle++)
+            {
+                var go = new GameObject("rosettadds-domain-reload-probe-" + cycle);
+                var probe = go.AddComponent<ROSettaDDSUdpLifecycleProbe>();
+
+                yield return WaitUntil(() => probe.IsRunning || probe.Error != null, TimeSpan.FromSeconds(5));
+                Assert.IsNull(probe.Error);
+                yield return PublishUntilReceived(probe, "cycle-" + cycle);
+
+                UnityEngine.Object.Destroy(go);
+                yield return WaitUntil(
+                    () => UdpTransport.ActiveReceiveLoopCount == receiveLoopBaseline,
+                    TimeSpan.FromSeconds(3));
+                Assert.AreEqual(receiveLoopBaseline, UdpTransport.ActiveReceiveLoopCount);
+            }
         }
 
         private static IEnumerator PublishUntilReceived(ROSettaDDSUdpLifecycleProbe probe, string value)
@@ -85,12 +117,14 @@ namespace ROSettaDDS.UnityPlayMode.Tests
         private Publisher<StringMessage> _publisher;
         private Subscription<StringMessage> _subscription;
         private string _lastReceived;
+        private int _callbackThreadId;
 
         public bool IsRunning { get; private set; }
         public Exception Error { get; private set; }
         public int DisableCount { get; private set; }
         public static int DestroyCount { get; private set; }
         public string LastReceived => Volatile.Read(ref _lastReceived);
+        public int CallbackThreadId => Volatile.Read(ref _callbackThreadId);
 
         private void OnEnable()
         {
@@ -130,6 +164,7 @@ namespace ROSettaDDS.UnityPlayMode.Tests
         {
             StopParticipants();
             _lastReceived = null;
+            _callbackThreadId = 0;
             Error = null;
 
             int sequence = Interlocked.Increment(ref s_sequence);
@@ -167,7 +202,11 @@ namespace ROSettaDDS.UnityPlayMode.Tests
             _subscription = _readerParticipant.CreateSubscription<StringMessage>(
                 TopicName,
                 StringMessageSerializer.Instance,
-                message => Volatile.Write(ref _lastReceived, message.Data),
+                message =>
+                {
+                    Volatile.Write(ref _callbackThreadId, Thread.CurrentThread.ManagedThreadId);
+                    Volatile.Write(ref _lastReceived, message.Data);
+                },
                 handlerContext: null);
 
             _publisher = _writerParticipant.CreatePublisher<StringMessage>(

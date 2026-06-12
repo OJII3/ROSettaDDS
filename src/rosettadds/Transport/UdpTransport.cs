@@ -20,6 +20,7 @@ namespace ROSettaDDS.Transport;
 public sealed class UdpTransport : IRtpsTransport
 {
     private const int ReceivePollTimeoutMilliseconds = 100;
+    private static int s_activeReceiveLoopCount;
 
     private readonly Socket _socket;
     private readonly Locator _localLocator;
@@ -33,6 +34,8 @@ public sealed class UdpTransport : IRtpsTransport
     private bool _disposed;
 
     public Locator LocalLocator => _localLocator;
+
+    internal static int ActiveReceiveLoopCount => Volatile.Read(ref s_activeReceiveLoopCount);
 
     public event Action<ReadOnlyMemory<byte>, Locator>? Received;
 
@@ -203,51 +206,58 @@ public sealed class UdpTransport : IRtpsTransport
     private void ReceiveLoop(CancellationToken cancellationToken)
     {
         var pool = ArrayPool<byte>.Shared;
-
-        while (!cancellationToken.IsCancellationRequested)
+        Interlocked.Increment(ref s_activeReceiveLoopCount);
+        try
         {
-            byte[] buffer = pool.Rent(_receiveBufferSize);
-            try
+            while (!cancellationToken.IsCancellationRequested)
             {
-                EndPoint endpoint = new IPEndPoint(IPAddress.Any, 0);
-                int receivedBytes = _socket.ReceiveFrom(
-                    buffer,
-                    0,
-                    _receiveBufferSize,
-                    SocketFlags.None,
-                    ref endpoint);
+                byte[] buffer = pool.Rent(_receiveBufferSize);
+                try
+                {
+                    EndPoint endpoint = new IPEndPoint(IPAddress.Any, 0);
+                    int receivedBytes = _socket.ReceiveFrom(
+                        buffer,
+                        0,
+                        _receiveBufferSize,
+                        SocketFlags.None,
+                        ref endpoint);
 
-                if (endpoint is not IPEndPoint src)
+                    if (endpoint is not IPEndPoint src)
+                    {
+                        continue;
+                    }
+
+                    var sourceLocator = src.Address.AddressFamily == AddressFamily.InterNetwork
+                        ? Locator.FromUdpV4(src.Address, (uint)src.Port)
+                        : Locator.FromUdpV6(src.Address, (uint)src.Port);
+
+                    Received?.Invoke(buffer.AsMemory(0, receivedBytes), sourceLocator);
+                }
+                catch (SocketException ex) when (ex.SocketErrorCode is SocketError.TimedOut or SocketError.WouldBlock)
                 {
                     continue;
                 }
-
-                var sourceLocator = src.Address.AddressFamily == AddressFamily.InterNetwork
-                    ? Locator.FromUdpV4(src.Address, (uint)src.Port)
-                    : Locator.FromUdpV6(src.Address, (uint)src.Port);
-
-                Received?.Invoke(buffer.AsMemory(0, receivedBytes), sourceLocator);
+                catch (SocketException ex) when (ex.SocketErrorCode == SocketError.OperationAborted)
+                {
+                    break;
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("UdpTransport receive error", ex);
+                }
+                finally
+                {
+                    pool.Return(buffer);
+                }
             }
-            catch (SocketException ex) when (ex.SocketErrorCode is SocketError.TimedOut or SocketError.WouldBlock)
-            {
-                continue;
-            }
-            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.OperationAborted)
-            {
-                break;
-            }
-            catch (ObjectDisposedException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.Error("UdpTransport receive error", ex);
-            }
-            finally
-            {
-                pool.Return(buffer);
-            }
+        }
+        finally
+        {
+            Interlocked.Decrement(ref s_activeReceiveLoopCount);
         }
     }
 
