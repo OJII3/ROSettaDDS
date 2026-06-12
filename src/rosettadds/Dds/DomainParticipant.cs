@@ -4,7 +4,7 @@ using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Rcl.Naming;
-using ROSettaDDS.Rtps.Reader;
+using ROSettaDDS.Rtps;
 using ROSettaDDS.Rtps.Writer;
 using ROSettaDDS.Transport;
 
@@ -22,6 +22,7 @@ public sealed class DomainParticipant : IDisposable
 
     private readonly DomainParticipantOptions _options;
     private readonly ParticipantTransportSet _transports;
+    private readonly ParticipantRtpsReceiver _receiver;
     private readonly DiscoveryDb _discoveryDb;
     private readonly SpdpBuiltinParticipantReader _spdpReader;
     private readonly SpdpBuiltinParticipantWriter _spdpWriter;
@@ -66,9 +67,10 @@ public sealed class DomainParticipant : IDisposable
         Guid = new Guid(GuidPrefix, BuiltinEntityIds.Participant);
 
         _transports = ParticipantTransportSet.Create(_options);
+        _receiver = new ParticipantRtpsReceiver(GuidPrefix, _options.Logger);
 
         _discoveryDb = new DiscoveryDb(_options.DiscoveryLimits);
-        _userEndpoints = new UserEndpointManager(_discoveryDb, _options.Logger);
+        _userEndpoints = new UserEndpointManager(_discoveryDb, _receiver, _options.Logger);
 
         _spdpReader = new SpdpBuiltinParticipantReader(
             _transports.MetatrafficMulticast, _discoveryDb, GuidPrefix, _options.Logger, limits: _options.DiscoveryLimits);
@@ -143,6 +145,14 @@ public sealed class DomainParticipant : IDisposable
         _discoveryDb.EndpointUpdated += OnRemoteEndpointUpdated;
         _discoveryDb.ReaderLost += OnRemoteReaderLost;
         _discoveryDb.WriterLost += OnRemoteWriterLost;
+
+        // builtin endpoint を単一 receiver のルーティング対象として登録する。
+        // reader は DATA/HB/GAP の宛先、writer は ACKNACK の宛先として EntityId で引かれる。
+        _receiver.RegisterReader(BuiltinEntityIds.SpdpBuiltinParticipantReader, _spdpReader);
+        _receiver.RegisterReader(BuiltinEntityIds.SedpBuiltinPublicationsReader, _sedpPublicationsReader.Stateful);
+        _receiver.RegisterReader(BuiltinEntityIds.SedpBuiltinSubscriptionsReader, _sedpSubscriptionsReader.Stateful);
+        _receiver.RegisterWriter(BuiltinEntityIds.SedpBuiltinPublicationsWriter, _sedpPublicationsWriter.Stateful);
+        _receiver.RegisterWriter(BuiltinEntityIds.SedpBuiltinSubscriptionsWriter, _sedpSubscriptionsWriter.Stateful);
     }
 
     private void OnRemoteParticipantDiscovered(RemoteParticipant participant)
@@ -205,9 +215,6 @@ public sealed class DomainParticipant : IDisposable
     private void OnRemoteWriterLost(RemoteEndpoint remoteWriter)
         => _userEndpoints.RemoteWriterLost(remoteWriter);
 
-    private void OnUserDataPacketReceived(ReadOnlyMemory<byte> packet, Locator source)
-        => _userEndpoints.DispatchPacket(packet, source);
-
     /// <summary>送受信トランスポートと SPDP の起動。</summary>
     public void Start()
     {
@@ -217,25 +224,16 @@ public sealed class DomainParticipant : IDisposable
             return;
         }
         _transports.Start();
-        _spdpReader.Start();
-        // SPDP DATA は multicast (自己購読済み) に加えて、
-        // FastDDS 等が unicast へ直接返信する DATA(p) も受信する
-        _transports.MetatrafficUnicast.Received += _spdpReader.OnPacketReceived;
+
+        // participant 単位の単一 receiver が全 transport の受信を 1 経路に集約し、
+        // パケットを 1 回だけパースして submessage を宛先 endpoint へ fan-out する。
+        // (SPDP/SEDP/user の各 reader・writer は constructor / endpoint 生成時に登録済み)
+        _receiver.Subscribe(_transports.MetatrafficMulticast);
+        _receiver.Subscribe(_transports.MetatrafficUnicast);
+        _receiver.Subscribe(_transports.UserMulticast);
+        _receiver.Subscribe(_transports.UserUnicast);
+
         _spdpWriter.Start();
-
-        // SEDP の DATA/HB は multicast (初期) と unicast (ACKNACK 返信先) の両方で受信する
-        _transports.MetatrafficMulticast.Received += _sedpPublicationsReader.OnPacketReceived;
-        _transports.MetatrafficMulticast.Received += _sedpSubscriptionsReader.OnPacketReceived;
-        _transports.MetatrafficUnicast.Received += _sedpPublicationsReader.OnPacketReceived;
-        _transports.MetatrafficUnicast.Received += _sedpSubscriptionsReader.OnPacketReceived;
-        // SEDP writer は ACKNACK を unicast metatraffic で受ける
-        _transports.MetatrafficUnicast.Received += _sedpPublicationsWriter.OnPacketReceived;
-        _transports.MetatrafficUnicast.Received += _sedpSubscriptionsWriter.OnPacketReceived;
-
-        // ユーザーデータは multicast / unicast の両方を同じ dispatcher で処理する
-        _transports.UserMulticast.Received += OnUserDataPacketReceived;
-        _transports.UserUnicast.Received += OnUserDataPacketReceived;
-
         _sedpPublicationsWriter.Start();
         _sedpSubscriptionsWriter.Start();
         _userEndpoints.StartWriters();
@@ -254,17 +252,8 @@ public sealed class DomainParticipant : IDisposable
         _userEndpoints.StopWriters();
         _sedpPublicationsWriter.Stop();
         _sedpSubscriptionsWriter.Stop();
-        _transports.UserMulticast.Received -= OnUserDataPacketReceived;
-        _transports.UserUnicast.Received -= OnUserDataPacketReceived;
-        _transports.MetatrafficMulticast.Received -= _sedpPublicationsReader.OnPacketReceived;
-        _transports.MetatrafficMulticast.Received -= _sedpSubscriptionsReader.OnPacketReceived;
-        _transports.MetatrafficUnicast.Received -= _sedpPublicationsReader.OnPacketReceived;
-        _transports.MetatrafficUnicast.Received -= _sedpSubscriptionsReader.OnPacketReceived;
-        _transports.MetatrafficUnicast.Received -= _sedpPublicationsWriter.OnPacketReceived;
-        _transports.MetatrafficUnicast.Received -= _sedpSubscriptionsWriter.OnPacketReceived;
-        _transports.MetatrafficUnicast.Received -= _spdpReader.OnPacketReceived;
+        _receiver.UnsubscribeAll();
         _spdpWriter.Stop();
-        _spdpReader.Stop();
         _transports.Stop();
         _started = false;
     }
@@ -346,16 +335,18 @@ public sealed class DomainParticipant : IDisposable
     /// 同時にローカル endpoint 一覧へ登録され、SEDP で広告される。
     /// </summary>
     public Publisher<T> CreatePublisher<T>(string topicName, ICdrSerializer<T> serializer, string? typeName = null)
-        => CreatePublisher(topicName, serializer, ReliabilityQos.Reliable, typeName);
+        => CreatePublisher(topicName, serializer, ReliabilityQos.Reliable, DurabilityQos.Volatile, typeName);
 
     /// <summary>
     /// 指定トピックの Publisher を生成する。
-    /// <paramref name="reliability"/> は SEDP で広告する reliability QoS として使われる。
+    /// <paramref name="reliability"/> / <paramref name="durability"/> は SEDP で広告する QoS として使われる。
+    /// <paramref name="durability"/> が TransientLocal の場合、後発でマッチした reader に history を再送する。
     /// </summary>
     public Publisher<T> CreatePublisher<T>(
         string topicName,
         ICdrSerializer<T> serializer,
         ReliabilityQos reliability,
+        DurabilityQos durability,
         string? typeName = null)
     {
         ThrowIfDisposed();
@@ -366,7 +357,7 @@ public sealed class DomainParticipant : IDisposable
         var ddsTypeName = ResolveDdsTypeName<T>(typeName);
         var writerEntityId = _userEntityIds.AllocateWriter();
         var writerGuid = new Guid(GuidPrefix, writerEntityId);
-        var history = new Rtps.HistoryCache.WriterHistoryCache(writerGuid, maxSamples: 1000);
+        var history = new Rtps.HistoryCache.WriterHistoryCache(writerGuid, maxSamples: _options.UserWriterHistoryDepth);
         var writer = new StatefulWriter(
             sendTransport: _transports.UserUnicast,
             multicastDestination: _transports.UserMulticastDestination,
@@ -374,9 +365,10 @@ public sealed class DomainParticipant : IDisposable
             vendorId: _options.VendorId,
             localPrefix: GuidPrefix,
             writerEntityId: writerEntityId,
-            heartbeatPeriod: TimeSpan.FromSeconds(1),
+            heartbeatPeriod: _options.UserWriterHeartbeatPeriod,
             history: history,
-            logger: _options.Logger);
+            logger: _options.Logger,
+            resendHistoryOnMatch: durability.Kind == DurabilityKind.TransientLocal);
 
         // SEDP 用に登録 (即時 publish)
         var endpointData = new DiscoveredEndpointData
@@ -387,7 +379,7 @@ public sealed class DomainParticipant : IDisposable
             TopicName = ddsTopic,
             TypeName = ddsTypeName,
             Reliability = reliability,
-            Durability = DurabilityQos.Volatile,
+            Durability = durability,
         };
         endpointData.UnicastLocators.Add(_transports.DefaultUnicastLocator);
         endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
@@ -411,20 +403,34 @@ public sealed class DomainParticipant : IDisposable
         ICdrSerializer<T> serializer,
         Action<T, GuidPrefix> handler,
         string? typeName = null,
-        SynchronizationContext? handlerContext = null)
+        SynchronizationContext? handlerContext = null,
+        ReliabilityQos? reliability = null)
     {
         ThrowIfDisposed();
         if (string.IsNullOrEmpty(topicName)) throw new ArgumentException("Value cannot be null or empty.", nameof(topicName));
         if (serializer is null) throw new ArgumentNullException(nameof(serializer));
         if (handler is null) throw new ArgumentNullException(nameof(handler));
 
+        // 既定は ROS 2 と同じ Reliable。Reliable は StatefulReader (ACKNACK 返送)、
+        // BestEffort は StatelessReader 経路へ接続する。
+        var effectiveReliability = reliability ?? ReliabilityQos.Reliable;
         var ddsTopic = TopicNameMangler.MangleTopic(topicName);
         var ddsTypeName = ResolveDdsTypeName<T>(typeName);
         var readerEntityId = _userEntityIds.AllocateReader();
-        var reader = new StatelessReader(GuidPrefix, readerEntityId, _options.Logger, _options.DataFragReassembly);
+        var endpointGuid = new Guid(GuidPrefix, readerEntityId);
+        IUserReader reader = effectiveReliability.Kind == ReliabilityKind.Reliable
+            ? new ReliableUserReader(
+                replyTransport: _transports.UserUnicast,
+                version: _options.ProtocolVersion,
+                vendorId: _options.VendorId,
+                localPrefix: GuidPrefix,
+                readerEntityId: readerEntityId,
+                ackNackFallbackDestination: _transports.UserMulticastDestination,
+                logger: _options.Logger,
+                dataFragOptions: _options.DataFragReassembly)
+            : new BestEffortUserReader(GuidPrefix, readerEntityId, _options.Logger, _options.DataFragReassembly);
 
         // SEDP 用に登録 (即時 publish)
-        var endpointGuid = new Guid(GuidPrefix, readerEntityId);
         var endpointData = new DiscoveredEndpointData
         {
             Kind = EndpointKind.Reader,
@@ -432,17 +438,15 @@ public sealed class DomainParticipant : IDisposable
             ParticipantGuid = Guid,
             TopicName = ddsTopic,
             TypeName = ddsTypeName,
-            Reliability = ReliabilityQos.BestEffort,
+            Reliability = effectiveReliability,
             Durability = DurabilityQos.Volatile,
         };
         endpointData.UnicastLocators.Add(_transports.DefaultUnicastLocator);
         endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
-        _userEndpoints.RegisterReader(endpointData, reader);
-        _ = RunSedpOperationAsync(
-            token => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token),
-            "DomainParticipant failed to advertise local reader endpoint");
 
-        return new Subscription<T>(
+        // Subscription を先に生成して PayloadReceived を購読してから reader を receiver へ登録する。
+        // 逆順だと、登録直後に届く writer の (TransientLocal) 履歴再送を取りこぼす競合がある。
+        var subscription = new Subscription<T>(
             topicName,
             endpointGuid,
             reader,
@@ -452,6 +456,13 @@ public sealed class DomainParticipant : IDisposable
             handlerContext,
             _options.Logger,
             cdrReadLimits: _options.CdrReadLimits);
+
+        _userEndpoints.RegisterReader(endpointData, reader);
+        _ = RunSedpOperationAsync(
+            token => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token),
+            "DomainParticipant failed to advertise local reader endpoint");
+
+        return subscription;
     }
 
     /// <summary>ハンドラが GuidPrefix を必要としない場合のショートカット。</summary>
@@ -459,8 +470,14 @@ public sealed class DomainParticipant : IDisposable
         string topicName,
         ICdrSerializer<T> serializer,
         Action<T> handler,
-        SynchronizationContext? handlerContext = null)
-        => CreateSubscription<T>(topicName, serializer, (value, _) => handler(value), handlerContext: handlerContext);
+        SynchronizationContext? handlerContext = null,
+        ReliabilityQos? reliability = null)
+        => CreateSubscription<T>(
+            topicName,
+            serializer,
+            (value, _) => handler(value),
+            handlerContext: handlerContext,
+            reliability: reliability);
 
     public void Dispose()
     {
@@ -477,6 +494,7 @@ public sealed class DomainParticipant : IDisposable
         _sedpSubscriptionsReader.Dispose();
         _spdpWriter.Dispose();
         _spdpReader.Dispose();
+        _receiver.Dispose();
         _transports.Dispose();
     }
 
@@ -517,7 +535,7 @@ public sealed class DomainParticipant : IDisposable
         }
     }
 
-    private void UnregisterLocalReader(Guid endpointGuid, StatelessReader readerToRemove)
+    private void UnregisterLocalReader(Guid endpointGuid, IUserReader readerToRemove)
     {
         var result = _userEndpoints.UnregisterReader(endpointGuid, readerToRemove);
         if (result.ShouldAdvertise)

@@ -47,9 +47,11 @@ public class VendorIdTests
     }
 
     [Fact]
-    public void ROSettaDDS_既定値は_EProsimaFastDds_と等しい()
+    public void ROSettaDDS_既定値は_独自値_0x013F_で_eProsima_とは異なる()
     {
-        VendorId.ROSettaDDS.Should().Be(VendorId.EProsimaFastDds);
+        VendorId.ROSettaDDS.V0.Should().Be(0x01);
+        VendorId.ROSettaDDS.V1.Should().Be(0x3F);
+        VendorId.ROSettaDDS.Should().NotBe(VendorId.EProsimaFastDds);
     }
 
     [Fact]

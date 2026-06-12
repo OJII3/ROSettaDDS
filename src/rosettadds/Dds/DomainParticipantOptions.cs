@@ -31,6 +31,15 @@ public sealed class DomainParticipantOptions
     /// <summary>SPDP の Lease Duration (この時間更新がなければ Lost と判定)。既定 20 秒。</summary>
     public Duration LeaseDuration { get; init; } = Duration.FromSeconds(20);
 
+    /// <summary>ユーザートピック Publisher の HEARTBEAT 送信間隔。既定 1 秒。</summary>
+    public TimeSpan UserWriterHeartbeatPeriod { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// ユーザートピック Publisher の WriterHistoryCache が保持する最大 sample 数
+    /// (KeepLast depth 相当)。既定 1000。
+    /// </summary>
+    public int UserWriterHistoryDepth { get; init; } = 1000;
+
     /// <summary>マルチキャスト join に使うローカル NIC。null = ANY (全 NIC)。</summary>
     public IPAddress? MulticastInterface { get; init; }
 

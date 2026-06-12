@@ -1,22 +1,22 @@
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
-using ROSettaDDS.Rtps.Reader;
 
 using Guid = ROSettaDDS.Common.Guid;
 
 namespace ROSettaDDS.Dds;
 
 /// <summary>
-/// 型付き Subscription。<see cref="StatelessReader"/> から SerializedPayload を受け取って
-/// <see cref="ICdrSerializer{T}"/> でデシリアライズし、ハンドラへ渡す。Best-Effort 専用。
+/// 型付き Subscription。<see cref="IUserReader"/> から SerializedPayload を受け取って
+/// <see cref="ICdrSerializer{T}"/> でデシリアライズし、ハンドラへ渡す。
+/// Best-Effort / Reliable のどちらの reader でも同じ経路で扱う。
 /// </summary>
 public sealed class Subscription<T> : IDisposable
 {
-    private readonly StatelessReader _reader;
+    private readonly IUserReader _reader;
     private readonly ICdrSerializer<T> _serializer;
     private readonly Action<T, GuidPrefix> _handler;
-    private readonly Action<Guid, StatelessReader>? _unregisterEndpoint;
+    private readonly Action<Guid, IUserReader>? _unregisterEndpoint;
     private readonly SynchronizationContext? _handlerContext;
     private readonly ILogger _logger;
     private readonly CdrReadLimits _cdrReadLimits;
@@ -26,13 +26,13 @@ public sealed class Subscription<T> : IDisposable
     public Guid Guid { get; }
     public EntityId ReaderEntityId => _reader.ReaderEntityId;
 
-    public Subscription(
+    internal Subscription(
         string topicName,
         Guid guid,
-        StatelessReader reader,
+        IUserReader reader,
         ICdrSerializer<T> serializer,
         Action<T, GuidPrefix> handler,
-        Action<Guid, StatelessReader>? unregisterEndpoint = null,
+        Action<Guid, IUserReader>? unregisterEndpoint = null,
         SynchronizationContext? handlerContext = null,
         ILogger? logger = null,
         bool autoStart = true,

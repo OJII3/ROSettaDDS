@@ -2,7 +2,7 @@ using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
-using ROSettaDDS.Rtps.Reader;
+using ROSettaDDS.Rtps;
 using ROSettaDDS.Rtps.Writer;
 
 using Guid = ROSettaDDS.Common.Guid;
@@ -10,23 +10,25 @@ using Guid = ROSettaDDS.Common.Guid;
 namespace ROSettaDDS.Dds;
 
 /// <summary>
-/// local user endpoint の登録状態、マッチング、packet dispatch を管理する。
+/// local user endpoint の登録状態、マッチング、<see cref="ParticipantRtpsReceiver"/> への
+/// ルーティング登録を管理する。
 /// </summary>
 internal sealed class UserEndpointManager
 {
     private readonly object _lock = new();
     private readonly DiscoveryDb _discoveryDb;
+    private readonly ParticipantRtpsReceiver _receiver;
     private readonly ILogger _logger;
     private readonly List<DiscoveredEndpointData> _writers = new();
     private readonly List<DiscoveredEndpointData> _readers = new();
     private readonly Dictionary<string, List<LocalWriter>> _writersByTopic = new();
     private readonly Dictionary<string, List<LocalReader>> _readersByTopic = new();
     private StatefulWriter[] _writerSnapshot = Array.Empty<StatefulWriter>();
-    private StatelessReader[] _readerSnapshot = Array.Empty<StatelessReader>();
 
-    public UserEndpointManager(DiscoveryDb discoveryDb, ILogger logger)
+    public UserEndpointManager(DiscoveryDb discoveryDb, ParticipantRtpsReceiver receiver, ILogger logger)
     {
         _discoveryDb = discoveryDb ?? throw new ArgumentNullException(nameof(discoveryDb));
+        _receiver = receiver ?? throw new ArgumentNullException(nameof(receiver));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -41,9 +43,12 @@ internal sealed class UserEndpointManager
         {
             _writers.Add(endpointData);
             AddByTopic(_writersByTopic, endpointData.TopicName, localWriter);
-            RefreshSnapshotsLocked();
+            RefreshWriterSnapshotLocked();
             localReaders = SnapshotForTopic(_readersByTopic, endpointData.TopicName);
         }
+
+        // ACKNACK を受け取るため receiver に登録
+        _receiver.RegisterWriter(writer.WriterEntityId, writer);
 
         foreach (var localReader in localReaders)
         {
@@ -58,7 +63,7 @@ internal sealed class UserEndpointManager
         }
     }
 
-    public void RegisterReader(DiscoveredEndpointData endpointData, StatelessReader reader)
+    public void RegisterReader(DiscoveredEndpointData endpointData, IUserReader reader)
     {
         ValidateEndpoint(endpointData, EndpointKind.Reader);
         if (reader is null) throw new ArgumentNullException(nameof(reader));
@@ -69,9 +74,11 @@ internal sealed class UserEndpointManager
         {
             _readers.Add(endpointData);
             AddByTopic(_readersByTopic, endpointData.TopicName, localReader);
-            RefreshSnapshotsLocked();
             localWriters = SnapshotForTopic(_writersByTopic, endpointData.TopicName);
         }
+
+        // DATA/DATA_FRAG/HEARTBEAT/GAP を受け取るため receiver に登録
+        _receiver.RegisterReader(reader.ReaderEntityId, reader.Handler);
 
         foreach (var localWriter in localWriters)
         {
@@ -102,9 +109,11 @@ internal sealed class UserEndpointManager
             }
             shouldAdvertise = RemoveByReference(_writersByTopic, endpoint.TopicName, writer, static item => item.Writer)
                 && !ContainsGuid(_writersByTopic, endpoint.TopicName, endpointGuid, static item => item.EndpointData);
-            RefreshSnapshotsLocked();
+            RefreshWriterSnapshotLocked();
             localReaders = SnapshotForTopic(_readersByTopic, endpoint.TopicName);
         }
+
+        _receiver.UnregisterWriter(writer.WriterEntityId);
 
         foreach (var localReader in localReaders)
         {
@@ -113,7 +122,7 @@ internal sealed class UserEndpointManager
         return new UnregisterResult(endpoint, shouldAdvertise);
     }
 
-    public UnregisterResult UnregisterReader(Guid endpointGuid, StatelessReader reader)
+    public UnregisterResult UnregisterReader(Guid endpointGuid, IUserReader reader)
     {
         if (reader is null) throw new ArgumentNullException(nameof(reader));
 
@@ -129,9 +138,10 @@ internal sealed class UserEndpointManager
             }
             shouldAdvertise = RemoveByReference(_readersByTopic, endpoint.TopicName, reader, static item => item.Reader)
                 && !ContainsGuid(_readersByTopic, endpoint.TopicName, endpointGuid, static item => item.EndpointData);
-            RefreshSnapshotsLocked();
             localWriters = SnapshotForTopic(_writersByTopic, endpoint.TopicName);
         }
+
+        _receiver.UnregisterReader(reader.ReaderEntityId);
 
         foreach (var localWriter in localWriters)
         {
@@ -163,18 +173,6 @@ internal sealed class UserEndpointManager
         foreach (var writer in Volatile.Read(ref _writerSnapshot))
         {
             writer.Stop();
-        }
-    }
-
-    public void DispatchPacket(ReadOnlyMemory<byte> packet, Locator source)
-    {
-        foreach (var writer in Volatile.Read(ref _writerSnapshot))
-        {
-            writer.OnPacketReceived(packet, source);
-        }
-        foreach (var reader in Volatile.Read(ref _readerSnapshot))
-        {
-            reader.OnPacketReceived(packet, source);
         }
     }
 
@@ -235,7 +233,9 @@ internal sealed class UserEndpointManager
             return;
         }
 
-        local.Reader.MatchWriter(remoteWriter.Data.EndpointGuid);
+        local.Reader.MatchWriter(
+            remoteWriter.Data.EndpointGuid,
+            ResolveRemoteWriterUnicastLocator(remoteWriter));
         _logger.Debug($"DomainParticipant: matched local reader with remote writer on topic={remoteWriter.TopicName} writer={remoteWriter.Data.EndpointGuid}");
     }
 
@@ -249,7 +249,10 @@ internal sealed class UserEndpointManager
             return;
         }
 
-        reader.Reader.MatchWriter(writer.EndpointData.EndpointGuid);
+        // local reader が Reliable なら ACKNACK を local writer の unicast locator へ返す
+        reader.Reader.MatchWriter(
+            writer.EndpointData.EndpointGuid,
+            FirstUdpLocator(writer.EndpointData.UnicastLocators));
         writer.Writer.MatchReader(
             reader.EndpointData.EndpointGuid,
             FirstUdpLocator(reader.EndpointData.UnicastLocators),
@@ -258,8 +261,14 @@ internal sealed class UserEndpointManager
     }
 
     private Locator? ResolveRemoteReaderUnicastLocator(RemoteEndpoint remoteReader)
+        => ResolveRemoteEndpointUnicastLocator(remoteReader);
+
+    private Locator? ResolveRemoteWriterUnicastLocator(RemoteEndpoint remoteWriter)
+        => ResolveRemoteEndpointUnicastLocator(remoteWriter);
+
+    private Locator? ResolveRemoteEndpointUnicastLocator(RemoteEndpoint remoteEndpoint)
     {
-        var locator = FirstUdpLocator(remoteReader.Data.UnicastLocators);
+        var locator = FirstUdpLocator(remoteEndpoint.Data.UnicastLocators);
         if (locator is not null)
         {
             return locator;
@@ -267,7 +276,7 @@ internal sealed class UserEndpointManager
 
         foreach (var participant in _discoveryDb.Snapshot())
         {
-            if (participant.GuidPrefix.Equals(remoteReader.Data.EndpointGuid.Prefix))
+            if (participant.GuidPrefix.Equals(remoteEndpoint.Data.EndpointGuid.Prefix))
             {
                 return FirstUdpLocator(participant.Data.DefaultUnicastLocators);
             }
@@ -291,15 +300,11 @@ internal sealed class UserEndpointManager
         }
     }
 
-    private void RefreshSnapshotsLocked()
+    private void RefreshWriterSnapshotLocked()
     {
         _writerSnapshot = _writersByTopic.Values
             .SelectMany(static items => items)
             .Select(static item => item.Writer)
-            .ToArray();
-        _readerSnapshot = _readersByTopic.Values
-            .SelectMany(static items => items)
-            .Select(static item => item.Reader)
             .ToArray();
     }
 
@@ -394,10 +399,10 @@ internal sealed class UserEndpointManager
         return null;
     }
 
-    private sealed record LocalReader(DiscoveredEndpointData EndpointData, StatelessReader Reader);
+    private sealed record LocalReader(DiscoveredEndpointData EndpointData, IUserReader Reader);
     private sealed record LocalWriter(DiscoveredEndpointData EndpointData, StatefulWriter Writer);
 
-    public readonly record struct EndpointSnapshot(StatefulWriter[] Writers, StatelessReader[] Readers);
+    public readonly record struct EndpointSnapshot(StatefulWriter[] Writers, IUserReader[] Readers);
 
     public readonly record struct UnregisterResult(DiscoveredEndpointData? Endpoint, bool ShouldAdvertise)
     {

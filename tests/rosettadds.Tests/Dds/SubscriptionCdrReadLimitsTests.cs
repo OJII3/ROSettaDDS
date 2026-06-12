@@ -63,7 +63,7 @@ public class SubscriptionCdrReadLimitsTests
         ICdrSerializer<T> serializer,
         CdrReadLimits? limits = null)
     {
-        var reader = new StatelessReader(new EntityId(1, EntityKind.UserDefinedReaderNoKey));
+        var reader = new BestEffortUserReader(GuidPrefix.Unknown, new EntityId(1, EntityKind.UserDefinedReaderNoKey));
         return new Subscription<T>(
             "test_topic",
             default,

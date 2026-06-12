@@ -2,6 +2,7 @@ using System.Net;
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Dds;
+using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Msgs.Std;
 using ROSettaDDS.Rtps;
@@ -347,6 +348,38 @@ public class PubSubLoopbackTests
     }
 
     [Fact]
+    public async Task late_Subscription_は_TRANSIENT_LOCAL_user_writer_の履歴を受信する()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        using var pub = pA.CreatePublisher<StringMessage>(
+            "transient_local_topic",
+            StringMessageSerializer.Instance,
+            ReliabilityQos.Reliable,
+            DurabilityQos.TransientLocal,
+            StringMessage.DdsTypeName);
+
+        pA.Start();
+        pB.Start();
+        await Task.Delay(100);
+
+        await pub.PublishAsync(new StringMessage("retained before subscription"));
+        await Task.Delay(100);
+
+        var receivedTcs = new TaskCompletionSource<StringMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = pB.CreateSubscription<StringMessage>(
+            "transient_local_topic",
+            StringMessageSerializer.Instance,
+            (msg, _) => receivedTcs.TrySetResult(msg),
+            StringMessage.DdsTypeName);
+
+        var received = await receivedTcs.Task.WaitAsync(ReceiveTimeout);
+        received.Data.Should().Be("retained before subscription");
+    }
+
+    [Fact]
     public async Task SEDP_で発見した_remote_writer_の_unicast_DATA_を受信できる()
     {
         var env = CreatePair();
@@ -358,7 +391,8 @@ public class PubSubLoopbackTests
             "chatter",
             StringMessageSerializer.Instance,
             (msg, _) => receivedTcs.TrySetResult(msg),
-            StringMessage.DdsTypeName);
+            StringMessage.DdsTypeName,
+            reliability: ReliabilityQos.BestEffort);
 
         pB.Start();
 
@@ -395,7 +429,8 @@ public class PubSubLoopbackTests
             "image_text",
             StringMessageSerializer.Instance,
             (msg, _) => receivedTcs.TrySetResult(msg),
-            StringMessage.DdsTypeName);
+            StringMessage.DdsTypeName,
+            reliability: ReliabilityQos.BestEffort);
 
         pB.Start();
 
@@ -450,7 +485,8 @@ public class PubSubLoopbackTests
             "image_text_unicast",
             StringMessageSerializer.Instance,
             (msg, _) => receivedTcs.TrySetResult(msg),
-            StringMessage.DdsTypeName);
+            StringMessage.DdsTypeName,
+            reliability: ReliabilityQos.BestEffort);
 
         pB.Start();
 

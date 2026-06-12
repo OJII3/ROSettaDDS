@@ -142,7 +142,8 @@ public class SedpLoopbackTests
         using var pub = pA.CreatePublisher<StringMessage>(
             "best_effort_chatter",
             StringMessageSerializer.Instance,
-            ReliabilityQos.BestEffort);
+            ReliabilityQos.BestEffort,
+            DurabilityQos.Volatile);
 
         pA.Start();
         pB.Start();

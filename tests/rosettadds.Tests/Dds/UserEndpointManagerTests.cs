@@ -3,6 +3,7 @@ using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Discovery;
+using ROSettaDDS.Rtps;
 using ROSettaDDS.Rtps.Reader;
 
 using Guid = ROSettaDDS.Common.Guid;
@@ -14,8 +15,9 @@ public class UserEndpointManagerTests
     [Fact]
     public void Writer登録APIへReader_endpointを渡すと拒否する()
     {
-        var manager = new UserEndpointManager(new DiscoveryDb(), NullLogger.Instance);
         var prefix = GuidPrefix.Create(VendorId.ROSettaDDS, 1, 2, 3);
+        var manager = new UserEndpointManager(
+            new DiscoveryDb(), new ParticipantRtpsReceiver(prefix), NullLogger.Instance);
         var endpoint = new DiscoveredEndpointData
         {
             Kind = EndpointKind.Reader,
@@ -33,8 +35,9 @@ public class UserEndpointManagerTests
     [Fact]
     public void Reader登録APIは空topicを拒否する()
     {
-        var manager = new UserEndpointManager(new DiscoveryDb(), NullLogger.Instance);
         var prefix = GuidPrefix.Create(VendorId.ROSettaDDS, 1, 2, 3);
+        var manager = new UserEndpointManager(
+            new DiscoveryDb(), new ParticipantRtpsReceiver(prefix), NullLogger.Instance);
         var endpoint = new DiscoveredEndpointData
         {
             Kind = EndpointKind.Reader,
@@ -43,7 +46,8 @@ public class UserEndpointManagerTests
             TopicName = "",
             TypeName = "std_msgs::msg::dds_::String_",
         };
-        var reader = new StatelessReader(
+        var reader = new BestEffortUserReader(
+            prefix,
             endpoint.EndpointGuid.EntityId,
             NullLogger.Instance,
             DataFragReassemblyOptions.Default);
