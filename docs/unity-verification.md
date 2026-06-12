@@ -12,10 +12,11 @@
 
 ## 検証範囲
 
-自動検証は用途ごとに 2 層に分ける。
+自動検証は用途ごとに 3 層に分ける。
 
 - EditMode は `LoopbackHub` を使う。これは同一プロセス内で RTPS transport の契約を満たすため、Unity Editor のバッチ実行でも安定して通信経路を測れる。
 - PlayMode は実 `UdpTransport` を使い、`MonoBehaviour.OnEnable` / `OnDisable` / `OnDestroy` 経由で participant lifecycle を通す。
+- Soak は専用の `ROSettaDDS.UnitySoak.Tests` PlayMode アセンブリを使い、通常実行には含めない。
 
 計測対象:
 
@@ -24,6 +25,17 @@
 - Throughput: payload サイズ別に warmup 後の publish/subscribe batch を複数回実行し、受信完了までの経過時間、messages/sec、serialized bytes/sec、平均 ms/message を記録する。
 - Leak guard: participant / publisher / subscription / transport の create/dispose を繰り返し、full GC 後の managed heap と Unity mono used memory の retained delta を記録し、閾値を超えたら失敗させる。
 - Lifecycle smoke: 実 UDP loopback で publish/subscribe し、Play Mode の GameObject disable / destroy 後に participant と background receive loop が停止することを確認する。
+- Unity callback contract: subscription handler は background receive thread で呼ばれ、Unity main thread では呼ばれないことを確認する。
+- Domain Reload disabled: Enter Play Mode Options で Domain Reload を無効にし、static 状態を保持したまま lifecycle を連続実行できることを確認する。
+- Soak: 約 60 秒、50 Hz publish と周期的 create/dispose を継続し、受信継続、retained memory、frame time を確認する。
+
+subscription handler は Unity main thread では実行されない。handler 内で
+`GameObject` や `Transform` などの Unity API を直接操作せず、受信値を thread-safe な
+queue などへ渡して `Update` から反映すること。
+
+`Ros2Unity/ProjectSettings/EditorSettings.asset` は Enter Play Mode Options を有効化し、
+Domain Reload を無効にする。PlayMode 停止時には、static 状態が次回実行へ残る前提で
+participant / publisher / subscription を必ず dispose する。
 
 対象外:
 
@@ -44,6 +56,15 @@ batchmode にフォールバックする。
 ```sh
 scripts/unity/run_editmode.sh
 scripts/unity/run_playmode.sh
+```
+
+通常の `run_playmode.sh` は `ROSettaDDS.UnityPlayMode.Tests` のみを実行する。
+60 秒 Soak は明示的に専用アセンブリを指定する。
+
+```sh
+scripts/unity/run_playmode.sh \
+  --filter-type assembly \
+  --filter-value ROSettaDDS.UnitySoak.Tests
 ```
 
 batchmode を強制する場合 (`Ros2Unity` を開いている Editor は閉じておくこと):
@@ -100,4 +121,7 @@ Leak guard は throughput と違い、反復後に full GC を挟んだ retained
 - `rosettadds.leak.managed_heap_retained_bytes`
 - `rosettadds.leak.unity_mono_used_retained_bytes`
 - `rosettadds.leak.unity_total_allocated_delta_bytes`
- 
+- `rosettadds.soak.managed_heap_retained_bytes`
+- `rosettadds.soak.unity_mono_used_retained_bytes`
+- `rosettadds.soak.frame_time_ms`
+- `rosettadds.soak.messages_received`
