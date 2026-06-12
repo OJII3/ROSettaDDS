@@ -37,6 +37,9 @@
 
 実行スクリプトは、起動中の Unity Editor に uloop (uLoopMCP) で接続できればそれを使い、
 接続できなければ Unity Editor を batchmode で起動する。
+uloop CLI は nix devshell に含まれ、Unity 側には uLoopMCP パッケージ
+(`io.github.hatayama.uloopmcp`) が導入済み。uloop が使えない場合は自動的に
+batchmode にフォールバックする。
 
 ```sh
 scripts/unity/run_editmode.sh
@@ -57,7 +60,8 @@ scripts/unity/run_playmode.sh --filter-type assembly --filter-value ROSettaDDS.U
 ```
 
 batchmode 用の Unity Editor は `ProjectSettings/ProjectVersion.txt` のバージョンを基に
-Unity Hub の標準パスから自動検出する。明示する場合:
+Unity Hub の標準パスから自動検出する。完全一致するバージョンが見つからない場合は
+同系列 (例: 6000.3.*) の Editor にフォールバックする。明示する場合:
 
 ```sh
 UNITY_EDITOR=/Applications/Unity/Hub/Editor/6000.3.7f1/Unity.app/Contents/MacOS/Unity \
