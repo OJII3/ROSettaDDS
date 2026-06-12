@@ -19,26 +19,25 @@ Unity Performance Testing 3.2.0, ROSettaDDS UdpTransport
 
 ## Task 1: PlayMode のスレッド・lifecycle 検証を追加
 
-- [ ] subscription handler の実行 thread ID を記録し、Unity main thread と異なることを確認する。
-- [ ] `UdpTransport` に receive loop の内部診断カウンタを追加し、GameObject destroy 後に
+- [x] subscription handler の実行 thread ID を記録し、Unity main thread と異なることを確認する。
+- [x] `UdpTransport` に receive loop の内部診断カウンタを追加し、GameObject destroy 後に
   baseline へ戻ることを確認する。
-- [ ] Domain Reload 無効の ProjectSettings で、同じ probe を 2 回連続して
+- [x] Domain Reload 無効の ProjectSettings で、同じ probe を 2 回連続して
   start / publish / stop できることを確認する。
-- [ ] PlayMode アセンブリを実行して成功を確認する。
+- [x] PlayMode アセンブリを実行して成功を確認する。
 
 ## Task 2: Soak テストを専用アセンブリへ分離
 
-- [ ] `ROSettaDDS.UnitySoak.Tests` PlayMode アセンブリを追加する。
-- [ ] 約 60 秒、50 Hz publish と周期的な participant / endpoint create-dispose を行う。
-- [ ] 受信継続、例外なし、managed 8 MiB / Unity mono 64 MiB の retained memory
+- [x] `ROSettaDDS.UnitySoak.Tests` PlayMode アセンブリを追加する。
+- [x] 約 60 秒、50 Hz publish と周期的な participant / endpoint create-dispose を行う。
+- [x] 受信継続、例外なし、managed 8 MiB / Unity mono 64 MiB の retained memory
   閾値を確認する。
-- [ ] publish 負荷中の frame time を Unity Performance Testing sample group に記録する。
-- [ ] assembly フィルタを指定した明示実行で成功を確認する。
+- [x] publish 負荷中の frame time を Unity Performance Testing sample group に記録する。
+- [x] assembly フィルタを指定した明示実行で成功を確認する。
 
 ## Task 3: 実行基盤とドキュメントを同期
 
-- [ ] `run_playmode.sh` の既定実行を通常 PlayMode アセンブリに限定する。
-- [ ] Domain Reload 無効設定、callback thread 契約、Soak 明示実行方法、
+- [x] `run_playmode.sh` の既定実行を通常 PlayMode アセンブリに限定する。
+- [x] Domain Reload 無効設定、callback thread 契約、Soak 明示実行方法、
   sample group を `docs/unity-verification.md` に記載する。
-- [ ] Unity meta、.NET 回帰、通常 PlayMode、Soak を検証する。
-
+- [x] Unity meta、.NET 回帰、通常 PlayMode、Soak を検証する。
