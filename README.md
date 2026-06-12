@@ -1,47 +1,60 @@
 # ROSettaDDS
 
-ROS 2 と互換な通信ライブラリ
+**A ROS 2-compatible (DDS/RTPS) communication library implemented in pure C#/.NET.**
 
-- DDS と最低限の互換性がある
-- std_msgs が使える
-- Unity で使える
-- Unity でクロスプラットフォームビルドできる (Windows, Mac, Android, ...)
+No native libraries and no bridge process required — talk directly to ROS 2 nodes via pub/sub.
+Because the DDS/RTPS layer itself is implemented in C#, it runs cross-platform: Windows /
+macOS / Linux as well as IL2CPP and AOT targets such as Android and iOS.
 
-## 開発環境
+English | [日本語](README.ja.md)
 
-Nix flake で ROS 2 Humble + Fast DDS の RMW (`rmw_fastrtps_cpp`) + .NET 8 SDK が揃います。
+## Why ROSettaDDS
 
-```sh
-# Nix flake の devShell に入る (direnv 利用時は自動 reload)
-nix develop
-```
+Several ways already exist to talk to ROS 2 from Unity / .NET. ROSettaDDS differs from them as
+follows.
 
-devShell では `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` を既定値にしています。
+|  | [ros-sharp](https://github.com/siemens/ros-sharp) | [ros2-for-unity](https://github.com/RobotecAI/ros2-for-unity) (ros2cs) | **ROSettaDDS** |
+| --- | --- | --- | --- |
+| Transport | rosbridge (WebSocket / JSON) | Native `rcl`/`rmw` bindings | Pure C# RTPS/DDS |
+| Bridge process | Required (`rosbridge_server`) | Not required | Not required |
+| Native dependency | None | Yes (must be built per platform) | None |
+| Platforms | Anywhere Unity/.NET runs | Where the native libs are prebuilt (mainly Linux/Windows) | **Anywhere .NET runs** (Win/Mac/Linux/Android/iOS…) |
+| Direct pub/sub with ROS 2 | Via bridge | Direct | Direct |
+| Overhead | High (JSON serialization + WebSocket) | Low | Low |
+| AOT / IL2CPP | — | Depends on native libs | Supported (msg generated at compile time) |
 
-`ros.cachix.org` を利用するには `trusted-users` もしくは `trusted-substituters` に追加してください。未設定だと ROS パッケージを自前ビルドすることになります。
+- **ros-sharp** is a bridge-based approach: you run `rosbridge_server` on the ROS 2 side and
+  exchange JSON over WebSocket. It is easy to set up, but it requires a separate bridge process
+  and incurs JSON serialization and WebSocket overhead. ROSettaDDS does pub/sub natively over the
+  same RTPS that ROS 2 speaks, with no bridge in between.
+- **ros2-for-unity (ros2cs)** shares a similar philosophy: it binds from C# to the native ROS 2
+  `rcl`/`rmw` libraries and does DDS pub/sub directly. The overhead is low, but it requires
+  building and shipping native libraries for each platform, which limits where it can run.
+  ROSettaDDS implements DDS/RTPS entirely in C#, so it has no native dependency and runs
+  anywhere .NET runs — including macOS and mobile.
 
-## ビルド・テスト
+## Features
 
-```sh
-dotnet build
-dotnet test
-```
+- Interoperates with ROS 2 (Fast DDS) at the RTPS level
+- Supports `std_msgs` / `builtin_interfaces`; generates CDR-compatible C# types from `.msg`
+- Selectable Reliable / Best Effort QoS
+- Zero native dependency; IL2CPP / AOT-compatible compile-time msg generation
+- Verified on Unity 6000.3 (.NET Standard 2.1); supports cross-platform builds
 
-互換性の対象範囲と検証方針は [docs/compatibility.md](docs/compatibility.md) にまとめています。
-ROS 2 実装との相互運用確認は [docs/interop.md](docs/interop.md) を参照してください。
+> [!NOTE]
+> See [docs/compatibility.md](docs/compatibility.md) for the supported scope and verification
+> policy, and [docs/interop.md](docs/interop.md) for interoperability checks against ROS 2.
 
-## 使い方
+## Quick start
 
-### 新規コンソールアプリから使う
-
-このリポジトリを clone した状態で、別の .NET アプリから `ROSettaDDS` を参照して試せます。
+With this repository cloned, you can reference `ROSettaDDS` from a separate .NET console app.
 
 ```sh
 dotnet new console -n MyROSettaDDSApp
 dotnet add MyROSettaDDSApp/MyROSettaDDSApp.csproj reference src/rosettadds/rosettadds.csproj
 ```
 
-`Program.cs` を次の内容に置き換えると、`std_msgs/msg/String` の talker / listener として動作します。
+Replace `Program.cs` with the following to run a `std_msgs/msg/String` talker / listener.
 
 ```csharp
 using System;
@@ -68,7 +81,7 @@ var options = new DomainParticipantOptions
     EntityName = $"rosettadds_{mode}",
     Logger = logger,
 
-    // ROS_LOCALHOST_ONLY=1 の ROS 2 ノードとローカルで通信する設定。
+    // Settings to talk locally to a ROS 2 node started with ROS_LOCALHOST_ONLY=1.
     LocalUnicastAddress = IPAddress.Loopback,
     MulticastInterface = IPAddress.Loopback,
 };
@@ -118,45 +131,103 @@ catch (OperationCanceledException) when (cts.IsCancellationRequested)
 }
 ```
 
-2 つのシェルで listener と talker を起動します。
+Start the listener and talker in two shells.
 
 ```sh
 dotnet run --project MyROSettaDDSApp -- listener
 dotnet run --project MyROSettaDDSApp -- talker
 ```
 
-listener 側に `I heard: 'Hello rosettadds: N'` が出れば送受信できています。
+If the listener prints `I heard: 'Hello rosettadds: N'`, messages are flowing.
+A ready-to-run sample is in [`samples/TalkerListener`](samples/TalkerListener).
 
-### ROS 2 ノードと通信する
+## Talking to ROS 2 nodes
 
-ローカル PC 内で ROS 2 と疎通する場合は、ROS 2 側も同じ domain と localhost 設定にします。
+To talk to ROS 2 on the same machine, use the same domain and localhost settings on the ROS 2
+side as well.
 
 ```sh
 export ROS_DOMAIN_ID=0
 export ROS_LOCALHOST_ONLY=1
 ```
 
-ROS 2 の listener に rosettadds から送信する例:
+Send from rosettadds to a ROS 2 listener:
 
 ```sh
 ros2 run demo_nodes_cpp listener
 dotnet run --project MyROSettaDDSApp -- talker
 ```
 
-ROS 2 の talker を rosettadds で購読する例:
+Subscribe to a ROS 2 talker from rosettadds:
 
 ```sh
 ros2 run demo_nodes_cpp talker
 dotnet run --project MyROSettaDDSApp -- listener
 ```
 
-別ホストと通信する場合は `ROS_LOCALHOST_ONLY` を無効にし、`LocalUnicastAddress` と
-`MulticastInterface` に実際に使う NIC の IPv4 アドレスを指定してください。
+To talk to another host, unset `ROS_LOCALHOST_ONLY` and set `LocalUnicastAddress` and
+`MulticastInterface` to the IPv4 address of the NIC you actually use.
 
-### QoS を指定して publish する
+## Generating custom messages
 
-`CreatePublisher` は既定で Reliable publisher を作ります。ROS 2 の sensor-data 相当の
-Best Effort subscriber へ送る場合は、publisher 作成時に QoS を明示します。
+CDR-compatible C# types (`struct` + `ICdrSerializer<T>`) are generated from `.msg` at compile
+time (IL2CPP / AOT compatible); there is no runtime generation. There are two ways to do it.
+
+### Source Generator (for .NET projects; no need to commit generated code)
+
+Register `.msg` files as `AdditionalFiles` and the C# types are generated transparently at build
+time.
+
+```xml
+<ItemGroup>
+  <ProjectReference Include="path/to/ROSettaDDS.SourceGenerator.csproj"
+                    OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+</ItemGroup>
+
+<ItemGroup>
+  <AdditionalFiles Include="msgs\**\*.msg" ROSettaDDSMsgPackage="sample_msgs" />
+  <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="ROSettaDDSMsgPackage" />
+</ItemGroup>
+```
+
+For example, `msgs/sample_msgs/msg/Demo.msg`:
+
+```
+std_msgs/Header header
+string name
+float64[] values
+int32 count
+```
+
+generates a `Demo` type and a `DemoSerializer` in the `ROSettaDDS.Msgs.Sample` namespace, ready
+to use:
+
+```csharp
+using ROSettaDDS.Msgs.Sample;
+
+var demo = new Demo(header, "custom message", new[] { 1.5, 2.5, 3.5 }, 7);
+```
+
+See [`samples/CustomMsgGen`](samples/CustomMsgGen) for a runnable example.
+
+### CLI (for maintaining standard msgs / generating into Unity)
+
+Scans `<input>/<package>/msg/<Name>.msg` and emits `.cs`. Use it to generate into a Unity Assets
+folder, or when you want to commit and manage the generated code.
+
+```sh
+# Regenerate standard msgs (input: msgs/, output: src/rosettadds/Msgs/)
+dotnet run --project tools/rosettadds-genmsg -- --input msgs --output src/rosettadds/Msgs
+```
+
+> [!NOTE]
+> See [docs/msg-codegen.md](docs/msg-codegen.md) for the supported grammar, naming policy, and
+> usage in each environment.
+
+## Specifying QoS
+
+`CreatePublisher` creates a Reliable publisher by default. To send to a Best Effort subscriber
+(equivalent to ROS 2 sensor-data), specify the QoS explicitly when creating the publisher.
 
 ```csharp
 using ROSettaDDS.Dds.QoS;
@@ -168,65 +239,29 @@ using var pub = participant.CreatePublisher<StringMessage>(
     StringMessage.DdsTypeName);
 ```
 
-## msg コード生成 (rosidl 相当)
+## Development environment & build
 
-`.msg` から CDR 互換な C# 型 (`struct` + `ICdrSerializer<T>`) を**コンパイル時生成**します
-(IL2CPP / AOT 互換)。`src/rosettadds/Msgs/` の標準型 (`std_msgs`, `builtin_interfaces`) は
-`msgs/` を入力とした生成物です。
+A Nix flake provides ROS 2 Humble + the Fast DDS RMW (`rmw_fastrtps_cpp`) + the .NET 8 SDK.
 
 ```sh
-# 標準 msg を再生成 (入力: msgs/, 出力: src/rosettadds/Msgs/)
-dotnet run --project tools/rosettadds-genmsg -- --input msgs --output src/rosettadds/Msgs
+# Enter the flake devShell (auto-reloads with direnv)
+nix develop
 ```
 
-- CLI (`tools/rosettadds-genmsg`): 標準 msg の保守、Unity/任意プロジェクトへの生成
-- Source Generator (`src/ROSettaDDS.SourceGenerator`): .NET プロジェクトでの透過生成 (例: `samples/CustomMsgGen`)
-- Unity: CLI で Assets 配下へ生成 → Unity が通常コンパイル
-
-文法サポート範囲・命名ポリシー・各環境の使い方は [docs/msg-codegen.md](docs/msg-codegen.md) を参照してください。
-
-## Unity 互換性
-
-Unity では API Compatibility Level を .NET Standard 2.1 に設定して利用します。
-現在の検証済み Editor は Unity 6000.3.7f1 です。Unity package 宣言も Unity 6000.3 に合わせ、
-`src/rosettadds/csc.rsp` では C# language version を `10.0` に固定しています。
-別 Unity バージョンを対応対象に加える場合は、package compile、EditMode test、PlayMode test を通してから
-検証済み範囲として扱います。
-
-## 終了時の discovery lifecycle
-
-Participant は DDSI-RTPS の lease timeout で remote から消えることを前提にします。
-Publisher / Subscription の endpoint は Dispose 時に SEDP の built-in Topic へ
-`PID_STATUS_INFO` 付き unregister DATA を送信し、remote の graph から早めに消えるようにします。
-
-## サンプル: SPDP Demo
-
-指定ドメインの SPDP マルチキャストに参加し、他の Participant (rosettadds 同士 / ROS 2 ノード) を検出します。
+The devShell sets `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` by default. To use `ros.cachix.org`, add
+it to `trusted-users` or `trusted-substituters`; otherwise ROS packages are built from source.
 
 ```sh
-# Usage: dotnet run --project samples/SpdpDemo -- [domainId] [participantId] [entityName]
-dotnet run --project samples/SpdpDemo -- 0 1 rosettadds_demo
+dotnet build
+dotnet test
 ```
 
-## サンプル: Talker / Listener
+## Documentation
 
-`/chatter` トピック (std_msgs/String) で文字列を送受信します。別シェルで起動してください。
+| Document | Contents |
+| --- | --- |
+| [docs/compatibility.md](docs/compatibility.md) | Supported scope and verification policy |
+| [docs/interop.md](docs/interop.md) | Interoperability checks against ROS 2 |
+| [docs/msg-codegen.md](docs/msg-codegen.md) | Grammar and naming policy of msg code generation (rosidl equivalent) |
 
-```sh
-# listener
-dotnet run --project samples/TalkerListener -- listener
-# talker
-dotnet run --project samples/TalkerListener -- talker
-```
-
-listener 側に `I heard: 'Hello rosettadds: N'` が出れば OK。
-
-## ROS 2 との相互検出確認 (loopback)
-
-別シェルで ROS 2 talker を起動:
-
-```sh
-ROS_LOCALHOST_ONLY=1 ROS_DOMAIN_ID=0 ros2 run demo_nodes_cpp talker
-```
-
-SpdpDemo 側のログに `++ DISCOVERED ... unicast=UDPv4://127.0.0.1:7410` が出れば OK。
+Samples live under [`samples/`](samples) (`TalkerListener` / `CustomMsgGen` / `SpdpDemo`).
