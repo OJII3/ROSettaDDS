@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using NUnit.Framework;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Msgs.Std;
@@ -81,12 +82,12 @@ namespace ROSettaDDS.UnityVerification.Tests
             using var sub = pair.Reader.CreateSubscription<StringMessage>(
                 topic,
                 StringMessageSerializer.Instance,
-                (message, _) => received = message.Data,
+                (message, _) => Volatile.Write(ref received, message.Data),
                 reliability: ReliabilityQos.Reliable);
 
             Assert.IsTrue(
                 UnityLoopbackTestSupport.WaitUntil(
-                    () => received == "published-before-reader",
+                    () => Volatile.Read(ref received) == "published-before-reader",
                     UnityLoopbackTestSupport.ReceiveTimeout),
                 "Late-join reader did not receive TransientLocal history.");
         }
