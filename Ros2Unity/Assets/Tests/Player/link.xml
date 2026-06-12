@@ -1,0 +1,3 @@
+<linker>
+  <assembly fullname="ROSettaDDS.UnityPlayer.Tests" preserve="all" />
+</linker>
