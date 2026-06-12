@@ -12,11 +12,13 @@
 
 ## 検証範囲
 
-自動検証は用途ごとに 3 層に分ける。
+自動検証は用途ごとに 4 層に分ける。
 
 - EditMode は `LoopbackHub` を使う。これは同一プロセス内で RTPS transport の契約を満たすため、Unity Editor のバッチ実行でも安定して通信経路を測れる。
 - PlayMode は実 `UdpTransport` を使い、`MonoBehaviour.OnEnable` / `OnDisable` / `OnDestroy` 経由で participant lifecycle を通す。
 - Soak は専用の `ROSettaDDS.UnitySoak.Tests` PlayMode アセンブリを使い、通常実行には含めない。
+- Player は専用の `ROSettaDDS.UnityPlayer.Tests` PlayMode アセンブリを
+  StandaloneOSX Player にビルドし、既定 IL2CPP、切り分け用 Mono で実行する。
 
 計測対象:
 
@@ -28,6 +30,8 @@
 - Unity callback contract: subscription handler は background receive thread で呼ばれ、Unity main thread では呼ばれないことを確認する。
 - Domain Reload disabled: Enter Play Mode Options で Domain Reload を無効にし、static 状態を保持したまま lifecycle を連続実行できることを確認する。
 - Soak: 約 60 秒、50 Hz publish と周期的 create/dispose を継続し、受信継続、retained memory、frame time を確認する。
+- AOT Player: 全生成 msg 型を明示的なジェネリック呼び出しで publish/receive し、
+  serializer、`Publisher<T>`、`Subscription<T>` の IL2CPP AOT インスタンス化を確認する。
 
 subscription handler は Unity main thread では実行されない。handler 内で
 `GameObject` や `Transform` などの Unity API を直接操作せず、受信値を thread-safe な
@@ -41,7 +45,7 @@ participant / publisher / subscription を必ず dispose する。
 
 - 外部 `ros2` CLI / Fast DDS との相互通信。
 - 実 NIC や multicast loopback の OS 設定に依存する計測。
-- Player ビルド後の端末別プロファイル。
+- macOS 以外の Player ビルドと端末別プロファイル。
 
 これらは自動検証が安定した後に、別ジョブとして追加する。
 
@@ -56,6 +60,7 @@ batchmode にフォールバックする。
 ```sh
 scripts/unity/run_editmode.sh
 scripts/unity/run_playmode.sh
+scripts/unity/run_player_tests.sh
 ```
 
 通常の `run_playmode.sh` は `ROSettaDDS.UnityPlayMode.Tests` のみを実行する。
@@ -66,6 +71,17 @@ scripts/unity/run_playmode.sh \
   --filter-type assembly \
   --filter-value ROSettaDDS.UnitySoak.Tests
 ```
+
+`run_player_tests.sh` は StandaloneOSX Player をビルドして Player 内でテストを実行する。
+既定 backend は IL2CPP。問題の切り分け時のみ Mono を指定する。
+
+```sh
+scripts/unity/run_player_tests.sh
+scripts/unity/run_player_tests.sh --backend mono
+```
+
+Player 実行は batchmode 専用で、起動中 Editor への uloop 接続は使わない。
+同じ `Ros2Unity` プロジェクトを Editor で開いている場合は Player 実行前に閉じること。
 
 batchmode を強制する場合 (`Ros2Unity` を開いている Editor は閉じておくこと):
 
@@ -95,12 +111,28 @@ UNITY_EDITOR=/Applications/Unity/Hub/Editor/6000.3.7f1/Unity.app/Contents/MacOS/
   (テスト件数と pass/fail のサマリ JSON)
 - batchmode 実行: `artifacts/unity/editmode-results.xml` + `artifacts/unity/unity-editmode.log` /
   `artifacts/unity/playmode-results.xml` + `artifacts/unity/unity-playmode.log`
+- Player 実行: `artifacts/unity/player-<backend>-results.xml` +
+  `artifacts/unity/unity-player-<backend>.log` +
+  `artifacts/unity/player-<backend>/ROSettaDDSUnityPlayerTests.app`
 
 `artifacts/` は計測結果の生成物なのでコミットしない。
 
 Unity Performance Testing の sample group (throughput / leak guard の計測値) は
 batchmode 実行で生成される results XML にのみ埋め込まれる。性能値を確認するときは
 `--batch` で実行し、XML を直接参照する。README への性能値の自動反映は行わない。
+
+## IL2CPP / AOT 棚卸し
+
+- `ROSettaDDS.UnityPlayer.Tests` は全 32 msg 型を
+  `AssertRoundTrip<T>(ICdrSerializer<T>, T)` へ明示的に渡す。これにより各 serializer と
+  `Publisher<T>` / `Subscription<T>` の AOT コードを生成し、Player 上で実行確認する。
+- ライブラリ内の reflection 使用は
+  `DomainParticipant.ResolveDdsTypeName<T>` が各 msg 型の `DdsTypeName` 定数を取得する
+  箇所のみ。全 msg 型の Player roundtrip が、この reflection 経路も実行する。
+- ROSettaDDS 本体を preserve する `link.xml` は不要。明示ジェネリック参照と
+  `DdsTypeName` reflection は IL2CPP Player 上で stripping 後も動作する。
+- Player テストアセンブリは NUnit が reflection でテストを発見するため、
+  `Assets/Tests/Player/link.xml` で `ROSettaDDS.UnityPlayer.Tests` を preserve する。
 
 ## 判定方針
 
