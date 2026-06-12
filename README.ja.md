@@ -4,7 +4,7 @@
 
 ネイティブライブラリもブリッジプロセスも必要とせず、ROS 2 ノードと直接 pub/sub できます。
 DDS/RTPS のレイヤーから C# で実装しているため、Windows / macOS / Linux に加えて
-Android / iOS など IL2CPP・AOT 環境でも動作する**クロスプラットフォーム**を実現します。
+Android / iOS など IL2CPP・AOT 環境でも動作するクロスプラットフォームを実現します。
 
 [English](README.md) | 日本語
 
@@ -16,21 +16,21 @@ Unity / .NET から ROS 2 と通信する手段は既にいくつか存在しま
 |  | [ros-sharp](https://github.com/siemens/ros-sharp) | [ros2-for-unity](https://github.com/RobotecAI/ros2-for-unity) (ros2cs) | **ROSettaDDS** |
 | --- | --- | --- | --- |
 | 通信方式 | rosbridge (WebSocket / JSON) | ネイティブ `rcl`/`rmw` バインディング | Pure C# の RTPS/DDS |
-| ブリッジプロセス | **必要** (`rosbridge_server`) | 不要 | 不要 |
-| ネイティブ依存 | なし | **あり** (プラットフォーム毎にビルドが必要) | なし |
+| ブリッジプロセス | 必要 (`rosbridge_server`) | 不要 | 不要 |
+| ネイティブ依存 | なし | あり (プラットフォーム毎にビルドが必要) | なし |
 | 対応プラットフォーム | Unity/.NET が動く所 | ネイティブをビルド済みの環境 (Linux/Windows 中心) | **.NET が動く所** (Win/Mac/Linux/Android/iOS…) |
 | ROS 2 と直接 pub/sub | ブリッジ経由 | 直接 | 直接 |
 | オーバーヘッド | 大 (JSON シリアライズ + WebSocket) | 小 | 小 |
 | AOT / IL2CPP | — | ネイティブ依存に従う | 対応 (msg はコンパイル時生成) |
 
-- **ros-sharp** は ROS 2 側に `rosbridge_server` を立て、WebSocket 経由で JSON をやり取りする
+- *ros-sharp** は ROS 2 側に `rosbridge_server` を立て、WebSocket 経由で JSON をやり取りする
   ブリッジ方式です。導入は容易ですが、ブリッジプロセスが別途必要で、JSON シリアライズと
   WebSocket のオーバーヘッドが乗ります。ROSettaDDS はブリッジを介さず、ROS 2 が話すのと同じ
   RTPS でネイティブに pub/sub します。
 - **ros2-for-unity (ros2cs)** は思想が近く、ROS 2 の `rcl`/`rmw` ネイティブライブラリへ C# から
   バインドして直接 DDS pub/sub します。低オーバーヘッドですが、各プラットフォーム向けに
   ネイティブライブラリをビルド・同梱する必要があり、動作環境が限られます。ROSettaDDS は
-  DDS/RTPS を **C# だけで実装**しているためネイティブ依存がなく、macOS やモバイルを含めて
+  DDS/RTPS を C# だけで実装しているためネイティブ依存がなく、macOS やモバイルを含めて
   .NET が動く環境ならどこでも動かせます。
 
 ## 特徴
@@ -169,7 +169,7 @@ dotnet run --project MyROSettaDDSApp -- listener
 
 ## カスタムメッセージを生成する
 
-`.msg` から CDR 互換な C# 型 (`struct` + `ICdrSerializer<T>`) を**コンパイル時生成**します
+`.msg` から CDR 互換な C# 型 (`struct` + `ICdrSerializer<T>`) をコンパイル時生成します
 (IL2CPP / AOT 互換)。ランタイム生成は行いません。生成方法は 2 つあります。
 
 ### Source Generator (.NET プロジェクト向け、生成物のコミット不要)
@@ -235,15 +235,6 @@ using var pub = participant.CreatePublisher<StringMessage>(
     ReliabilityQos.BestEffort,
     StringMessage.DdsTypeName);
 ```
-
-## Unity で使う
-
-Unity では API Compatibility Level を **.NET Standard 2.1** に設定して利用します。
-現在の検証済み Editor は **Unity 6000.3.7f1** です。Unity package 宣言も Unity 6000.3 に合わせ、
-`src/rosettadds/csc.rsp` で C# language version を `10.0` に固定しています。
-
-別 Unity バージョンを対応対象に加える場合は、package compile / EditMode test / PlayMode test を
-通してから検証済み範囲として扱います。
 
 ## 開発環境・ビルド
 

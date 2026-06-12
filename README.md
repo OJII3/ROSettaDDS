@@ -3,7 +3,7 @@
 **A ROS 2-compatible (DDS/RTPS) communication library implemented in pure C#/.NET.**
 
 No native libraries and no bridge process required — talk directly to ROS 2 nodes via pub/sub.
-Because the DDS/RTPS layer itself is implemented in C#, it runs **cross-platform**: Windows /
+Because the DDS/RTPS layer itself is implemented in C#, it runs cross-platform: Windows /
 macOS / Linux as well as IL2CPP and AOT targets such as Android and iOS.
 
 English | [日本語](README.ja.md)
@@ -16,8 +16,8 @@ follows.
 |  | [ros-sharp](https://github.com/siemens/ros-sharp) | [ros2-for-unity](https://github.com/RobotecAI/ros2-for-unity) (ros2cs) | **ROSettaDDS** |
 | --- | --- | --- | --- |
 | Transport | rosbridge (WebSocket / JSON) | Native `rcl`/`rmw` bindings | Pure C# RTPS/DDS |
-| Bridge process | **Required** (`rosbridge_server`) | Not required | Not required |
-| Native dependency | None | **Yes** (must be built per platform) | None |
+| Bridge process | Required (`rosbridge_server`) | Not required | Not required |
+| Native dependency | None | Yes (must be built per platform) | None |
 | Platforms | Anywhere Unity/.NET runs | Where the native libs are prebuilt (mainly Linux/Windows) | **Anywhere .NET runs** (Win/Mac/Linux/Android/iOS…) |
 | Direct pub/sub with ROS 2 | Via bridge | Direct | Direct |
 | Overhead | High (JSON serialization + WebSocket) | Low | Low |
@@ -30,7 +30,7 @@ follows.
 - **ros2-for-unity (ros2cs)** shares a similar philosophy: it binds from C# to the native ROS 2
   `rcl`/`rmw` libraries and does DDS pub/sub directly. The overhead is low, but it requires
   building and shipping native libraries for each platform, which limits where it can run.
-  ROSettaDDS implements DDS/RTPS **entirely in C#**, so it has no native dependency and runs
+  ROSettaDDS implements DDS/RTPS entirely in C#, so it has no native dependency and runs
   anywhere .NET runs — including macOS and mobile.
 
 ## Features
@@ -170,8 +170,8 @@ To talk to another host, unset `ROS_LOCALHOST_ONLY` and set `LocalUnicastAddress
 
 ## Generating custom messages
 
-CDR-compatible C# types (`struct` + `ICdrSerializer<T>`) are generated from `.msg` **at compile
-time** (IL2CPP / AOT compatible); there is no runtime generation. There are two ways to do it.
+CDR-compatible C# types (`struct` + `ICdrSerializer<T>`) are generated from `.msg` at compile
+time (IL2CPP / AOT compatible); there is no runtime generation. There are two ways to do it.
 
 ### Source Generator (for .NET projects; no need to commit generated code)
 
@@ -238,15 +238,6 @@ using var pub = participant.CreatePublisher<StringMessage>(
     ReliabilityQos.BestEffort,
     StringMessage.DdsTypeName);
 ```
-
-## Using it in Unity
-
-In Unity, set the API Compatibility Level to **.NET Standard 2.1**. The currently verified editor
-is **Unity 6000.3.7f1**. The Unity package declaration also targets Unity 6000.3, and
-`src/rosettadds/csc.rsp` pins the C# language version to `10.0`.
-
-To add another Unity version to the supported set, run package compile / EditMode test / PlayMode
-test before treating it as verified.
 
 ## Development environment & build
 
