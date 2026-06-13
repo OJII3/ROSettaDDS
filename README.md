@@ -161,6 +161,7 @@ using var pub = participant.CreatePublisher<StringMessage>(
     "chatter",
     StringMessageSerializer.Instance,
     ReliabilityQos.BestEffort,
+    DurabilityQos.Volatile,
     StringMessage.DdsTypeName);
 ```
 
