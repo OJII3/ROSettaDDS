@@ -55,6 +55,74 @@ public class ParticipantTransportSetTests
         calls.Count(call => call.EndsWith(":stop", StringComparison.Ordinal)).Should().Be(4);
     }
 
+    [Fact]
+    public void 既定では全NICを列挙してloopbackを含むunicast_locatorを広告する()
+    {
+        using var transports = ParticipantTransportSet.Create(new DomainParticipantOptions
+        {
+            DomainId = 71,
+        });
+
+        var expected = LocalNetwork.EnumerateUnicastIPv4();
+        transports.DefaultUnicastLocators.Should().HaveCount(expected.Count);
+        transports.MetatrafficUnicastLocators.Should().HaveCount(expected.Count);
+
+        transports.DefaultUnicastLocators
+            .Select(l => l.ToIPAddress())
+            .Should().Contain(IPAddress.Loopback);
+        // ANY バインドのため広告アドレスに 0.0.0.0 は含めない。
+        transports.DefaultUnicastLocators
+            .Select(l => l.ToIPAddress())
+            .Should().NotContain(IPAddress.Any);
+    }
+
+    [Fact]
+    public void LocalUnicastAddress指定時はその単一アドレスのみ広告する()
+    {
+        var addr = IPAddress.Parse("127.0.0.5");
+        using var transports = ParticipantTransportSet.Create(new DomainParticipantOptions
+        {
+            DomainId = 72,
+            LocalUnicastAddress = addr,
+        });
+
+        transports.DefaultUnicastLocators.Should().ContainSingle()
+            .Which.ToIPAddress().Should().Be(addr);
+        transports.MetatrafficUnicastLocators.Should().ContainSingle()
+            .Which.ToIPAddress().Should().Be(addr);
+    }
+
+    [Fact]
+    public void LocalhostOnly指定時はloopbackのみ広告する()
+    {
+        using var transports = ParticipantTransportSet.Create(new DomainParticipantOptions
+        {
+            DomainId = 73,
+            LocalhostOnly = true,
+        });
+
+        transports.DefaultUnicastLocators.Should().ContainSingle()
+            .Which.ToIPAddress().Should().Be(IPAddress.Loopback);
+    }
+
+    [Fact]
+    public void Custom_unicast_transportのlocatorをそのまま広告する()
+    {
+        var calls = new List<string>();
+        using var transports = ParticipantTransportSet.Create(new DomainParticipantOptions
+        {
+            CustomMulticastTransport = new RecordingTransport("meta-mc", 7400, calls),
+            CustomUnicastTransport = new RecordingTransport("meta-uc", 7410, calls),
+            CustomUserMulticastTransport = new RecordingTransport("user-mc", 7401, calls),
+            CustomUserUnicastTransport = new RecordingTransport("user-uc", 7411, calls),
+        });
+
+        transports.MetatrafficUnicastLocators.Should().ContainSingle()
+            .Which.Port.Should().Be(7410);
+        transports.DefaultUnicastLocators.Should().ContainSingle()
+            .Which.Port.Should().Be(7411);
+    }
+
     private static DomainParticipantOptions CreateOptions(List<string> calls)
         => new()
         {

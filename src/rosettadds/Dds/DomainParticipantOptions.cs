@@ -47,10 +47,24 @@ public sealed class DomainParticipantOptions
     public IPAddress MulticastGroup { get; init; } = RtpsConstants.DefaultMulticastAddress;
 
     /// <summary>
-    /// MetatrafficUnicast Locator として広告するアドレス。null の場合は <see cref="IPAddress.Loopback"/> を使う。
-    /// マルチホスト疎通を求める場合は実 NIC の IP を指定する。
+    /// Unicast Locator として広告するアドレス。
+    /// <para>
+    /// null (既定) の場合は、Fast DDS / Cyclone DDS の rmw 層と同様に
+    /// 稼働中の全 NIC の IPv4 アドレス (loopback を含む) を自動列挙して広告し、
+    /// unicast ソケットは <see cref="IPAddress.Any"/> にバインドして全 NIC で受信する。
+    /// </para>
+    /// <para>
+    /// 特定 NIC のみを広告したい場合はその IP を明示指定する。
+    /// loopback に限定したい場合は <see cref="LocalhostOnly"/> を使う。
+    /// </para>
     /// </summary>
     public IPAddress? LocalUnicastAddress { get; init; }
+
+    /// <summary>
+    /// ROS_LOCALHOST_ONLY 相当。true の場合、unicast/multicast を loopback に限定する
+    /// (<see cref="LocalUnicastAddress"/> より優先)。既定 false。
+    /// </summary>
+    public bool LocalhostOnly { get; init; }
 
     /// <summary>Participant 名 (PID_ENTITY_NAME)。</summary>
     public string EntityName { get; init; } = "rosettadds_participant";

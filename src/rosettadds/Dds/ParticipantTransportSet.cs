@@ -25,6 +25,8 @@ internal sealed class ParticipantTransportSet : IDisposable
         OwnedTransport userUnicast,
         Locator metatrafficMulticastDestination,
         Locator userMulticastDestination,
+        IReadOnlyList<Locator> metatrafficUnicastLocators,
+        IReadOnlyList<Locator> defaultUnicastLocators,
         int resolvedParticipantId)
     {
         _metatrafficMulticast = metatrafficMulticast;
@@ -33,6 +35,8 @@ internal sealed class ParticipantTransportSet : IDisposable
         _userUnicast = userUnicast;
         MetatrafficMulticastDestination = metatrafficMulticastDestination;
         UserMulticastDestination = userMulticastDestination;
+        MetatrafficUnicastLocators = metatrafficUnicastLocators;
+        DefaultUnicastLocators = defaultUnicastLocators;
         ResolvedParticipantId = resolvedParticipantId;
     }
 
@@ -42,8 +46,12 @@ internal sealed class ParticipantTransportSet : IDisposable
     public IRtpsTransport UserUnicast => _userUnicast.Transport;
     public Locator MetatrafficMulticastDestination { get; }
     public Locator UserMulticastDestination { get; }
-    public Locator MetatrafficUnicastLocator => MetatrafficUnicast.LocalLocator;
-    public Locator DefaultUnicastLocator => UserUnicast.LocalLocator;
+
+    /// <summary>SPDP で広告する metatraffic unicast locator 群 (NIC ごとに 1 つ)。</summary>
+    public IReadOnlyList<Locator> MetatrafficUnicastLocators { get; }
+
+    /// <summary>SPDP/SEDP で広告する user (default) unicast locator 群 (NIC ごとに 1 つ)。</summary>
+    public IReadOnlyList<Locator> DefaultUnicastLocators { get; }
 
     /// <summary>実際に使用された Participant ID。auto-probe により入力値と異なる場合がある。</summary>
     public int ResolvedParticipantId { get; }
@@ -57,7 +65,34 @@ internal sealed class ParticipantTransportSet : IDisposable
         {
             int discoveryMulticastPort = RtpsPorts.DiscoveryMulticast(options.DomainId);
             int userMulticastPort = RtpsPorts.UserMulticast(options.DomainId);
-            var localAddress = options.LocalUnicastAddress ?? IPAddress.Loopback;
+
+            // 広告アドレスとバインドアドレスを決める。
+            // - LocalhostOnly         : loopback に限定する。
+            // - LocalUnicastAddress   : 指定 NIC のみを広告し、その NIC にバインドする。
+            // - 既定 (null)           : 全 NIC を自動列挙して広告し、ANY にバインドして全 NIC で受信する。
+            IReadOnlyList<IPAddress> advertisedAddresses;
+            IPAddress bindAddress;
+            IPAddress? multicastInterface;
+            if (options.LocalhostOnly)
+            {
+                advertisedAddresses = new[] { IPAddress.Loopback };
+                bindAddress = IPAddress.Loopback;
+                multicastInterface = options.MulticastInterface ?? IPAddress.Loopback;
+            }
+            else if (options.LocalUnicastAddress is not null)
+            {
+                advertisedAddresses = new[] { options.LocalUnicastAddress };
+                bindAddress = options.LocalUnicastAddress;
+                multicastInterface = options.MulticastInterface;
+            }
+            else
+            {
+                advertisedAddresses = LocalNetwork.EnumerateUnicastIPv4();
+                bindAddress = IPAddress.Any;
+                multicastInterface = options.MulticastInterface;
+            }
+
+            var localAddress = bindAddress;
 
             var metatrafficMulticast = Add(
                 created,
@@ -65,7 +100,7 @@ internal sealed class ParticipantTransportSet : IDisposable
                 () => UdpTransport.CreateMulticast(
                     options.MulticastGroup,
                     discoveryMulticastPort,
-                    options.MulticastInterface,
+                    multicastInterface,
                     options.Logger));
             var userMulticast = Add(
                 created,
@@ -73,7 +108,7 @@ internal sealed class ParticipantTransportSet : IDisposable
                 () => UdpTransport.CreateMulticast(
                     options.MulticastGroup,
                     userMulticastPort,
-                    options.MulticastInterface,
+                    multicastInterface,
                     options.Logger));
 
             bool hasCustomUnicast = options.CustomUnicastTransport is not null
@@ -115,6 +150,8 @@ internal sealed class ParticipantTransportSet : IDisposable
                 userUnicast,
                 Locator.FromUdpV4(options.MulticastGroup, (uint)discoveryMulticastPort),
                 Locator.FromUdpV4(options.MulticastGroup, (uint)userMulticastPort),
+                BuildUnicastLocators(options.CustomUnicastTransport, metatrafficUnicast, advertisedAddresses),
+                BuildUnicastLocators(options.CustomUserUnicastTransport, userUnicast, advertisedAddresses),
                 resolvedId);
         }
         catch
@@ -195,6 +232,31 @@ internal sealed class ParticipantTransportSet : IDisposable
         _userMulticast.DisposeIfOwned();
         _metatrafficMulticast.DisposeIfOwned();
         _metatrafficUnicast.DisposeIfOwned();
+    }
+
+    /// <summary>
+    /// 広告する unicast locator 群を構築する。
+    /// custom transport が差し替えられている場合は、その <see cref="IRtpsTransport.LocalLocator"/> を
+    /// そのまま広告する (テスト/差し替え用)。自動生成ソケットの場合は実際のバインドポートと
+    /// <paramref name="advertisedAddresses"/> の直積を広告する。
+    /// </summary>
+    private static IReadOnlyList<Locator> BuildUnicastLocators(
+        IRtpsTransport? customTransport,
+        OwnedTransport transport,
+        IReadOnlyList<IPAddress> advertisedAddresses)
+    {
+        if (customTransport is not null)
+        {
+            return new[] { transport.Transport.LocalLocator };
+        }
+
+        uint port = transport.Transport.LocalLocator.Port;
+        var locators = new List<Locator>(advertisedAddresses.Count);
+        foreach (var address in advertisedAddresses)
+        {
+            locators.Add(Locator.FromUdpV4(address, port));
+        }
+        return locators;
     }
 
     private static OwnedTransport Add(

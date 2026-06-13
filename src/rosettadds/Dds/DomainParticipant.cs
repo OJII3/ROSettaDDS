@@ -323,8 +323,8 @@ public sealed class DomainParticipant : IDisposable
             EntityName = _options.EntityName,
         };
         data.MetatrafficMulticastLocators.Add(_transports.MetatrafficMulticastDestination);
-        data.MetatrafficUnicastLocators.Add(_transports.MetatrafficUnicastLocator);
-        data.DefaultUnicastLocators.Add(_transports.DefaultUnicastLocator);
+        data.MetatrafficUnicastLocators.AddRange(_transports.MetatrafficUnicastLocators);
+        data.DefaultUnicastLocators.AddRange(_transports.DefaultUnicastLocators);
         data.DefaultMulticastLocators.Add(_transports.UserMulticastDestination);
         return data;
     }
@@ -381,7 +381,7 @@ public sealed class DomainParticipant : IDisposable
             Reliability = reliability,
             Durability = durability,
         };
-        endpointData.UnicastLocators.Add(_transports.DefaultUnicastLocator);
+        endpointData.UnicastLocators.AddRange(_transports.DefaultUnicastLocators);
         endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
         _userEndpoints.RegisterWriter(endpointData, writer);
         _ = RunSedpOperationAsync(
@@ -441,7 +441,7 @@ public sealed class DomainParticipant : IDisposable
             Reliability = effectiveReliability,
             Durability = DurabilityQos.Volatile,
         };
-        endpointData.UnicastLocators.Add(_transports.DefaultUnicastLocator);
+        endpointData.UnicastLocators.AddRange(_transports.DefaultUnicastLocators);
         endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
 
         // Subscription を先に生成して PayloadReceived を購読してから reader を receiver へ登録する。
