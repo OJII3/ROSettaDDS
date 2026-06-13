@@ -66,6 +66,20 @@ Publisher の writer history depth と HEARTBEAT 周期は `DomainParticipantOpt
 matched writer で内部フィルタする)。INFO_DST による宛先フィルタと INFO_SRC / INFO_TS の
 Receiver 状態引き継ぎも中央で処理する。
 
+## Unicast locator の広告
+
+SPDP/SEDP で広告する unicast locator は、Fast DDS / Cyclone DDS の rmw 層が全 NIC を
+自動列挙するのと同じ方針で決める。`DomainParticipantOptions.LocalUnicastAddress` の扱いは次の通り。
+
+- **null (既定)**: 稼働中の全 NIC の IPv4 アドレス (loopback を含み、APIPA 169.254/16 は除外) を
+  自動列挙して locator を広告する。unicast ソケットは `IPAddress.Any` にバインドして全 NIC で受信する。
+  これにより、ユーザーが自分の IP を渡さなくても LAN 上の ROS 2 ノードから到達できる。
+- **特定 IP を指定**: その NIC のみを広告し、ソケットもその IP にバインドする。
+- **`LocalhostOnly = true`** (ROS_LOCALHOST_ONLY 相当): unicast/multicast を loopback に限定する。
+
+Vendor 実装によっては複数 locator を広告し、相手は到達可能な locator を選ぶ。rosettadds も
+列挙した各アドレスを individual locator として広告し、相手の reachability に任せる。
+
 ## Vendor ID
 
 rosettadds は独自 Vendor ID `0x013F` を使う (`VendorId.ROSettaDDS`)。

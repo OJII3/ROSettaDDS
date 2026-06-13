@@ -8,7 +8,6 @@
 // - 他の Participant (rosettadds 同士、または ROS 2 ノード) を検出してログ出力
 //
 // Wireshark で 239.255.0.1 / udp.port == 7400 をキャプチャすると送受信パケットを確認可能。
-using System.Net;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Dds;
 
@@ -24,8 +23,8 @@ var options = new DomainParticipantOptions
     ParticipantId = participantId,
     EntityName = entityName,
     Logger = logger,
-    LocalUnicastAddress = IPAddress.Loopback,
-    MulticastInterface = IPAddress.Loopback,
+    // ROS_LOCALHOST_ONLY=1 相当: unicast/multicast を loopback に限定する。
+    LocalhostOnly = true,
     SpdpInterval = TimeSpan.FromSeconds(3),
 };
 

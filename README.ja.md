@@ -57,7 +57,6 @@ dotnet add MyROSettaDDSApp/MyROSettaDDSApp.csproj reference src/rosettadds/roset
 `Program.cs` を次のように書くと、`std_msgs/msg/String` を publish / subscribe できます。
 
 ```csharp
-using System.Net;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Msgs.Std;
 
@@ -65,9 +64,8 @@ var participant = new DomainParticipant(new DomainParticipantOptions
 {
     DomainId = 0,
     EntityName = "rosettadds_demo",
-    // ROS_LOCALHOST_ONLY=1 のノードとローカルで通信する場合に指定。
-    LocalUnicastAddress = IPAddress.Loopback,
-    MulticastInterface = IPAddress.Loopback,
+    // 既定で全ローカル NIC を列挙・広告するため、LAN 上のノードから到達できる。
+    // loopback に限定したい場合 (ROS_LOCALHOST_ONLY=1 相当) は LocalhostOnly = true を指定。
 });
 participant.Start();
 

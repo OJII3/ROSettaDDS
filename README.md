@@ -57,7 +57,6 @@ dotnet add MyROSettaDDSApp/MyROSettaDDSApp.csproj reference src/rosettadds/roset
 Write `Program.cs` like this to publish / subscribe `std_msgs/msg/String`.
 
 ```csharp
-using System.Net;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Msgs.Std;
 
@@ -65,9 +64,8 @@ var participant = new DomainParticipant(new DomainParticipantOptions
 {
     DomainId = 0,
     EntityName = "rosettadds_demo",
-    // Set these to talk locally to a node started with ROS_LOCALHOST_ONLY=1.
-    LocalUnicastAddress = IPAddress.Loopback,
-    MulticastInterface = IPAddress.Loopback,
+    // By default all local NICs are enumerated and advertised, so LAN nodes can reach you.
+    // Set LocalhostOnly = true to restrict to loopback (equivalent to ROS_LOCALHOST_ONLY=1).
 });
 participant.Start();
 

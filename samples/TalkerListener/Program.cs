@@ -6,7 +6,6 @@
 // ROS 2 との相互通信例 (別シェルで):
 //   ROS_LOCALHOST_ONLY=1 ros2 run demo_nodes_cpp listener
 //   ROS_LOCALHOST_ONLY=1 ros2 run demo_nodes_cpp talker
-using System.Net;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Msgs.Std;
@@ -31,8 +30,8 @@ var options = new DomainParticipantOptions
     ParticipantId = participantId,
     EntityName = entityName,
     Logger = logger,
-    LocalUnicastAddress = IPAddress.Loopback,
-    MulticastInterface = IPAddress.Loopback,
+    // ROS_LOCALHOST_ONLY=1 相当: unicast/multicast を loopback に限定する。
+    LocalhostOnly = true,
     SpdpInterval = TimeSpan.FromSeconds(1),
 };
 
