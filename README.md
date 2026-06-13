@@ -36,7 +36,7 @@ follows.
 ## Features
 
 - Interoperates with ROS 2 (Fast DDS) at the RTPS level
-- Supports `std_msgs` / `builtin_interfaces`; generates CDR-compatible C# types from `.msg`
+- Bundles `std_msgs` / `builtin_interfaces` / `geometry_msgs`; generates CDR-compatible C# types from `.msg`
 - Selectable Reliable / Best Effort QoS
 - Zero native dependency; IL2CPP / AOT-compatible compile-time msg generation
 - Verified on Unity 6000.3 (.NET Standard 2.1); supports cross-platform builds

@@ -36,7 +36,7 @@ Unity / .NET から ROS 2 と通信する手段は既にいくつか存在しま
 ## 特徴
 
 - ROS 2 (Fast DDS) と RTPS レベルで相互通信できる
-- `std_msgs` / `builtin_interfaces` に対応。`.msg` から CDR 互換な C# 型を生成できる
+- `std_msgs` / `builtin_interfaces` / `geometry_msgs` を同梱。`.msg` から CDR 互換な C# 型を生成できる
 - Reliable / Best Effort の QoS を選択できる
 - ネイティブ依存ゼロ。IL2CPP / AOT 互換のコンパイル時 msg 生成
 - Unity 6000.3 (.NET Standard 2.1) で検証済み。クロスプラットフォームビルドに対応
