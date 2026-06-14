@@ -430,6 +430,131 @@ public class StatefulHandshakeTests
     }
 
     [Fact]
+    public async Task Writer_は_pre_join_SN_の_NACK_に_DATA_ではなく_GAP_を返す()
+    {
+        var s = CreateSetup();
+        var writerGuid = new Guid(s.WriterPrefix, s.WriterEntityId);
+        var readerGuid = new Guid(s.ReaderPrefix, s.ReaderEntityId);
+        var history = new WriterHistoryCache(writerGuid);
+        var writer = new StatefulWriter(
+            sendTransport: s.WriterTransport,
+            multicastDestination: s.ReaderLocator,
+            version: ProtocolVersion.V2_4,
+            vendorId: VendorId.ROSettaDDS,
+            localPrefix: s.WriterPrefix,
+            writerEntityId: s.WriterEntityId,
+            heartbeatPeriod: TimeSpan.FromMilliseconds(50),
+            history: history,
+            resendHistoryOnMatch: false);
+        using (writer)
+        {
+            // match 時点で履歴に SN=1..3 を入れておく (LastSequenceNumber=3)
+            for (int i = 1; i <= 3; i++)
+            {
+                history.Add(ChangeKind.Alive, new byte[] { (byte)i }, Time.Now());
+            }
+            writer.MatchReader(readerGuid, s.ReaderLocator, ReliabilityKind.Reliable);
+
+            int dataCount = 0;
+            int gapCount = 0;
+            var gapTcs = new TaskCompletionSource<GapSubmessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            s.ReaderTransport.Received += (packet, source) =>
+            {
+                if (!RtpsHeader.TryRead(packet.Span, out _, out _, out _))
+                {
+                    return;
+                }
+                var reader = new RtpsMessageReader(packet.Span);
+                while (reader.TryReadNext(out var header, out var body))
+                {
+                    if (header.Kind == SubmessageKind.Data)
+                    {
+                        Interlocked.Increment(ref dataCount);
+                    }
+                    else if (header.Kind == SubmessageKind.Gap)
+                    {
+                        Interlocked.Increment(ref gapCount);
+                        gapTcs.TrySetResult(GapSubmessage.ReadBody(body, header.Endianness, header.Flags));
+                    }
+                }
+            };
+
+            // reader が SN=1 を NACK する想定で ACKNACK 送信 (bitmapBase=1, bit 0 set)
+            var ackPacket = BuildAckNackPacket(
+                s.ReaderPrefix,
+                s.ReaderEntityId,
+                s.WriterEntityId,
+                new SequenceNumberSet(new SequenceNumber(1L), 1, new[] { 0x80000000u }));
+            writer.ProcessPacket(ackPacket);
+
+            var gap = await gapTcs.Task.WaitAsync(ReceiveTimeout);
+            gap.GapStart.Value.Should().Be(1L);
+            gap.GapList.BitmapBase.Value.Should().Be(2L);
+            Volatile.Read(ref dataCount).Should().Be(0, "pre-join サンプルは GAP で返すべき");
+            Volatile.Read(ref gapCount).Should().Be(1);
+        }
+    }
+
+    [Fact]
+    public async Task Writer_は_post_join_SN_の_NACK_には_DATA_を返す()
+    {
+        var s = CreateSetup();
+        var writerGuid = new Guid(s.WriterPrefix, s.WriterEntityId);
+        var readerGuid = new Guid(s.ReaderPrefix, s.ReaderEntityId);
+        var history = new WriterHistoryCache(writerGuid);
+        var writer = new StatefulWriter(
+            sendTransport: s.WriterTransport,
+            multicastDestination: s.ReaderLocator,
+            version: ProtocolVersion.V2_4,
+            vendorId: VendorId.ROSettaDDS,
+            localPrefix: s.WriterPrefix,
+            writerEntityId: s.WriterEntityId,
+            heartbeatPeriod: TimeSpan.FromMilliseconds(50),
+            history: history,
+            resendHistoryOnMatch: false);
+        using (writer)
+        {
+            // match 時点で履歴に SN=1..5 を入れておく (LastSequenceNumber=5、watermark=5)
+            for (int i = 1; i <= 5; i++)
+            {
+                history.Add(ChangeKind.Alive, new byte[] { (byte)i }, Time.Now());
+            }
+            writer.MatchReader(readerGuid, s.ReaderLocator, ReliabilityKind.Reliable);
+
+            // match 後に SN=6 を追加 (post-join 側; watermark=5 を超える)
+            history.Add(ChangeKind.Alive, new byte[] { 6 }, Time.Now());
+
+            var dataTcs = new TaskCompletionSource<DataSubmessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            s.ReaderTransport.Received += (packet, source) =>
+            {
+                if (!RtpsHeader.TryRead(packet.Span, out _, out _, out _))
+                {
+                    return;
+                }
+                var reader = new RtpsMessageReader(packet.Span);
+                while (reader.TryReadNext(out var header, out var body))
+                {
+                    if (header.Kind == SubmessageKind.Data)
+                    {
+                        dataTcs.TrySetResult(DataSubmessage.ReadBody(body, header.Endianness, header.Flags));
+                    }
+                }
+            };
+
+            // reader が SN=6 を NACK する想定で ACKNACK 送信 (bitmapBase=6, bit 0 set) — post-join 側
+            var ackPacket = BuildAckNackPacket(
+                s.ReaderPrefix,
+                s.ReaderEntityId,
+                s.WriterEntityId,
+                new SequenceNumberSet(new SequenceNumber(6L), 1, new[] { 0x80000000u }));
+            writer.ProcessPacket(ackPacket);
+
+            var data = await dataTcs.Task.WaitAsync(ReceiveTimeout);
+            data.WriterSequenceNumber.Value.Should().Be(6L);
+        }
+    }
+
+    [Fact]
     public void StatefulReader_MatchWriter_は既存writerのreply_locatorを更新する()
     {
         var s = CreateSetup();

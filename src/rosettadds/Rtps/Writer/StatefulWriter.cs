@@ -598,19 +598,33 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         if (requested.Count == 0) return;
         foreach (var sn in requested)
         {
-            var change = _history.Get(sn);
-            if (change is null)
+            var dest = proxy.UnicastLocator ?? _multicastDestination;
+            if (proxy.IsPreJoin(sn))
             {
+                // Volatile pre-join suppression: watermark 以下の SN は DATA ではなく GAP で応答。
+                // reader は GAP 受理後、当該 SN を NACK しなくなる。
                 await SendGapToDestinationAsync(
                     sn,
                     proxy.ReaderGuid.EntityId,
-                    proxy.UnicastLocator ?? _multicastDestination,
+                    dest,
                     cancellationToken).ConfigureAwait(false);
-                proxy.ClearRequested(sn);
-                continue;
             }
-            var dest = proxy.UnicastLocator ?? _multicastDestination;
-            await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);
+            else
+            {
+                var change = _history.Get(sn);
+                if (change is null)
+                {
+                    await SendGapToDestinationAsync(
+                        sn,
+                        proxy.ReaderGuid.EntityId,
+                        dest,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);
+                }
+            }
             proxy.ClearRequested(sn);
         }
     }
