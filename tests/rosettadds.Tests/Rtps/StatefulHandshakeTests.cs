@@ -490,6 +490,9 @@ public class StatefulHandshakeTests
             var gap = await gapTcs.Task.WaitAsync(ReceiveTimeout);
             gap.GapStart.Value.Should().Be(1L);
             gap.GapList.BitmapBase.Value.Should().Be(2L);
+            gap.ReaderEntityId.Should().Be(s.ReaderEntityId);
+            gap.WriterEntityId.Should().Be(s.WriterEntityId);
+            gap.GapList.NumBits.Should().Be(0);
             Volatile.Read(ref dataCount).Should().Be(0, "pre-join サンプルは GAP で返すべき");
             Volatile.Read(ref gapCount).Should().Be(1);
         }
@@ -525,6 +528,7 @@ public class StatefulHandshakeTests
             history.Add(ChangeKind.Alive, new byte[] { 6 }, Time.Now());
 
             var dataTcs = new TaskCompletionSource<DataSubmessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int gapCount = 0;
             s.ReaderTransport.Received += (packet, source) =>
             {
                 if (!RtpsHeader.TryRead(packet.Span, out _, out _, out _))
@@ -537,6 +541,10 @@ public class StatefulHandshakeTests
                     if (header.Kind == SubmessageKind.Data)
                     {
                         dataTcs.TrySetResult(DataSubmessage.ReadBody(body, header.Endianness, header.Flags));
+                    }
+                    else if (header.Kind == SubmessageKind.Gap)
+                    {
+                        Interlocked.Increment(ref gapCount);
                     }
                 }
             };
@@ -551,6 +559,7 @@ public class StatefulHandshakeTests
 
             var data = await dataTcs.Task.WaitAsync(ReceiveTimeout);
             data.WriterSequenceNumber.Value.Should().Be(6L);
+            Volatile.Read(ref gapCount).Should().Be(0, "post-join SN は DATA で返すべき");
         }
     }
 
