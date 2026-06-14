@@ -15,6 +15,8 @@ public sealed class ReaderProxy
     private readonly object _lock = new();
     private long _highestAcked;             // ACKNACK.bitmapBase - 1 (これ以下は ack 済み)
     private readonly HashSet<long> _requested = new();   // 明示的に要求された SN 一覧
+    private long _lowWatermark;
+    private bool _lowWatermarkSet;
     private Locator? _unicastLocator;
     private int _heartbeatCount;
 
@@ -94,5 +96,57 @@ public sealed class ReaderProxy
     public void ClearRequested(SequenceNumber sn)
     {
         lock (_lock) { _requested.Remove(sn.Value); }
+    }
+
+    /// <summary>
+    /// 初回 match 時点で writer 履歴の <c>LastSequenceNumber</c> を記録する。
+    /// NACK されてきた SN がこの値以下なら「pre-join サンプル (late-join reader に無関連)」として
+    /// 取り扱う。Volatile writer + reliable reader のときに writer 側で設定する。
+    /// </summary>
+    public bool IsLowWatermarkSet
+    {
+        get { lock (_lock) { return _lowWatermarkSet; } }
+    }
+
+    /// <summary>low watermark (未設定時は <c>null</c>)。</summary>
+    public SequenceNumber? LowWatermark
+    {
+        get { lock (_lock) { return _lowWatermarkSet ? new SequenceNumber(_lowWatermark) : null; } }
+    }
+
+    /// <summary>
+    /// low watermark を設定する。既に設定済みの呼び出しは最初の値を維持する (idempotent)。
+    /// </summary>
+    public void SetLowWatermark(SequenceNumber sn)
+    {
+        lock (_lock)
+        {
+            if (_lowWatermarkSet)
+            {
+                return;
+            }
+            _lowWatermark = sn.Value;
+            _lowWatermarkSet = true;
+        }
+    }
+
+    /// <summary>
+    /// 指定 SN が pre-join サンプル (low watermark 以下で「無関連」) かどうか。
+    /// 未設定、または SN が 0 (未初期化) のときは <c>false</c>。
+    /// </summary>
+    public bool IsPreJoin(SequenceNumber sn)
+    {
+        lock (_lock)
+        {
+            if (!_lowWatermarkSet)
+            {
+                return false;
+            }
+            if (sn.Value <= 0)
+            {
+                return false;
+            }
+            return sn.Value <= _lowWatermark;
+        }
     }
 }

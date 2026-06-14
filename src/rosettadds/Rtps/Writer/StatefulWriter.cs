@@ -102,11 +102,27 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
                 _matched[readerGuid] = addedProxy;
             }
         }
-        if (addedProxy is not null && _resendHistoryOnMatch)
+        if (addedProxy is not null)
         {
-            RunBackground(
-                token => SendHistoricalDataToReaderAsync(addedProxy, token),
-                "StatefulWriter historical DATA send");
+            if (_resendHistoryOnMatch)
+            {
+                RunBackground(
+                    token => SendHistoricalDataToReaderAsync(addedProxy, token),
+                    "StatefulWriter historical DATA send");
+            }
+            else if (reliability == ReliabilityKind.Reliable)
+            {
+                // Pre-join sample suppression: Volatile writer + reliable reader のとき、
+                // match 時点の writer 履歴 LastSequenceNumber を per-reader low watermark として記録する。
+                // これにより NACK されてきた pre-join SN には GAP を返し、DATA では再送しない。
+                var lastSn = _history.LastSequenceNumber;
+                if (lastSn.Value > 0)
+                {
+                    addedProxy.SetLowWatermark(lastSn);
+                    _logger.Debug(
+                        $"StatefulWriter: pre-join low watermark {lastSn} set for reader {readerGuid} (Volatile)");
+                }
+            }
         }
     }
 
@@ -582,19 +598,33 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         if (requested.Count == 0) return;
         foreach (var sn in requested)
         {
-            var change = _history.Get(sn);
-            if (change is null)
+            var dest = proxy.UnicastLocator ?? _multicastDestination;
+            if (proxy.IsPreJoin(sn))
             {
+                // Volatile pre-join suppression: watermark 以下の SN は DATA ではなく GAP で応答。
+                // reader は GAP 受理後、当該 SN を NACK しなくなる。
                 await SendGapToDestinationAsync(
                     sn,
                     proxy.ReaderGuid.EntityId,
-                    proxy.UnicastLocator ?? _multicastDestination,
+                    dest,
                     cancellationToken).ConfigureAwait(false);
-                proxy.ClearRequested(sn);
-                continue;
             }
-            var dest = proxy.UnicastLocator ?? _multicastDestination;
-            await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);
+            else
+            {
+                var change = _history.Get(sn);
+                if (change is null)
+                {
+                    await SendGapToDestinationAsync(
+                        sn,
+                        proxy.ReaderGuid.EntityId,
+                        dest,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await SendDataToDestinationAsync(change, proxy.ReaderGuid.EntityId, dest, cancellationToken).ConfigureAwait(false);
+                }
+            }
             proxy.ClearRequested(sn);
         }
     }
