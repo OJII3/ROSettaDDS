@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
+using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Rtps;
 using ROSettaDDS.Rtps.HistoryCache;
 using ROSettaDDS.Rtps.Reader;
@@ -307,6 +308,125 @@ public class StatefulHandshakeTests
         writer.MatchReader(readerGuid, updatedLocator);
 
         writer.GetReaderProxy(readerGuid)!.UnicastLocator.Should().Be(updatedLocator);
+    }
+
+    [Fact]
+    public void StatefulWriter_MatchReader_Volatile_Reliable_で_pre_join_watermark_が設定される()
+    {
+        var s = CreateSetup();
+        var writerGuid = new Guid(s.WriterPrefix, s.WriterEntityId);
+        var readerGuid = new Guid(s.ReaderPrefix, s.ReaderEntityId);
+        var history = new WriterHistoryCache(writerGuid);
+        using var writer = new StatefulWriter(
+            sendTransport: s.WriterTransport,
+            multicastDestination: s.ReaderLocator,
+            version: ProtocolVersion.V2_4,
+            vendorId: VendorId.ROSettaDDS,
+            localPrefix: s.WriterPrefix,
+            writerEntityId: s.WriterEntityId,
+            heartbeatPeriod: TimeSpan.FromMilliseconds(50),
+            history: history,
+            resendHistoryOnMatch: false);
+
+        // match 時点で履歴に SN=5 まで入っている状況を再現
+        for (int i = 1; i <= 5; i++)
+        {
+            history.Add(ChangeKind.Alive, new byte[] { (byte)i }, Time.Now());
+        }
+
+        writer.MatchReader(readerGuid, s.ReaderLocator, ReliabilityKind.Reliable);
+
+        var proxy = writer.GetReaderProxy(readerGuid);
+        proxy.Should().NotBeNull();
+        proxy!.IsLowWatermarkSet.Should().BeTrue();
+        proxy.LowWatermark.Should().Be(new SequenceNumber(5L));
+    }
+
+    [Fact]
+    public void StatefulWriter_MatchReader_TransientLocal_では_watermark_未設定()
+    {
+        var s = CreateSetup();
+        var writerGuid = new Guid(s.WriterPrefix, s.WriterEntityId);
+        var readerGuid = new Guid(s.ReaderPrefix, s.ReaderEntityId);
+        var history = new WriterHistoryCache(writerGuid);
+        using var writer = new StatefulWriter(
+            sendTransport: s.WriterTransport,
+            multicastDestination: s.ReaderLocator,
+            version: ProtocolVersion.V2_4,
+            vendorId: VendorId.ROSettaDDS,
+            localPrefix: s.WriterPrefix,
+            writerEntityId: s.WriterEntityId,
+            heartbeatPeriod: TimeSpan.FromMilliseconds(50),
+            history: history,
+            resendHistoryOnMatch: true);
+
+        for (int i = 1; i <= 5; i++)
+        {
+            history.Add(ChangeKind.Alive, new byte[] { (byte)i }, Time.Now());
+        }
+
+        writer.MatchReader(readerGuid, s.ReaderLocator, ReliabilityKind.Reliable);
+
+        var proxy = writer.GetReaderProxy(readerGuid);
+        proxy.Should().NotBeNull();
+        proxy!.IsLowWatermarkSet.Should().BeFalse();
+        proxy.LowWatermark.Should().BeNull();
+    }
+
+    [Fact]
+    public void StatefulWriter_MatchReader_BestEffort_では_watermark_未設定()
+    {
+        var s = CreateSetup();
+        var writerGuid = new Guid(s.WriterPrefix, s.WriterEntityId);
+        var readerGuid = new Guid(s.ReaderPrefix, s.ReaderEntityId);
+        var history = new WriterHistoryCache(writerGuid);
+        using var writer = new StatefulWriter(
+            sendTransport: s.WriterTransport,
+            multicastDestination: s.ReaderLocator,
+            version: ProtocolVersion.V2_4,
+            vendorId: VendorId.ROSettaDDS,
+            localPrefix: s.WriterPrefix,
+            writerEntityId: s.WriterEntityId,
+            heartbeatPeriod: TimeSpan.FromMilliseconds(50),
+            history: history,
+            resendHistoryOnMatch: false);
+
+        for (int i = 1; i <= 5; i++)
+        {
+            history.Add(ChangeKind.Alive, new byte[] { (byte)i }, Time.Now());
+        }
+
+        writer.MatchReader(readerGuid, s.ReaderLocator, ReliabilityKind.BestEffort);
+
+        var proxy = writer.GetReaderProxy(readerGuid);
+        proxy.Should().NotBeNull();
+        proxy!.IsLowWatermarkSet.Should().BeFalse();
+    }
+
+    [Fact]
+    public void StatefulWriter_MatchReader_履歴空_で_watermark_未設定()
+    {
+        var s = CreateSetup();
+        var writerGuid = new Guid(s.WriterPrefix, s.WriterEntityId);
+        var readerGuid = new Guid(s.ReaderPrefix, s.ReaderEntityId);
+        var history = new WriterHistoryCache(writerGuid);
+        using var writer = new StatefulWriter(
+            sendTransport: s.WriterTransport,
+            multicastDestination: s.ReaderLocator,
+            version: ProtocolVersion.V2_4,
+            vendorId: VendorId.ROSettaDDS,
+            localPrefix: s.WriterPrefix,
+            writerEntityId: s.WriterEntityId,
+            heartbeatPeriod: TimeSpan.FromMilliseconds(50),
+            history: history,
+            resendHistoryOnMatch: false);
+
+        // 履歴に何も書き込まない
+        writer.MatchReader(readerGuid, s.ReaderLocator, ReliabilityKind.Reliable);
+
+        var proxy = writer.GetReaderProxy(readerGuid);
+        proxy.Should().NotBeNull();
+        proxy!.IsLowWatermarkSet.Should().BeFalse();
     }
 
     [Fact]
