@@ -2,9 +2,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Threading;
 using NUnit.Framework;
+using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Dds.QoS;
@@ -132,20 +132,23 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             int received = 0;
             var helpers = new List<Ros2PerfHelperProcess>();
 
-            ForceFullCollection();
-            long managedBefore = GC.GetTotalMemory(forceFullCollection: true);
-            long monoBefore = Profiler.GetMonoUsedSizeLong();
-
-            using var participant = CreateParticipant(domainId, "unity_sub");
-            using var subscription = participant.CreateSubscription<StringMessage>(
-                topic,
-                StringMessageSerializer.Instance,
-                _ => Interlocked.Increment(ref received),
-                reliability: ToReliability(scenario.Qos));
-            participant.Start();
-
             try
             {
+                // 受信側を helper 起動より前に用意しないと、helper が送る先頭メッセージを逃すため、
+                // participant / subscription は try の先頭で確保する (RunUnityToRos2 と順序が
+                // 逆になるのはこのプロトコル上の都合)。
+                using var participant = CreateParticipant(domainId, "unity_sub");
+                using var subscription = participant.CreateSubscription<StringMessage>(
+                    topic,
+                    StringMessageSerializer.Instance,
+                    _ => Interlocked.Increment(ref received),
+                    reliability: ToReliability(scenario.Qos));
+                participant.Start();
+
+                ForceFullCollection();
+                long managedBefore = GC.GetTotalMemory(forceFullCollection: true);
+                long monoBefore = Profiler.GetMonoUsedSizeLong();
+
                 var stopwatch = Stopwatch.StartNew();
                 for (int i = 0; i < scenario.Fanout; i++)
                 {
@@ -166,9 +169,15 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 yield return WaitUntil(() => Volatile.Read(ref received) >= expected, TimeSpan.FromSeconds(20));
                 stopwatch.Stop();
 
+                // helper 側が送信する payload と同じサイズの StringMessage を
+                // 一時シリアライズして、encap header 込みの 1 message あたり byte 数を実測する。
+                var message = CreatePayloadMessage(scenario.PayloadBytes);
+                int serializedBytes = CdrEncapsulation.Size + StringMessageSerializer.Instance.GetSerializedSize(message);
+
                 ForceFullCollection();
-                RecordMetrics(scenario, stopwatch.Elapsed, expected, scenario.PayloadBytes + 4, managedBefore, monoBefore);
-                Assert.AreEqual(expected, Volatile.Read(ref received));
+                RecordMetrics(scenario, stopwatch.Elapsed, expected, serializedBytes, managedBefore, monoBefore);
+                int finalReceived = Volatile.Read(ref received);
+                Assert.AreEqual(expected, finalReceived);
             }
             finally
             {
