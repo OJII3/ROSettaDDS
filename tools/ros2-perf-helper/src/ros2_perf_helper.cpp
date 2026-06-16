@@ -81,6 +81,34 @@ std::string require_value(int& index, int argc, char** argv)
   return argv[index];
 }
 
+int parse_int_arg(const std::string& name, const std::string& value)
+{
+  std::size_t consumed = 0;
+  try {
+    int parsed = std::stoi(value, &consumed);
+    if (consumed != value.size()) {
+      throw std::invalid_argument(name + " must be an integer");
+    }
+    return parsed;
+  } catch (const std::exception&) {
+    throw std::invalid_argument(name + " must be an integer");
+  }
+}
+
+double parse_double_arg(const std::string& name, const std::string& value)
+{
+  std::size_t consumed = 0;
+  try {
+    double parsed = std::stod(value, &consumed);
+    if (consumed != value.size()) {
+      throw std::invalid_argument(name + " must be a number");
+    }
+    return parsed;
+  } catch (const std::exception&) {
+    throw std::invalid_argument(name + " must be a number");
+  }
+}
+
 Options parse_options(int argc, char** argv)
 {
   Options options;
@@ -88,12 +116,12 @@ Options parse_options(int argc, char** argv)
     std::string arg = argv[i];
     if (arg == "--mode") options.mode = require_value(i, argc, argv);
     else if (arg == "--topic") options.topic = require_value(i, argc, argv);
-    else if (arg == "--messages") options.messages = std::stoi(require_value(i, argc, argv));
-    else if (arg == "--payload-bytes") options.payload_bytes = std::stoi(require_value(i, argc, argv));
-    else if (arg == "--rate-hz") options.rate_hz = std::stod(require_value(i, argc, argv));
+    else if (arg == "--messages") options.messages = parse_int_arg(arg, require_value(i, argc, argv));
+    else if (arg == "--payload-bytes") options.payload_bytes = parse_int_arg(arg, require_value(i, argc, argv));
+    else if (arg == "--rate-hz") options.rate_hz = parse_double_arg(arg, require_value(i, argc, argv));
     else if (arg == "--qos") options.qos = require_value(i, argc, argv);
-    else if (arg == "--ready-timeout-ms") options.ready_timeout_ms = std::stoi(require_value(i, argc, argv));
-    else if (arg == "--idle-timeout-ms") options.idle_timeout_ms = std::stoi(require_value(i, argc, argv));
+    else if (arg == "--ready-timeout-ms") options.ready_timeout_ms = parse_int_arg(arg, require_value(i, argc, argv));
+    else if (arg == "--idle-timeout-ms") options.idle_timeout_ms = parse_int_arg(arg, require_value(i, argc, argv));
     else throw std::invalid_argument("unknown argument: " + arg);
   }
 
