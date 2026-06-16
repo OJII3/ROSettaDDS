@@ -90,5 +90,50 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             Assert.AreEqual(Ros2PerfHelperEventKind.Progress, parsed.Kind);
             Assert.AreEqual(7, parsed.Sent);
         }
+
+        [Test]
+        public void TryParse_は_elapsed_ms_の指数表記を読む()
+        {
+            Assert.IsTrue(Ros2PerfHelperEvent.TryParse(
+                "{\"event\":\"done\",\"elapsed_ms\":1e+06}",
+                out var parsed,
+                out var error));
+
+            Assert.IsNull(error);
+            Assert.AreEqual(1000000d, parsed.ElapsedMilliseconds);
+        }
+
+        [Test]
+        public void TryParse_は_received_の小数を失敗させる()
+        {
+            Assert.IsFalse(Ros2PerfHelperEvent.TryParse(
+                "{\"event\":\"done\",\"received\":12.5}",
+                out _,
+                out var error));
+
+            StringAssert.Contains("received", error);
+        }
+
+        [Test]
+        public void TryParse_は_received_のオーバーフローを失敗させる()
+        {
+            Assert.IsFalse(Ros2PerfHelperEvent.TryParse(
+                "{\"event\":\"done\",\"received\":999999999999999999999}",
+                out _,
+                out var error));
+
+            StringAssert.Contains("received", error);
+        }
+
+        [Test]
+        public void TryParse_は壊れた_elapsed_ms_を失敗させる()
+        {
+            Assert.IsFalse(Ros2PerfHelperEvent.TryParse(
+                "{\"event\":\"done\",\"elapsed_ms\":1.}",
+                out _,
+                out var error));
+
+            StringAssert.Contains("elapsed_ms", error);
+        }
     }
 }

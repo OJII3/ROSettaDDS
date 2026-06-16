@@ -19,7 +19,10 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             "\"(?<name>[^\"]+)\"\\s*:\\s*\"(?<value>(?:\\\\.|[^\"])*)\"");
 
         private static readonly Regex NumberPropertyPattern = new Regex(
-            "\"(?<name>[^\"]+)\"\\s*:\\s*(?<value>-?[0-9]+(?:\\.[0-9]+)?)");
+            "\"(?<name>[^\"]+)\"\\s*:\\s*(?<value>\"(?:\\\\.|[^\"])*\"|[^,}\\]\\s]+)(?=\\s*(?:[,}\\]]))");
+
+        private static readonly Regex JsonNumberPattern = new Regex(
+            "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$");
 
         private Ros2PerfHelperEvent(
             Ros2PerfHelperEventKind kind,
@@ -71,14 +74,22 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 return false;
             }
 
+            if (!TryReadInt(line, "received", out int received, out error)
+                || !TryReadInt(line, "sent", out int sent, out error)
+                || !TryReadDouble(line, "elapsed_ms", out double elapsedMilliseconds, out error))
+            {
+                parsed = default;
+                return false;
+            }
+
             parsed = new Ros2PerfHelperEvent(
                 kind,
                 ReadString(line, "mode"),
                 ReadString(line, "topic"),
                 ReadString(line, "message"),
-                ReadInt(line, "received"),
-                ReadInt(line, "sent"),
-                ReadDouble(line, "elapsed_ms"));
+                received,
+                sent,
+                elapsedMilliseconds);
             return true;
         }
 
@@ -117,29 +128,84 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             return null;
         }
 
-        private static int ReadInt(string line, string name)
+        private static bool TryReadInt(string line, string name, out int result, out string error)
         {
-            string value = ReadNumber(line, name);
-            return value == null ? 0 : int.Parse(value, CultureInfo.InvariantCulture);
+            result = 0;
+            if (!TryReadNumber(line, name, out string value, out bool found, out error))
+            {
+                return false;
+            }
+
+            if (!found)
+            {
+                return true;
+            }
+
+            if (!decimal.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal parsed)
+                || decimal.Truncate(parsed) != parsed
+                || parsed < int.MinValue
+                || parsed > int.MaxValue)
+            {
+                error = "invalid numeric value for " + name + ": " + value;
+                return false;
+            }
+
+            result = (int)parsed;
+            return true;
         }
 
-        private static double ReadDouble(string line, string name)
+        private static bool TryReadDouble(string line, string name, out double result, out string error)
         {
-            string value = ReadNumber(line, name);
-            return value == null ? 0d : double.Parse(value, CultureInfo.InvariantCulture);
+            result = 0d;
+            if (!TryReadNumber(line, name, out string value, out bool found, out error))
+            {
+                return false;
+            }
+
+            if (!found)
+            {
+                return true;
+            }
+
+            if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out result)
+                || double.IsNaN(result)
+                || double.IsInfinity(result))
+            {
+                error = "invalid numeric value for " + name + ": " + value;
+                return false;
+            }
+
+            return true;
         }
 
-        private static string ReadNumber(string line, string name)
+        private static bool TryReadNumber(
+            string line,
+            string name,
+            out string value,
+            out bool found,
+            out string error)
         {
+            value = null;
+            found = false;
+            error = null;
+
             foreach (Match match in NumberPropertyPattern.Matches(line))
             {
                 if (match.Groups["name"].Value == name)
                 {
-                    return match.Groups["value"].Value;
+                    found = true;
+                    value = match.Groups["value"].Value;
+                    if (!JsonNumberPattern.IsMatch(value))
+                    {
+                        error = "invalid numeric value for " + name + ": " + value;
+                        return false;
+                    }
+
+                    return true;
                 }
             }
 
-            return null;
+            return true;
         }
 
         private static string Unescape(string value)
