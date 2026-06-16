@@ -133,14 +133,47 @@ batchmode 実行で生成される results XML にのみ埋め込まれる。性
 - `rmw_fastrtps_cpp` が利用できること
 - `tools/ros2-perf-helper` が build 済みであること
 
-helper build:
+### Linux (Nix) での helper build
+
+Nix devShell では `flake.nix` の `rosEnv` に
+`ament-cmake` / `ament-cmake-core` / `ament-cmake-auto` / `ament-lint-auto` を
+含めているため、`tools/ros2-perf-helper` を `colcon build` できる。
 
 ```sh
-cd tools/ros2-perf-helper
-colcon build
+nix develop                # または direnv
+scripts/ros2/build_helper.sh
 ```
 
-実行:
+build 後、helper は次の path に生成される:
+
+```sh
+tools/ros2-perf-helper/install/rosettadds_ros2_perf_helper/lib/rosettadds_ros2_perf_helper/ros2_perf_helper
+```
+
+### helper 単体の Linux smoke
+
+helper 自体の動作確認は `scripts/ros2/verify_helper.sh` で実行する。Unity なしで
+次の 6 ケースを `nix develop` 環境下で連続実行する。
+
+1. reliable pub<->sub, 1000 messages, 64 B
+2. best\_effort pub<->sub, 500 messages, 128 B
+3. fanout: 1 pub vs 4 subs, 250 messages, 32 B
+4. idle timeout: pub 10 / sub 1000 expected / idle 2s
+5. invalid `--mode` の JSON error event
+6. large payload 100 messages × 32 KiB
+
+```sh
+nix develop
+scripts/ros2/build_helper.sh
+scripts/ros2/verify_helper.sh
+```
+
+各 case は helper の stdout を JSON Lines で受け取り、`done.received` が期待件数と一致するか、
+または `error.message` が期待文字列を含むかで判定する。fanout / large payload は
+Fast DDS の SPDP / SEDP と fragmentation が絡むため `ready-timeout-ms` を 15s に
+広げている。
+
+### Unity PlayMode での実行
 
 ```sh
 ROSETTADDS_ROS2_PERF_HELPER="$PWD/tools/ros2-perf-helper/install/rosettadds_ros2_perf_helper/lib/rosettadds_ros2_perf_helper/ros2_perf_helper" \
