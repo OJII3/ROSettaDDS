@@ -121,6 +121,47 @@ Unity Performance Testing の sample group (throughput / leak guard の計測値
 batchmode 実行で生成される results XML にのみ埋め込まれる。性能値を確認するときは
 `--batch` で実行し、XML を直接参照する。README への性能値の自動反映は行わない。
 
+## ROS 2 performance tests
+
+`ROSettaDDS.UnityRos2Perf.Tests` は Unity PlayMode から ROS 2 C++ helper process を起動し、
+同一マシン loopback の Fast DDS 相互通信性能を記録する。通常の PlayMode / Soak には含めず、
+明示指定したときだけ実行する。
+
+前提:
+
+- ROS 2 Humble が source 済みであること
+- `rmw_fastrtps_cpp` が利用できること
+- `tools/ros2-perf-helper` が build 済みであること
+
+helper build:
+
+```sh
+cd tools/ros2-perf-helper
+colcon build
+```
+
+実行:
+
+```sh
+ROSETTADDS_ROS2_PERF_HELPER="$PWD/tools/ros2-perf-helper/install/rosettadds_ros2_perf_helper/lib/rosettadds_ros2_perf_helper/ros2_perf_helper" \
+  scripts/unity/run_playmode.sh --batch \
+  --filter-type assembly \
+  --filter-value ROSettaDDS.UnityRos2Perf.Tests
+```
+
+この test は `ROS_LOCALHOST_ONLY=1`、`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`、
+scenario ごとの `ROS_DOMAIN_ID` を helper process に設定する。helper が見つからない環境では
+`Assert.Ignore` し、通常の Unity 検証を壊さない。
+
+主な sample group:
+
+- `rosettadds.ros2perf.unity_to_ros2.<qos>.<payload>B.subscribers_<n>.elapsed_ms`
+- `rosettadds.ros2perf.unity_to_ros2.<qos>.<payload>B.subscribers_<n>.messages_per_second`
+- `rosettadds.ros2perf.ros2_to_unity.<qos>.<payload>B.publishers_<n>.elapsed_ms`
+- `rosettadds.ros2perf.ros2_to_unity.<qos>.<payload>B.publishers_<n>.messages_per_second`
+- `rosettadds.ros2perf.*.managed_heap_delta_bytes`
+- `rosettadds.ros2perf.*.unity_mono_used_delta_bytes`
+
 ## IL2CPP / AOT 棚卸し
 
 - `ROSettaDDS.UnityPlayer.Tests` は全 32 msg 型を
