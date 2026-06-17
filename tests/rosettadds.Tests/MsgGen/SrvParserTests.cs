@@ -39,4 +39,22 @@ public class SrvParserTests
 
         act.Should().Throw<MsgParseException>();
     }
+
+    [Fact]
+    public void ServiceDescriptorEmitter_は_記述子クラスを生成する()
+    {
+        var (request, response) = SrvParser.Parse("example_interfaces", "AddTwoInts", AddTwoInts);
+        var resolver = new ROSettaDDS.MsgGen.TypeMapping.TypeNameResolver();
+
+        string code = new ROSettaDDS.MsgGen.Emitting.ServiceDescriptorEmitter(resolver)
+            .Emit("example_interfaces", "AddTwoInts", request, response);
+
+        code.Should().Contain("namespace ROSettaDDS.Msgs.ExampleInterfaces");
+        code.Should().Contain("public static class AddTwoIntsService");
+        code.Should().Contain("ServiceDescriptor<AddTwoIntsRequest, AddTwoIntsResponse>");
+        code.Should().Contain("AddTwoIntsRequestSerializer.Instance");
+        code.Should().Contain("AddTwoIntsResponseSerializer.Instance");
+        code.Should().Contain("example_interfaces::srv::dds_::AddTwoInts_Request_");
+        code.Should().Contain("example_interfaces::srv::dds_::AddTwoInts_Response_");
+    }
 }
