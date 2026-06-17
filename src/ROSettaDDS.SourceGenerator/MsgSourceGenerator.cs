@@ -39,7 +39,8 @@ public sealed class MsgSourceGenerator : IIncrementalGenerator
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var inputs = context.AdditionalTextsProvider
-            .Where(static a => a.Path.EndsWith(".msg", StringComparison.OrdinalIgnoreCase))
+            .Where(static a => a.Path.EndsWith(".msg", StringComparison.OrdinalIgnoreCase)
+                            || a.Path.EndsWith(".srv", StringComparison.OrdinalIgnoreCase))
             .Combine(context.AnalyzerConfigOptionsProvider)
             .Select(static (pair, ct) =>
             {
@@ -59,6 +60,7 @@ public sealed class MsgSourceGenerator : IIncrementalGenerator
     {
         var resolver = new TypeNameResolver();
         var parsed = new List<(MsgInput input, string package, string name, MessageDefinition def)>();
+        var services = new List<(string Package, string Name, MessageDefinition Req, MessageDefinition Resp)>();
 
         foreach (var input in inputs)
         {
@@ -66,8 +68,18 @@ public sealed class MsgSourceGenerator : IIncrementalGenerator
             string package = !string.IsNullOrEmpty(input.Package) ? input.Package! : InferPackage(input.Path);
             try
             {
-                var def = MsgParser.Parse(package, name, input.Text);
-                parsed.Add((input, package, name, def));
+                if (input.Path.EndsWith(".srv", StringComparison.OrdinalIgnoreCase))
+                {
+                    var (req, resp) = SrvParser.Parse(package, name, input.Text);
+                    parsed.Add((input, package, req.Name, req));
+                    parsed.Add((input, package, resp.Name, resp));
+                    services.Add((package, name, req, resp));
+                }
+                else
+                {
+                    var def = MsgParser.Parse(package, name, input.Text);
+                    parsed.Add((input, package, name, def));
+                }
             }
             catch (Exception ex)
             {
@@ -92,6 +104,21 @@ public sealed class MsgSourceGenerator : IIncrementalGenerator
                 context.ReportDiagnostic(Diagnostic.Create(ParseError, Location.None, ex.Message));
             }
         }
+
+        var descriptorEmitter = new ServiceDescriptorEmitter(resolver);
+        foreach (var svc in services)
+        {
+            try
+            {
+                string code = descriptorEmitter.Emit(svc.Package, svc.Name, svc.Req, svc.Resp);
+                string hint = $"{svc.Package}_{NamingConventions.ToPascalCase(svc.Name)}Service.g.cs";
+                context.AddSource(hint, SourceText.From(code, Encoding.UTF8));
+            }
+            catch (Exception ex)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(ParseError, Location.None, ex.Message));
+            }
+        }
     }
 
     /// <summary>パス <c>.../&lt;package&gt;/msg/&lt;Name&gt;.msg</c> からパッケージ名を推定する。</summary>
@@ -100,7 +127,8 @@ public sealed class MsgSourceGenerator : IIncrementalGenerator
         string? msgDir = Path.GetDirectoryName(path);
         string? parent = msgDir is null ? null : Path.GetDirectoryName(msgDir);
         if (msgDir is not null && parent is not null &&
-            string.Equals(Path.GetFileName(msgDir), "msg", StringComparison.Ordinal))
+            (string.Equals(Path.GetFileName(msgDir), "msg", StringComparison.Ordinal)
+             || string.Equals(Path.GetFileName(msgDir), "srv", StringComparison.Ordinal)))
         {
             string pkg = Path.GetFileName(parent);
             if (pkg.Length > 0) return pkg;
