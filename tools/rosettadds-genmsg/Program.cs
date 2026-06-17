@@ -74,6 +74,26 @@ foreach (var file in msgFiles)
     parsed.Add(MsgParser.Parse(package, name, File.ReadAllText(file)));
 }
 
+var srvFiles = Directory.GetFiles(input, "*.srv", SearchOption.AllDirectories);
+Array.Sort(srvFiles, StringComparer.Ordinal);
+var services = new List<(string Package, string Name, ROSettaDDS.MsgGen.Model.MessageDefinition Req, ROSettaDDS.MsgGen.Model.MessageDefinition Resp)>();
+foreach (var file in srvFiles)
+{
+    string? srvDir = Path.GetDirectoryName(file);
+    string? pkgDir = srvDir is null ? null : Path.GetDirectoryName(srvDir);
+    if (srvDir is null || pkgDir is null || !Path.GetFileName(srvDir).Equals("srv", StringComparison.Ordinal))
+    {
+        Console.Error.WriteLine($"Skip (expected <package>/srv/<Name>.srv layout): {file}");
+        continue;
+    }
+    string package = Path.GetFileName(pkgDir);
+    string name = Path.GetFileNameWithoutExtension(file);
+    var (req, resp) = ROSettaDDS.MsgGen.Parsing.SrvParser.Parse(package, name, File.ReadAllText(file));
+    parsed.Add(req);
+    parsed.Add(resp);
+    services.Add((package, name, req, resp));
+}
+
 var registry = new ROSettaDDS.MsgGen.Model.MessageRegistry(parsed);
 var emitter = new CSharpEmitter(resolver, registry);
 
@@ -114,6 +134,20 @@ foreach (var def in parsed)
         changed++;
         Console.WriteLine($"generated: {outPath}");
     }
+}
+
+var descriptorEmitter = new ROSettaDDS.MsgGen.Emitting.ServiceDescriptorEmitter(resolver);
+foreach (var svc in services)
+{
+    string code = descriptorEmitter.Emit(svc.Package, svc.Name, svc.Req, svc.Resp);
+    string subNs = resolver.SubNamespace(svc.Package);
+    string outDir = Path.Combine(output, subNs);
+    string outPath = Path.Combine(outDir, svc.Name + "Service.cs");
+    total++;
+    string? existing = File.Exists(outPath) ? File.ReadAllText(outPath) : null;
+    bool differs = !string.Equals(existing, code, StringComparison.Ordinal);
+    if (check) { if (differs) { changed++; Console.Error.WriteLine($"DRIFT: {outPath}"); } continue; }
+    if (differs) { Directory.CreateDirectory(outDir); File.WriteAllText(outPath, code); changed++; Console.WriteLine($"generated: {outPath}"); }
 }
 
 if (check)
