@@ -62,6 +62,12 @@ public static class ParameterId
     public const ushort StatusInfo = 0x0071;
     public const ushort EndpointGuid = 0x005A;
 
+    /// <summary>Fast DDS related_sample_identity (新)。サービス reply の inline QoS で使用。</summary>
+    public const ushort RelatedSampleIdentity = 0x800F;
+
+    /// <summary>Fast DDS related_sample_identity (レガシ。読み取りフォールバック用)。</summary>
+    public const ushort RelatedSampleIdentityLegacy = 0x0083;
+
     // Domain
     public const ushort DomainId = 0x000F;
     public const ushort DomainTagBase = 0x0014;
