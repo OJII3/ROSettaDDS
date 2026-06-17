@@ -28,6 +28,13 @@
             ros-base
             demo-nodes-cpp
             rmw-fastrtps-cpp
+            # ament_cmakeConfig.cmake requires ament_cmake_core on the
+            # CMAKE_PREFIX_PATH when building packages outside the overlay
+            # workspace (e.g. `tools/ros2-perf-helper`).
+            ament-cmake
+            ament-cmake-core
+            ament-cmake-auto
+            ament-lint-auto
           ];
         };
       in

@@ -70,3 +70,9 @@ Ros2Unity/*.sln
 !Ros2Unity/Packages/
 !Ros2Unity/Packages/manifest.json
 !Ros2Unity/Packages/packages-lock.json
+
+## colcon (ROS 2 helper package)
+tools/ros2-perf-helper/build/
+tools/ros2-perf-helper/install/
+tools/ros2-perf-helper/log/
+tools/ros2-perf-helper/.colcon_*
