@@ -61,8 +61,14 @@ public sealed class TypeNameResolver
         $"{Namespace(package)}.{CSharpTypeName(package, rosName)}";
 
     /// <summary>ROS 2 型名 (例 "std_msgs/msg/Header")。</summary>
-    public string RosTypeName(string package, string rosName) => $"{package}/msg/{rosName}";
+    public string RosTypeName(string package, string rosName) => RosTypeName(package, "msg", rosName);
+
+    public string RosTypeName(string package, string subNamespace, string rosName)
+        => $"{package}/{subNamespace}/{rosName}";
 
     /// <summary>DDS 型名 (例 "std_msgs::msg::dds_::Header_")。</summary>
-    public string DdsTypeName(string package, string rosName) => $"{package}::msg::dds_::{rosName}_";
+    public string DdsTypeName(string package, string rosName) => DdsTypeName(package, "msg", rosName);
+
+    public string DdsTypeName(string package, string subNamespace, string rosName)
+        => $"{package}::{subNamespace}::dds_::{rosName}_";
 }

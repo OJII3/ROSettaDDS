@@ -98,8 +98,8 @@ public sealed class CSharpEmitter
         sb.Append("/// </summary>\n");
         sb.Append($"public struct {typeName}\n{{\n");
 
-        sb.Append($"    public const string RosTypeName = \"{_resolver.RosTypeName(def.Package, def.Name)}\";\n");
-        sb.Append($"    public const string DdsTypeName = \"{_resolver.DdsTypeName(def.Package, def.Name)}\";\n");
+        sb.Append($"    public const string RosTypeName = \"{_resolver.RosTypeName(def.Package, def.SubNamespace, def.Name)}\";\n");
+        sb.Append($"    public const string DdsTypeName = \"{_resolver.DdsTypeName(def.Package, def.SubNamespace, def.Name)}\";\n");
 
         // 定数
         if (def.Constants.Count > 0)
