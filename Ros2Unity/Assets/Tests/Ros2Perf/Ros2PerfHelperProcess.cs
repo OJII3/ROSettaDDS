@@ -74,6 +74,7 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = true,
                 CreateNoWindow = true,
             };
             startInfo.Environment["ROS_LOCALHOST_ONLY"] = "1";
@@ -194,6 +195,17 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             catch
             {
             }
+        }
+
+        internal void SendMeasureStart()
+        {
+            if (_process.HasExited)
+            {
+                throw new InvalidOperationException(
+                    "helper process has exited before measure-start signal was sent");
+            }
+            _process.StandardInput.WriteLine("go");
+            _process.StandardInput.Flush();
         }
 
         private void ConsumeStdoutThrough(int index)

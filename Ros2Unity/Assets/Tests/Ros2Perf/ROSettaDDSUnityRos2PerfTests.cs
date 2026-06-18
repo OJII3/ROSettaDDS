@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using NUnit.Framework;
+using ROSettaDDS.Cdr;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Msgs.Std;
@@ -21,7 +22,6 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
         // ROS_LOCALHOST_ONLY=1 の loopback では低い id を安全に使える。
         private const int BaseDomainId = 0;
         private const int WarmupBurst = 50;
-        private const int ReliableDeliveryThresholdPercent = 99;
         private static int s_domainSequence;
         private static int s_topicSequence;
 
@@ -177,33 +177,32 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 received = 0;
                 participant.Start();
 
-                // 2. 計測対象の message と 1 件あたり byte 数
+                // 2. 1 件あたり wire size は両方向とも wire 上 (encap header + payload) で
+                //    同一。serializer の size 取得だけで DDS endpoint を作らずに済む。
                 var message = CreatePayloadMessage(scenario.PayloadBytes);
-                int serializedBytesPerMessage;
-                using (var tempPub = participant.CreatePublisher<StringMessage>(
-                    topic,
-                    StringMessageSerializer.Instance,
-                    ToReliability(scenario.Qos),
-                    DurabilityQos.Volatile))
-                {
-                    serializedBytesPerMessage = tempPub.SerializeWithEncapsulation(message).Length;
-                }
+                int serializedBytesPerMessage = CdrEncapsulation.Size
+                    + StringMessageSerializer.Instance.GetSerializedSize(message);
 
-                // 3. 計測: helper を起動し、steady-state burst を計時
-                //    (helper は 1 度 publish したら終了するため warmup は取らない。
-                //     代わりに match 完了を待ってから計時することで discovery/setup を除外する)
+                // 3. helper を --measure-start 付きで起動。ready → (subscriber discovery
+                //    待ち) → armed → stdin 受信 で publish ループに入る。
+                //    これにより計測範囲に process spawn / rclcpp init / SPDP/SEDP を
+                //    含めず、Unity 側 stopwatch は publish burst のみを計る。
                 ForceFullCollection();
                 long managedBefore = GC.GetTotalMemory(forceFullCollection: true);
                 long monoBefore = Profiler.GetMonoUsedSizeLong();
                 int measurementCount = scenario.MessageCount;
                 int beforeMeasure = received;
-                var stopwatch = Stopwatch.StartNew();
                 helper = Ros2PerfHelperProcess.Start(
-                    BuildHelperArgs(topic, measurementCount, scenario),
+                    BuildHelperArgs(topic, measurementCount, scenario) + " --measure-start",
                     domainId,
                     scenario.QosArgument);
                 Assert.IsTrue(helper.TryWaitForEvent(Ros2PerfHelperEventKind.Ready, TimeSpan.FromSeconds(10), out _, out var readyErr), readyErr);
+                Assert.IsTrue(helper.TryWaitForEvent(Ros2PerfHelperEventKind.Armed, TimeSpan.FromSeconds(10), out _, out var armedErr), armedErr);
+                // armed 時点で helper は stdin 待ち。SEDP は ready → armed の間に交換済み。
                 yield return WaitForRemoteWriter(participant, TopicName(topic), TimeSpan.FromSeconds(10));
+
+                var stopwatch = Stopwatch.StartNew();
+                helper.SendMeasureStart();
                 int expected = beforeMeasure + measurementCount * scenario.Fanout;
                 yield return WaitUntil(() => Volatile.Read(ref received) >= expected, TimeSpan.FromSeconds(20));
                 stopwatch.Stop();
@@ -305,11 +304,10 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             {
                 return;
             }
-            int threshold = expected * ReliableDeliveryThresholdPercent / 100;
-            Assert.GreaterOrEqual(
+            Assert.AreEqual(
+                expected,
                 delivered,
-                threshold,
-                $"Reliable delivery below {ReliableDeliveryThresholdPercent}%: {delivered}/{expected}");
+                $"Reliable delivery 損失: {delivered}/{expected}。loopback + matched 完了後の損失は本来発生しない");
         }
 
         private static IEnumerator WaitUntil(Func<bool> condition, TimeSpan timeout)
