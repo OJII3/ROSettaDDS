@@ -1,6 +1,7 @@
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Dds;
 using ROSettaDDS.Rtps.HistoryCache;
 using ROSettaDDS.Rtps.Submessages;
 using ROSettaDDS.Transport;
@@ -31,6 +32,10 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
 
     private readonly object _matchedLock = new();
     private readonly Dictionary<Guid, WriterProxy> _matched = new();
+    private long _totalMatchedWriters;
+    private Guid? _lastPublicationHandle;
+    private int _lastReportedCurrentWriters;
+    private long _lastReportedTotalWriters;
 
     private bool _disposed;
 
@@ -77,6 +82,8 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
             else
             {
                 _matched[writerGuid] = new WriterProxy(writerGuid, unicastReplyLocator);
+                _totalMatchedWriters++;
+                _lastPublicationHandle = writerGuid;
             }
         }
     }
@@ -94,6 +101,33 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
     public IReadOnlyList<WriterProxy> MatchedWriters
     {
         get { lock (_matchedLock) { return _matched.Values.ToArray(); } }
+    }
+
+    public SubscriptionMatchedStatus SubscriptionMatchedStatus
+    {
+        get
+        {
+            int current;
+            long total;
+            Guid? lastHandle;
+            lock (_matchedLock)
+            {
+                current = _matched.Count;
+                total = _totalMatchedWriters;
+                lastHandle = _lastPublicationHandle;
+            }
+            var status = new SubscriptionMatchedStatus
+            {
+                CurrentCount = current,
+                CurrentCountChange = current - _lastReportedCurrentWriters,
+                TotalCount = checked((int)Math.Min(total, int.MaxValue)),
+                TotalCountChange = checked((int)Math.Min(total - _lastReportedTotalWriters, int.MaxValue)),
+                LastPublicationHandle = lastHandle,
+            };
+            _lastReportedCurrentWriters = current;
+            _lastReportedTotalWriters = total;
+            return status;
+        }
     }
 
     /// <summary>transport.Received を購読してこれを呼ぶ。</summary>
