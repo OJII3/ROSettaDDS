@@ -82,7 +82,7 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 }
             }
 
-            foreach (string distro in new[] { "humble", "iron", "jazzy", "foxy" })
+            foreach (string distro in new[] { "humble", "iron", "foxy" })
             {
                 string candidate = "/opt/ros/" + distro;
                 if (Directory.Exists(System.IO.Path.Combine(candidate, "lib")))
@@ -95,14 +95,7 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             {
                 foreach (string dir in Directory.EnumerateDirectories("/nix/store", "*-ros-env"))
                 {
-                    if (Directory.Exists(System.IO.Path.Combine(dir, "lib")))
-                    {
-                        return dir;
-                    }
-                }
-                foreach (string dir in Directory.EnumerateDirectories("/nix/store", "*-ros-humble*"))
-                {
-                    if (Directory.Exists(System.IO.Path.Combine(dir, "lib")))
+                    if (IsUsableRosEnv(dir))
                     {
                         return dir;
                     }
@@ -110,6 +103,36 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             }
 
             return null;
+        }
+
+        private static bool IsUsableRosEnv(string dir)
+        {
+            string lib = System.IO.Path.Combine(dir, "lib");
+            if (!Directory.Exists(lib))
+            {
+                return false;
+            }
+            if (!File.Exists(System.IO.Path.Combine(lib, "librmw_fastrtps_cpp.so")))
+            {
+                return false;
+            }
+            string rclPath = System.IO.Path.Combine(lib, "librcl.so");
+            if (!File.Exists(rclPath))
+            {
+                return false;
+            }
+            try
+            {
+                using FileStream stream = File.OpenRead(rclPath);
+                byte[] header = new byte[65536];
+                int read = stream.Read(header, 0, header.Length);
+                string content = System.Text.Encoding.ASCII.GetString(header, 0, read);
+                return content.Contains("ros-humble");
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         internal static bool IsAvailable()
