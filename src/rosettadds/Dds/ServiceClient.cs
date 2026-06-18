@@ -136,6 +136,9 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
     /// <summary>テスト用: reply を直接注入して相関ロジックを検証する。</summary>
     internal void InjectReplyForTest(CacheChange change) => OnReplyReceived(change);
 
+    /// <summary>テスト用: 未解決の保留リクエスト数。</summary>
+    internal int PendingRequestCount => _pending.Count;
+
     public void Dispose()
     {
         if (_disposed) return;
