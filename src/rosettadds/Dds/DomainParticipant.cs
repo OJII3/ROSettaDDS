@@ -479,6 +479,47 @@ public sealed class DomainParticipant : IDisposable
             handlerContext: handlerContext,
             reliability: reliability);
 
+    /// <summary>
+    /// Reliable reader を生成し、SEDP 広告と receiver/UserEndpointManager 登録まで行う。
+    /// サービス reply 用に具象 <see cref="ReliableUserReader"/> を返す。
+    /// </summary>
+    /// <param name="ddsTopic">既に mangle 済みの DDS トピック名 (例 "rr/add_two_intsReply")。</param>
+    /// <param name="ddsTypeName">DDS 型名 (例 "example_interfaces::srv::dds_::AddTwoInts_Response_")。</param>
+    private ReliableUserReader CreateReliableReplyReaderInternal(string ddsTopic, string ddsTypeName)
+    {
+        ThrowIfDisposed();
+        var readerEntityId = _userEntityIds.AllocateReader();
+        var endpointGuid = new Guid(GuidPrefix, readerEntityId);
+        var reader = new ReliableUserReader(
+            replyTransport: _transports.UserUnicast,
+            version: _options.ProtocolVersion,
+            vendorId: _options.VendorId,
+            localPrefix: GuidPrefix,
+            readerEntityId: readerEntityId,
+            ackNackFallbackDestination: _transports.UserMulticastDestination,
+            logger: _options.Logger,
+            dataFragOptions: _options.DataFragReassembly);
+
+        var endpointData = new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Reader,
+            EndpointGuid = endpointGuid,
+            ParticipantGuid = Guid,
+            TopicName = ddsTopic,
+            TypeName = ddsTypeName,
+            Reliability = ReliabilityQos.Reliable,
+            Durability = DurabilityQos.Volatile,
+        };
+        endpointData.UnicastLocators.AddRange(_transports.DefaultUnicastLocators);
+        endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
+
+        _userEndpoints.RegisterReader(endpointData, reader);
+        _ = RunSedpOperationAsync(
+            token => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token),
+            "DomainParticipant failed to advertise local service reply reader endpoint");
+        return reader;
+    }
+
     public void Dispose()
     {
         if (_disposed)
