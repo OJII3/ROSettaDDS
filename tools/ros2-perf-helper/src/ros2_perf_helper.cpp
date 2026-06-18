@@ -208,6 +208,17 @@ int run_publisher(const Options& options)
   auto publisher = node->create_publisher<std_msgs::msg::String>(options.topic, make_qos(options));
   write_ready(options);
 
+  // SEDP 完了を待つ: 購読者が discovery されるまで最初の publish を遅らせる。
+  // さもないと、publish ループが reader に届かずメッセージを損失する。
+  auto discovery_deadline = std::chrono::steady_clock::now()
+    + std::chrono::milliseconds(options.ready_timeout_ms);
+  while (rclcpp::ok()
+         && publisher->get_subscription_count() == 0
+         && std::chrono::steady_clock::now() < discovery_deadline) {
+    rclcpp::spin_some(node);
+    std::this_thread::sleep_for(1ms);
+  }
+
   auto start = std::chrono::steady_clock::now();
   auto interval = options.rate_hz > 0.0
     ? std::chrono::duration<double>(1.0 / options.rate_hz)

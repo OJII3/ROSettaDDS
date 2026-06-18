@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using NUnit.Framework;
 using ROSettaDDS.Cdr;
@@ -98,6 +99,19 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                     DurabilityQos.Volatile);
                 participant.Start();
 
+                string ddsTopic = Rcl.Naming.TopicNameMangler.TopicPrefix + topic.TrimStart('/');
+                yield return WaitForRemoteReader(participant, ddsTopic, TimeSpan.FromSeconds(10));
+                if (!participant.DiscoveryDb.ReaderSnapshot().Any(ep => ep.TopicName == ddsTopic))
+                {
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append("Writers=[");
+                    foreach (var w in participant.DiscoveryDb.WriterSnapshot()) sb.Append(w.TopicName).Append(",");
+                    sb.Append("] Readers=[");
+                    foreach (var r in participant.DiscoveryDb.ReaderSnapshot()) sb.Append(r.TopicName).Append(",");
+                    sb.Append("] pid=").Append(participant.ResolvedParticipantId);
+                    Assert.IsTrue(false, "helper reader was not discovered via SEDP. discovery state: " + sb.ToString());
+                }
+
                 var message = CreatePayloadMessage(scenario.PayloadBytes);
                 int serializedBytes = publisher.SerializeWithEncapsulation(message).Length;
                 var stopwatch = Stopwatch.StartNew();
@@ -145,6 +159,8 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                     reliability: ToReliability(scenario.Qos));
                 participant.Start();
 
+                string ddsTopic = Rcl.Naming.TopicNameMangler.TopicPrefix + topic.TrimStart('/');
+
                 ForceFullCollection();
                 long managedBefore = GC.GetTotalMemory(forceFullCollection: true);
                 long monoBefore = Profiler.GetMonoUsedSizeLong();
@@ -158,6 +174,18 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                         + " --rate-hz 0 --qos " + scenario.QosArgument
                         + " --ready-timeout-ms 5000 --idle-timeout-ms 5000";
                     helpers.Add(Ros2PerfHelperProcess.Start(args, domainId, scenario.QosArgument));
+                }
+
+                yield return WaitForRemoteWriter(participant, ddsTopic, TimeSpan.FromSeconds(10));
+                if (!participant.DiscoveryDb.WriterSnapshot().Any(ep => ep.TopicName == ddsTopic))
+                {
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append("Writers=[");
+                    foreach (var w in participant.DiscoveryDb.WriterSnapshot()) sb.Append(w.TopicName).Append(",");
+                    sb.Append("] Readers=[");
+                    foreach (var r in participant.DiscoveryDb.ReaderSnapshot()) sb.Append(r.TopicName).Append(",");
+                    sb.Append("] pid=").Append(participant.ResolvedParticipantId);
+                    Assert.IsTrue(false, "helper writer was not discovered via SEDP. discovery state: " + sb.ToString());
                 }
 
                 foreach (var helper in helpers)
@@ -236,6 +264,20 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             {
                 yield return null;
             }
+        }
+
+        private static IEnumerator WaitForRemoteReader(DomainParticipant participant, string ddsTopic, TimeSpan timeout)
+        {
+            yield return WaitUntil(
+                () => participant.DiscoveryDb.ReaderSnapshot().Any(ep => ep.TopicName == ddsTopic),
+                timeout);
+        }
+
+        private static IEnumerator WaitForRemoteWriter(DomainParticipant participant, string ddsTopic, TimeSpan timeout)
+        {
+            yield return WaitUntil(
+                () => participant.DiscoveryDb.WriterSnapshot().Any(ep => ep.TopicName == ddsTopic),
+                timeout);
         }
 
         private static void ForceFullCollection()
