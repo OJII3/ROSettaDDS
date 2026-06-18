@@ -352,9 +352,19 @@ public sealed class DomainParticipant : IDisposable
         ThrowIfDisposed();
         if (string.IsNullOrEmpty(topicName)) throw new ArgumentException("Value cannot be null or empty.", nameof(topicName));
         if (serializer is null) throw new ArgumentNullException(nameof(serializer));
+        return CreateWriterInternal(
+            TopicNameMangler.MangleTopic(topicName), serializer, reliability, durability,
+            ResolveDdsTypeName<T>(typeName), topicName);
+    }
 
-        var ddsTopic = TopicNameMangler.MangleTopic(topicName);
-        var ddsTypeName = ResolveDdsTypeName<T>(typeName);
+    private Publisher<T> CreateWriterInternal<T>(
+        string ddsTopic,
+        ICdrSerializer<T> serializer,
+        ReliabilityQos reliability,
+        DurabilityQos durability,
+        string ddsTypeName,
+        string userTopicName)
+    {
         var writerEntityId = _userEntityIds.AllocateWriter();
         var writerGuid = new Guid(GuidPrefix, writerEntityId);
         var history = new Rtps.HistoryCache.WriterHistoryCache(writerGuid, maxSamples: _options.UserWriterHistoryDepth);
@@ -388,9 +398,37 @@ public sealed class DomainParticipant : IDisposable
             token => _sedpPublicationsWriter.AddEndpointAsync(endpointData, token),
             "DomainParticipant failed to advertise local writer endpoint");
 
-        var pub = new Publisher<T>(topicName, writer, serializer, UnregisterLocalWriter);
+        var pub = new Publisher<T>(userTopicName, writer, serializer, UnregisterLocalWriter);
         pub.Start();
         return pub;
+    }
+
+    /// <summary>
+    /// 指定サービス名のクライアントを生成する。request は "rq/&lt;name&gt;Request"、
+    /// reply は "rr/&lt;name&gt;Reply" に対応する。QoS は ROS 2 services 既定 (Reliable/Volatile)。
+    /// </summary>
+    public ServiceClient<TRequest, TResponse> CreateServiceClient<TRequest, TResponse>(
+        ServiceDescriptor<TRequest, TResponse> descriptor,
+        string serviceName)
+    {
+        ThrowIfDisposed();
+        if (descriptor is null) throw new ArgumentNullException(nameof(descriptor));
+        if (string.IsNullOrEmpty(serviceName)) throw new ArgumentException("Value cannot be null or empty.", nameof(serviceName));
+
+        var requestPublisher = CreateWriterInternal(
+            TopicNameMangler.MangleServiceRequest(serviceName),
+            descriptor.RequestSerializer,
+            ReliabilityQos.Reliable,
+            DurabilityQos.Volatile,
+            descriptor.RequestDdsTypeName,
+            userTopicName: serviceName);
+
+        var replyReader = CreateReliableReplyReaderInternal(
+            TopicNameMangler.MangleServiceReply(serviceName),
+            descriptor.ResponseDdsTypeName);
+
+        return new ServiceClient<TRequest, TResponse>(
+            requestPublisher, replyReader, descriptor, _options.Logger, _options.CdrReadLimits);
     }
 
     /// <summary>
