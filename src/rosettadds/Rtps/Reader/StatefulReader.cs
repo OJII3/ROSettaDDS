@@ -143,7 +143,9 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
                 writerGuid,
                 data.WriterSequenceNumber,
                 ctx.Timestamp ?? Time.Zero,
-                data.SerializedPayload);
+                data.SerializedPayload,
+                data.InlineQos,
+                endianness);
             PayloadReceived?.Invoke(change);
         }
     }
@@ -176,7 +178,9 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
                 writerGuid,
                 dataFrag.WriterSequenceNumber,
                 ctx.Timestamp ?? Time.Zero,
-                completed.Value.Payload);
+                completed.Value.Payload,
+                completed.Value.InlineQos,
+                completed.Value.InlineQosEndianness);
             PayloadReceived?.Invoke(change);
         }
     }
