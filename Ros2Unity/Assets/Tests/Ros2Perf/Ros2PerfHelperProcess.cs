@@ -49,27 +49,20 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
         internal static string ResolveExecutablePath()
         {
             string fromEnv = Environment.GetEnvironmentVariable(HelperEnvKey);
-            if (!string.IsNullOrEmpty(fromEnv))
+            if (string.IsNullOrEmpty(fromEnv))
             {
-                return fromEnv;
+                throw new InvalidOperationException(
+                    HelperEnvKey + " is not set. " +
+                    "Run the perf test from a shell where the helper path is exported " +
+                    "(see docs/unity-ros2-perf-results.md).");
             }
-
-            string cwd = Directory.GetCurrentDirectory();
-            return Path.GetFullPath(Path.Combine(
-                cwd,
-                "..",
-                "tools",
-                "ros2-perf-helper",
-                "install",
-                "rosettadds_ros2_perf_helper",
-                "lib",
-                "rosettadds_ros2_perf_helper",
-                "ros2_perf_helper"));
+            return fromEnv;
         }
 
         internal static bool IsAvailable()
         {
-            return File.Exists(ResolveExecutablePath());
+            string path = Environment.GetEnvironmentVariable(HelperEnvKey);
+            return !string.IsNullOrEmpty(path) && File.Exists(path);
         }
 
         internal static Ros2PerfHelperProcess Start(string arguments, int domainId, string qos)
@@ -81,6 +74,7 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = true,
                 CreateNoWindow = true,
             };
             startInfo.Environment["ROS_LOCALHOST_ONLY"] = "1";
@@ -162,6 +156,14 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             }
         }
 
+        internal string StdoutSnapshot()
+        {
+            lock (_gate)
+            {
+                return string.Join("\n", _stdout);
+            }
+        }
+
         public void Dispose()
         {
             try
@@ -176,6 +178,34 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             {
                 _process.Dispose();
             }
+        }
+
+        internal void WaitForExit(System.TimeSpan timeout)
+        {
+            if (_process.WaitForExit((int)timeout.TotalMilliseconds))
+            {
+                _process.WaitForExit();
+                return;
+            }
+            try
+            {
+                _process.Kill();
+                _process.WaitForExit(2000);
+            }
+            catch
+            {
+            }
+        }
+
+        internal void SendMeasureStart()
+        {
+            if (_process.HasExited)
+            {
+                throw new InvalidOperationException(
+                    "helper process has exited before measure-start signal was sent");
+            }
+            _process.StandardInput.WriteLine("go");
+            _process.StandardInput.Flush();
         }
 
         private void ConsumeStdoutThrough(int index)

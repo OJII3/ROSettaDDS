@@ -6,7 +6,23 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
     public sealed class Ros2PerfHelperProcessTests
     {
         [Test]
-        public void ResolveExecutable_は_env_を優先する()
+        public void ResolveExecutable_は_env_未設定で例外を投げる()
+        {
+            const string key = "ROSETTADDS_ROS2_PERF_HELPER";
+            string original = System.Environment.GetEnvironmentVariable(key);
+            try
+            {
+                System.Environment.SetEnvironmentVariable(key, string.Empty);
+                Assert.Throws<System.InvalidOperationException>(() => Ros2PerfHelperProcess.ResolveExecutablePath());
+            }
+            finally
+            {
+                System.Environment.SetEnvironmentVariable(key, original);
+            }
+        }
+
+        [Test]
+        public void ResolveExecutable_は_env_の値をそのまま返す()
         {
             const string key = "ROSETTADDS_ROS2_PERF_HELPER";
             string original = System.Environment.GetEnvironmentVariable(key);
@@ -22,23 +38,14 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
         }
 
         [Test]
-        public void ResolveExecutable_は_env_が空なら_default_path_を返す()
+        public void IsAvailable_は_env_が指すファイルが無ければ_false()
         {
             const string key = "ROSETTADDS_ROS2_PERF_HELPER";
             string original = System.Environment.GetEnvironmentVariable(key);
             try
             {
-                System.Environment.SetEnvironmentVariable(key, string.Empty);
-
-                string expectedSuffix = Path.Combine(
-                    "tools",
-                    "ros2-perf-helper",
-                    "install",
-                    "rosettadds_ros2_perf_helper",
-                    "lib",
-                    "rosettadds_ros2_perf_helper",
-                    "ros2_perf_helper");
-                StringAssert.EndsWith(expectedSuffix, Ros2PerfHelperProcess.ResolveExecutablePath());
+                System.Environment.SetEnvironmentVariable(key, "/nonexistent/path/ros2_perf_helper");
+                Assert.IsFalse(Ros2PerfHelperProcess.IsAvailable());
             }
             finally
             {

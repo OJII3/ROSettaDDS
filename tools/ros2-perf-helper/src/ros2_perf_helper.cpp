@@ -25,6 +25,7 @@ struct Options
   std::string qos = "reliable";
   int ready_timeout_ms = 5000;
   int idle_timeout_ms = 5000;
+  bool measure_start = false;
 };
 
 std::string json_escape(const std::string& value)
@@ -70,6 +71,11 @@ void write_done_sent(int sent, double elapsed_ms)
 {
   std::cout << "{\"event\":\"done\",\"sent\":" << sent
             << ",\"elapsed_ms\":" << elapsed_ms << "}" << std::endl;
+}
+
+void write_armed()
+{
+  std::cout << "{\"event\":\"armed\"}" << std::endl;
 }
 
 std::string require_value(int& index, int argc, char** argv)
@@ -122,6 +128,7 @@ Options parse_options(int argc, char** argv)
     else if (arg == "--qos") options.qos = require_value(i, argc, argv);
     else if (arg == "--ready-timeout-ms") options.ready_timeout_ms = parse_int_arg(arg, require_value(i, argc, argv));
     else if (arg == "--idle-timeout-ms") options.idle_timeout_ms = parse_int_arg(arg, require_value(i, argc, argv));
+    else if (arg == "--measure-start") options.measure_start = true;
     else throw std::invalid_argument("unknown argument: " + arg);
   }
 
@@ -207,6 +214,29 @@ int run_publisher(const Options& options)
   auto node = rclcpp::Node::make_shared("rosettadds_perf_pub");
   auto publisher = node->create_publisher<std_msgs::msg::String>(options.topic, make_qos(options));
   write_ready(options);
+
+  // SEDP 完了を待つ: 購読者が discovery されるまで最初の publish を遅らせる。
+  // さもないと、publish ループが reader に届かずメッセージを損失する。
+  auto discovery_deadline = std::chrono::steady_clock::now()
+    + std::chrono::milliseconds(options.ready_timeout_ms);
+  while (rclcpp::ok()
+         && publisher->get_subscription_count() == 0
+         && std::chrono::steady_clock::now() < discovery_deadline) {
+    rclcpp::spin_some(node);
+    std::this_thread::sleep_for(1ms);
+  }
+
+  // --measure-start 指定時: armed イベントを発火し、stdin から 1 行読むまで
+  // 待機する。これで計測開始を matched 後に同期できる (publish ループが
+  // 計時範囲に混入する race を排除する)。
+  if (options.measure_start) {
+    write_armed();
+    std::string line;
+    if (!std::getline(std::cin, line)) {
+      write_error("stdin closed before measure-start signal");
+      return 4;
+    }
+  }
 
   auto start = std::chrono::steady_clock::now();
   auto interval = options.rate_hz > 0.0

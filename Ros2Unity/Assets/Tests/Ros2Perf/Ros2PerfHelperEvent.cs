@@ -8,6 +8,7 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
     internal enum Ros2PerfHelperEventKind
     {
         Ready,
+        Armed,
         Progress,
         Done,
         Error,
@@ -99,6 +100,9 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             {
                 case "ready":
                     kind = Ros2PerfHelperEventKind.Ready;
+                    return true;
+                case "armed":
+                    kind = Ros2PerfHelperEventKind.Armed;
                     return true;
                 case "progress":
                     kind = Ros2PerfHelperEventKind.Progress;
