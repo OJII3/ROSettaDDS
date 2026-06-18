@@ -158,6 +158,20 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         await SendDataAsync(change, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// <see cref="WriteAsync(ReadOnlyMemory{byte}, ChangeKind, CancellationToken)"/> と同じだが、
+    /// 採番された RTPS シーケンス番号を返す。サービスの request/reply 相関に使う。
+    /// </summary>
+    public async ValueTask<SequenceNumber> WriteReturningSequenceNumberAsync(
+        ReadOnlyMemory<byte> serializedPayload,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var change = _history.Add(ChangeKind.Alive, serializedPayload, Time.Now());
+        await SendDataAsync(change, cancellationToken).ConfigureAwait(false);
+        return change.SequenceNumber;
+    }
+
     public void Start()
     {
         ThrowIfDisposed();

@@ -41,6 +41,15 @@ public sealed class Publisher<T> : IDisposable
         await _writer.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>値を送信し、採番された RTPS シーケンス番号を返す (サービス用)。</summary>
+    public async ValueTask<SequenceNumber> PublishReturningSequenceNumberAsync(
+        T value, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var payload = SerializeWithEncapsulation(value);
+        return await _writer.WriteReturningSequenceNumberAsync(payload, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>シリアライズ後のバイト列 (encap header 込み) を返す (テスト/デバッグ用)。</summary>
     public ReadOnlyMemory<byte> SerializeWithEncapsulation(T value)
     {
