@@ -59,14 +59,19 @@ public sealed class MessageDefinition
         string package,
         string name,
         IReadOnlyList<MessageConstant> constants,
-        IReadOnlyList<MessageField> fields)
+        IReadOnlyList<MessageField> fields,
+        string subNamespace = "msg")
     {
         Package = package;
         Name = name;
         Constants = constants;
         Fields = fields;
+        SubNamespace = subNamespace;
     }
 
-    /// <summary>ROS 2 型名 (例 "std_msgs/msg/Header")。</summary>
-    public string RosTypeName => $"{Package}/msg/{Name}";
+    /// <summary>サブ名前空間 ("msg" または "srv")。</summary>
+    public string SubNamespace { get; }
+
+    /// <summary>ROS 2 型名 (例 "std_msgs/msg/Header", "example_interfaces/srv/AddTwoInts_Request")。</summary>
+    public string RosTypeName => $"{Package}/{SubNamespace}/{Name}";
 }

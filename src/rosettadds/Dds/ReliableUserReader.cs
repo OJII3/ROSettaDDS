@@ -46,6 +46,11 @@ internal sealed class ReliableUserReader : IUserReader
 
     public event Action<ReadOnlyMemory<byte>, GuidPrefix>? PayloadReceived;
 
+    /// <summary>inline QoS を含む CacheChange を必要とする利用者向け (サービス reply 等)。</summary>
+    public event Action<CacheChange>? SampleReceived;
+
+    public int MatchedWriterCount => _reader.MatchedWriters.Count;
+
     public void MatchWriter(Guid writerGuid, Locator? unicastReplyLocator)
         => _reader.MatchWriter(writerGuid, unicastReplyLocator);
     public void UnmatchWriter(Guid writerGuid) => _reader.UnmatchWriter(writerGuid);
@@ -61,5 +66,8 @@ internal sealed class ReliableUserReader : IUserReader
     }
 
     private void OnSampleReceived(CacheChange change)
-        => PayloadReceived?.Invoke(change.SerializedPayload, change.WriterGuid.Prefix);
+    {
+        PayloadReceived?.Invoke(change.SerializedPayload, change.WriterGuid.Prefix);
+        SampleReceived?.Invoke(change);
+    }
 }

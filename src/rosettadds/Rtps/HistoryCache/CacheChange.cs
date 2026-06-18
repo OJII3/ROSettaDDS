@@ -1,3 +1,4 @@
+using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 
 using Guid = ROSettaDDS.Common.Guid;
@@ -15,19 +16,25 @@ public sealed class CacheChange
     public SequenceNumber SequenceNumber { get; }
     public Time SourceTimestamp { get; }
     public ReadOnlyMemory<byte> SerializedPayload { get; }
+    public ReadOnlyMemory<byte> InlineQos { get; }
+    public CdrEndianness InlineQosEndianness { get; }
 
     public CacheChange(
         ChangeKind kind,
         Guid writerGuid,
         SequenceNumber sequenceNumber,
         Time sourceTimestamp,
-        ReadOnlyMemory<byte> serializedPayload)
+        ReadOnlyMemory<byte> serializedPayload,
+        ReadOnlyMemory<byte> inlineQos = default,
+        CdrEndianness inlineQosEndianness = CdrEndianness.LittleEndian)
     {
         Kind = kind;
         WriterGuid = writerGuid;
         SequenceNumber = sequenceNumber;
         SourceTimestamp = sourceTimestamp;
         SerializedPayload = serializedPayload;
+        InlineQos = inlineQos;
+        InlineQosEndianness = inlineQosEndianness;
     }
 
     public override string ToString()

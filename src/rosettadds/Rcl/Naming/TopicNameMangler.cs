@@ -31,4 +31,18 @@ public static class TopicNameMangler
             ? ddsName[TopicPrefix.Length..]
             : ddsName;
     }
+
+    /// <summary>ROS 2 サービス名から request トピックの RTPS 名へ ("rq/&lt;name&gt;Request")。</summary>
+    public static string MangleServiceRequest(string serviceName)
+    {
+        if (string.IsNullOrEmpty(serviceName)) throw new ArgumentException("Value cannot be null or empty.", nameof(serviceName));
+        return ServiceRequestPrefix + serviceName.TrimStart('/') + "Request";
+    }
+
+    /// <summary>ROS 2 サービス名から reply トピックの RTPS 名へ ("rr/&lt;name&gt;Reply")。</summary>
+    public static string MangleServiceReply(string serviceName)
+    {
+        if (string.IsNullOrEmpty(serviceName)) throw new ArgumentException("Value cannot be null or empty.", nameof(serviceName));
+        return ServiceReplyPrefix + serviceName.TrimStart('/') + "Reply";
+    }
 }
