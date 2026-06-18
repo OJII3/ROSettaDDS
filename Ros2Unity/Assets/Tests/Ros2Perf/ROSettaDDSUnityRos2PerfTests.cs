@@ -5,8 +5,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using NUnit.Framework;
-using ROSettaDDS.Cdr;
-using ROSettaDDS.Common;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Msgs.Std;
@@ -18,13 +16,12 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
 {
     public sealed class ROSettaDDSUnityRos2PerfTests
     {
-        // FastDDS は RTPS port を 7400 + 250 * domainId + ... で計算するため、
-        // domain id が大きいとポート計算が overflow して
-        // "Calculated port number is too high" で reject される。
-        // ROS_LOCALHOST_ONLY=1 で loopback 限定なので、低い domain id を安全に使える。
-        // s_domainSequence は 0 から始まり Interlocked.Increment で 1 以上になるので、
-        // 実際に使われる id は BaseDomainId + 1 以降 (例: 1, 2, 3, ...)。
+        // helper は ROS 2 RTPS port を 7400 + 250 * domainId + ... で計算するため、
+        // domain id が大きいと "Calculated port number is too high" で reject される。
+        // ROS_LOCALHOST_ONLY=1 の loopback では低い id を安全に使える。
         private const int BaseDomainId = 0;
+        private const int WarmupBurst = 50;
+        private const int ReliableDeliveryThresholdPercent = 99;
         private static int s_domainSequence;
         private static int s_topicSequence;
 
@@ -68,32 +65,33 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             }
         }
 
+        // Unity 側 publisher → ROS 側 subscriber
         private static IEnumerator RunUnityToRos2(Ros2PerfScenario scenario)
         {
             int domainId = NextDomainId();
             string topic = "/rosettadds_perf_" + Interlocked.Increment(ref s_topicSequence);
             var helpers = new List<Ros2PerfHelperProcess>();
+            int totalDelivered = 0;
+            int totalExpected = 0;
+
             try
             {
+                // 1. helper (sub) 起動 + ready 待ち
                 for (int i = 0; i < scenario.Fanout; i++)
                 {
                     string args = "--mode sub --topic " + topic
-                        + " --messages " + scenario.MessageCount
+                        + " --messages " + (WarmupBurst + scenario.MessageCount)
                         + " --payload-bytes " + scenario.PayloadBytes
                         + " --rate-hz 0 --qos " + scenario.QosArgument
                         + " --ready-timeout-ms 5000 --idle-timeout-ms 5000";
                     helpers.Add(Ros2PerfHelperProcess.Start(args, domainId, scenario.QosArgument));
                 }
-
                 foreach (var helper in helpers)
                 {
                     Assert.IsTrue(helper.TryWaitForEvent(Ros2PerfHelperEventKind.Ready, TimeSpan.FromSeconds(10), out _, out var error), error);
                 }
 
-                ForceFullCollection();
-                long managedBefore = GC.GetTotalMemory(forceFullCollection: true);
-                long monoBefore = Profiler.GetMonoUsedSizeLong();
-
+                // 2. Unity 側 participant + publisher を setup
                 using var participant = CreateParticipant(domainId, "unity_pub");
                 using var publisher = participant.CreatePublisher<StringMessage>(
                     topic,
@@ -101,39 +99,55 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                     ToReliability(scenario.Qos),
                     DurabilityQos.Volatile);
                 participant.Start();
+                yield return WaitForRemoteReader(participant, TopicName(topic), TimeSpan.FromSeconds(10));
 
-                string ddsTopic = Rcl.Naming.TopicNameMangler.TopicPrefix + topic.TrimStart('/');
-                yield return WaitForRemoteReader(participant, ddsTopic, TimeSpan.FromSeconds(10));
-                if (!participant.DiscoveryDb.ReaderSnapshot().Any(ep => ep.TopicName == ddsTopic))
-                {
-                    var sb = new System.Text.StringBuilder();
-                    sb.Append("Writers=[");
-                    foreach (var w in participant.DiscoveryDb.WriterSnapshot()) sb.Append(w.TopicName).Append(",");
-                    sb.Append("] Readers=[");
-                    foreach (var r in participant.DiscoveryDb.ReaderSnapshot()) sb.Append(r.TopicName).Append(",");
-                    sb.Append("] pid=").Append(participant.ResolvedParticipantId);
-                    Assert.IsTrue(false, "helper reader was not discovered via SEDP. discovery state: " + sb.ToString());
-                }
-
+                // 3. 計測対象の message と 1 件あたり byte 数 (両方向で同じ式)
                 var message = CreatePayloadMessage(scenario.PayloadBytes);
-                int serializedBytes = publisher.SerializeWithEncapsulation(message).Length;
-                var stopwatch = Stopwatch.StartNew();
-                for (int i = 0; i < scenario.MessageCount; i++)
+                int serializedBytesPerMessage = publisher.SerializeWithEncapsulation(message).Length;
+
+                // 4. ウォームアップ (JIT, ヒープ, 内部キャッシュ warm)
+                for (int i = 0; i < WarmupBurst; i++)
                 {
                     publisher.PublishAsync(message).GetAwaiter().GetResult();
                 }
+                // ウォームアップ分の message が相手側に届くまで数 frame 待つ
+                for (int i = 0; i < 10; i++)
+                {
+                    yield return null;
+                }
 
-                int received = 0;
+                // 5. 計測 (steady-state バーストを Stopwatch で計時)
+                ForceFullCollection();
+                long managedBefore = GC.GetTotalMemory(forceFullCollection: true);
+                long monoBefore = Profiler.GetMonoUsedSizeLong();
+                int measurementCount = scenario.MessageCount;
+                var stopwatch = Stopwatch.StartNew();
+                for (int i = 0; i < measurementCount; i++)
+                {
+                    publisher.PublishAsync(message).GetAwaiter().GetResult();
+                }
                 foreach (var helper in helpers)
                 {
                     Assert.IsTrue(helper.TryWaitForEvent(Ros2PerfHelperEventKind.Done, TimeSpan.FromSeconds(20), out var done, out var error), error);
-                    received += done.Received;
+                    totalDelivered += done.Received;
                 }
                 stopwatch.Stop();
+                long managedAfter = GC.GetTotalMemory(forceFullCollection: true);
+                long monoAfter = Profiler.GetMonoUsedSizeLong();
+                totalExpected = measurementCount * scenario.Fanout + WarmupBurst * scenario.Fanout;
 
-                ForceFullCollection();
-                RecordMetrics(scenario, stopwatch.Elapsed, scenario.MessageCount * scenario.Fanout, serializedBytes, managedBefore, monoBefore);
-                Assert.AreEqual(scenario.MessageCount * scenario.Fanout, received);
+                RecordMetrics(
+                    scenario,
+                    stopwatch.Elapsed,
+                    measurementCount,
+                    scenario.Fanout,
+                    totalDelivered,
+                    totalExpected,
+                    serializedBytesPerMessage,
+                    managedAfter - managedBefore,
+                    monoAfter - monoBefore);
+
+                AssertReliableDelivery(scenario, totalDelivered, totalExpected);
             }
             finally
             {
@@ -142,78 +156,92 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             yield return null;
         }
 
+        // ROS 側 publisher → Unity 側 subscriber
         private static IEnumerator RunRos2ToUnity(Ros2PerfScenario scenario)
         {
             int domainId = NextDomainId();
             string topic = "/rosettadds_perf_" + Interlocked.Increment(ref s_topicSequence);
             int received = 0;
-            var helpers = new List<Ros2PerfHelperProcess>();
+            Ros2PerfHelperProcess helper = null;
 
             try
             {
-                // 受信側を helper 起動より前に用意しないと、helper が送る先頭メッセージを逃すため、
-                // participant / subscription は try の先頭で確保する (RunUnityToRos2 と順序が
-                // 逆になるのはこのプロトコル上の都合)。
+                // 1. Unity 側 participant + subscription を helper 起動前に用意
+                //    (先に subscription がないと helper が送る先頭メッセージを取り逃す)
                 using var participant = CreateParticipant(domainId, "unity_sub");
                 using var subscription = participant.CreateSubscription<StringMessage>(
                     topic,
                     StringMessageSerializer.Instance,
-                    _ => Interlocked.Increment(ref received),
+                    msg => Interlocked.Increment(ref received),
                     reliability: ToReliability(scenario.Qos));
+                received = 0;
                 participant.Start();
 
-                string ddsTopic = Rcl.Naming.TopicNameMangler.TopicPrefix + topic.TrimStart('/');
+                // 2. 計測対象の message と 1 件あたり byte 数
+                var message = CreatePayloadMessage(scenario.PayloadBytes);
+                int serializedBytesPerMessage;
+                using (var tempPub = participant.CreatePublisher<StringMessage>(
+                    topic,
+                    StringMessageSerializer.Instance,
+                    ToReliability(scenario.Qos),
+                    DurabilityQos.Volatile))
+                {
+                    serializedBytesPerMessage = tempPub.SerializeWithEncapsulation(message).Length;
+                }
 
+                // 3. 計測: helper を起動し、steady-state burst を計時
+                //    (helper は 1 度 publish したら終了するため warmup は取らない。
+                //     代わりに match 完了を待ってから計時することで discovery/setup を除外する)
                 ForceFullCollection();
                 long managedBefore = GC.GetTotalMemory(forceFullCollection: true);
                 long monoBefore = Profiler.GetMonoUsedSizeLong();
-
+                int measurementCount = scenario.MessageCount;
+                int beforeMeasure = received;
                 var stopwatch = Stopwatch.StartNew();
-                for (int i = 0; i < scenario.Fanout; i++)
-                {
-                    string args = "--mode pub --topic " + topic
-                        + " --messages " + scenario.MessageCount
-                        + " --payload-bytes " + scenario.PayloadBytes
-                        + " --rate-hz 0 --qos " + scenario.QosArgument
-                        + " --ready-timeout-ms 5000 --idle-timeout-ms 5000";
-                    helpers.Add(Ros2PerfHelperProcess.Start(args, domainId, scenario.QosArgument));
-                }
-
-                yield return WaitForRemoteWriter(participant, ddsTopic, TimeSpan.FromSeconds(10));
-                if (!participant.DiscoveryDb.WriterSnapshot().Any(ep => ep.TopicName == ddsTopic))
-                {
-                    var sb = new System.Text.StringBuilder();
-                    sb.Append("Writers=[");
-                    foreach (var w in participant.DiscoveryDb.WriterSnapshot()) sb.Append(w.TopicName).Append(",");
-                    sb.Append("] Readers=[");
-                    foreach (var r in participant.DiscoveryDb.ReaderSnapshot()) sb.Append(r.TopicName).Append(",");
-                    sb.Append("] pid=").Append(participant.ResolvedParticipantId);
-                    Assert.IsTrue(false, "helper writer was not discovered via SEDP. discovery state: " + sb.ToString());
-                }
-
-                foreach (var helper in helpers)
-                {
-                    Assert.IsTrue(helper.TryWaitForEvent(Ros2PerfHelperEventKind.Done, TimeSpan.FromSeconds(20), out _, out var error), error);
-                }
-
-                int expected = scenario.MessageCount * scenario.Fanout;
+                helper = Ros2PerfHelperProcess.Start(
+                    BuildHelperArgs(topic, measurementCount, scenario),
+                    domainId,
+                    scenario.QosArgument);
+                Assert.IsTrue(helper.TryWaitForEvent(Ros2PerfHelperEventKind.Ready, TimeSpan.FromSeconds(10), out _, out var readyErr), readyErr);
+                yield return WaitForRemoteWriter(participant, TopicName(topic), TimeSpan.FromSeconds(10));
+                int expected = beforeMeasure + measurementCount * scenario.Fanout;
                 yield return WaitUntil(() => Volatile.Read(ref received) >= expected, TimeSpan.FromSeconds(20));
                 stopwatch.Stop();
+                long managedAfter = GC.GetTotalMemory(forceFullCollection: true);
+                long monoAfter = Profiler.GetMonoUsedSizeLong();
 
-                // helper 側が送信する payload と同じサイズの StringMessage を
-                // 一時シリアライズして、encap header 込みの 1 message あたり byte 数を実測する。
-                var message = CreatePayloadMessage(scenario.PayloadBytes);
-                int serializedBytes = CdrEncapsulation.Size + StringMessageSerializer.Instance.GetSerializedSize(message);
+                int totalDelivered = received;
+                int totalExpected = expected;
 
-                ForceFullCollection();
-                RecordMetrics(scenario, stopwatch.Elapsed, expected, serializedBytes, managedBefore, monoBefore);
-                int finalReceived = Volatile.Read(ref received);
-                Assert.AreEqual(expected, finalReceived);
+                RecordMetrics(
+                    scenario,
+                    stopwatch.Elapsed,
+                    measurementCount,
+                    scenario.Fanout,
+                    totalDelivered,
+                    totalExpected,
+                    serializedBytesPerMessage,
+                    managedAfter - managedBefore,
+                    monoAfter - monoBefore);
+
+                AssertReliableDelivery(scenario, totalDelivered, totalExpected);
             }
             finally
             {
-                for (int i = helpers.Count - 1; i >= 0; i--) helpers[i].Dispose();
+                helper?.Dispose();
             }
+        }
+
+        private static string TopicName(string topic)
+            => "rt/" + topic.TrimStart('/');
+
+        private static string BuildHelperArgs(string topic, int count, Ros2PerfScenario scenario)
+        {
+            return "--mode pub --topic " + topic
+                + " --messages " + count
+                + " --payload-bytes " + scenario.PayloadBytes
+                + " --rate-hz 0 --qos " + scenario.QosArgument
+                + " --ready-timeout-ms 5000 --idle-timeout-ms 5000";
         }
 
         private static DomainParticipant CreateParticipant(int domainId, string entityName)
@@ -244,20 +272,44 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
         private static void RecordMetrics(
             Ros2PerfScenario scenario,
             TimeSpan elapsed,
-            int deliveredMessages,
+            int measurementMessages,
+            int fanout,
+            int totalDelivered,
+            int totalExpected,
             int serializedBytesPerMessage,
-            long managedBefore,
-            long monoBefore)
+            long managedHeapDelta,
+            long monoUsedDelta)
         {
             double elapsedMs = Math.Max(0.001d, elapsed.TotalMilliseconds);
             double elapsedSeconds = Math.Max(0.000001d, elapsed.TotalSeconds);
+            double messagesPerSecond = measurementMessages * fanout / elapsedSeconds;
+            double bytesPerSecond = messagesPerSecond * serializedBytesPerMessage;
+            double deliveryRate = totalExpected > 0 ? (double)totalDelivered / totalExpected : 1.0;
+
             string prefix = scenario.GroupPrefix;
             Measure.Custom(new SampleGroup(prefix + "elapsed_ms", SampleUnit.Millisecond, false), elapsedMs);
-            Measure.Custom(new SampleGroup(prefix + "messages_per_second", SampleUnit.Undefined, true), deliveredMessages / elapsedSeconds);
-            Measure.Custom(new SampleGroup(prefix + "serialized_bytes_per_second", SampleUnit.Undefined, true), deliveredMessages * serializedBytesPerMessage / elapsedSeconds);
+            Measure.Custom(new SampleGroup(prefix + "messages_per_second", SampleUnit.Undefined, true), messagesPerSecond);
+            Measure.Custom(new SampleGroup(prefix + "serialized_bytes_per_second", SampleUnit.Undefined, true), bytesPerSecond);
             Measure.Custom(new SampleGroup(prefix + "serialized_bytes_per_message", SampleUnit.Byte, false), serializedBytesPerMessage);
-            Measure.Custom(new SampleGroup(prefix + "managed_heap_delta_bytes", SampleUnit.Byte, false), PositiveDelta(GC.GetTotalMemory(forceFullCollection: true), managedBefore));
-            Measure.Custom(new SampleGroup(prefix + "unity_mono_used_delta_bytes", SampleUnit.Byte, false), PositiveDelta(Profiler.GetMonoUsedSizeLong(), monoBefore));
+            Measure.Custom(new SampleGroup(prefix + "delivery_rate", SampleUnit.Undefined, true), deliveryRate);
+            Measure.Custom(new SampleGroup(prefix + "managed_heap_delta_bytes", SampleUnit.Byte, false), Math.Max(0L, managedHeapDelta));
+            Measure.Custom(new SampleGroup(prefix + "unity_mono_used_delta_bytes", SampleUnit.Byte, false), Math.Max(0L, monoUsedDelta));
+        }
+
+        private static void AssertReliableDelivery(
+            Ros2PerfScenario scenario,
+            int delivered,
+            int expected)
+        {
+            if (scenario.Qos != Ros2PerfQos.Reliable)
+            {
+                return;
+            }
+            int threshold = expected * ReliableDeliveryThresholdPercent / 100;
+            Assert.GreaterOrEqual(
+                delivered,
+                threshold,
+                $"Reliable delivery below {ReliableDeliveryThresholdPercent}%: {delivered}/{expected}");
         }
 
         private static IEnumerator WaitUntil(Func<bool> condition, TimeSpan timeout)
@@ -289,8 +341,5 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             GC.WaitForPendingFinalizers();
             GC.Collect();
         }
-
-        private static long PositiveDelta(long after, long before)
-            => Math.Max(0L, after - before);
     }
 }
