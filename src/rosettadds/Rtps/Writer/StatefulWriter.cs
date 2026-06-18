@@ -3,6 +3,7 @@ using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Rtps.HistoryCache;
+using ROSettaDDS.Dds;
 using ROSettaDDS.Rtps.Submessages;
 using ROSettaDDS.Transport;
 
@@ -39,6 +40,10 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
 
     private readonly object _matchedLock = new();
     private readonly Dictionary<Guid, ReaderProxy> _matched = new();
+    private long _totalMatchedReaders;
+    private Guid? _lastSubscriptionHandle;
+    private int _lastReportedCurrentReaders;
+    private long _lastReportedTotalReaders;
     private readonly object _backgroundTasksLock = new();
     private readonly HashSet<Task> _backgroundTasks = new();
 
@@ -104,6 +109,8 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         }
         if (addedProxy is not null)
         {
+            _totalMatchedReaders++;
+            _lastSubscriptionHandle = readerGuid;
             if (_resendHistoryOnMatch)
             {
                 RunBackground(
@@ -139,6 +146,33 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     public IReadOnlyList<ReaderProxy> MatchedReaders
     {
         get { lock (_matchedLock) { return _matched.Values.ToArray(); } }
+    }
+
+    public PublicationMatchedStatus PublicationMatchedStatus
+    {
+        get
+        {
+            int current;
+            long total;
+            Guid? lastHandle;
+            lock (_matchedLock)
+            {
+                current = _matched.Count;
+                total = _totalMatchedReaders;
+                lastHandle = _lastSubscriptionHandle;
+            }
+            var status = new PublicationMatchedStatus
+            {
+                CurrentCount = current,
+                CurrentCountChange = current - _lastReportedCurrentReaders,
+                TotalCount = checked((int)Math.Min(total, int.MaxValue)),
+                TotalCountChange = checked((int)Math.Min(total - _lastReportedTotalReaders, int.MaxValue)),
+                LastSubscriptionHandle = lastHandle,
+            };
+            _lastReportedCurrentReaders = current;
+            _lastReportedTotalReaders = total;
+            return status;
+        }
     }
 
     /// <summary>
