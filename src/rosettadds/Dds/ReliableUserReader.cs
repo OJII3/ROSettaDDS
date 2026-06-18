@@ -51,6 +51,8 @@ internal sealed class ReliableUserReader : IUserReader
 
     public int MatchedWriterCount => _reader.MatchedWriters.Count;
 
+    public SubscriptionMatchedStatus SubscriptionMatchedStatus => _reader.SubscriptionMatchedStatus;
+
     public void MatchWriter(Guid writerGuid, Locator? unicastReplyLocator)
         => _reader.MatchWriter(writerGuid, unicastReplyLocator);
     public void UnmatchWriter(Guid writerGuid) => _reader.UnmatchWriter(writerGuid);

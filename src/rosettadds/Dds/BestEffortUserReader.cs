@@ -32,6 +32,10 @@ internal sealed class BestEffortUserReader : IUserReader
 
     public event Action<ReadOnlyMemory<byte>, GuidPrefix>? PayloadReceived;
 
+    public int MatchedWriterCount => _reader.MatchedWriterCount;
+
+    public SubscriptionMatchedStatus SubscriptionMatchedStatus => _reader.SubscriptionMatchedStatus;
+
     public void MatchWriter(Guid writerGuid, Locator? unicastReplyLocator) => _reader.MatchWriter(writerGuid);
     public void UnmatchWriter(Guid writerGuid) => _reader.UnmatchWriter(writerGuid);
 
