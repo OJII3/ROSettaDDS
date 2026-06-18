@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 
@@ -50,94 +49,20 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
         internal static string ResolveExecutablePath()
         {
             string fromEnv = Environment.GetEnvironmentVariable(HelperEnvKey);
-            if (!string.IsNullOrEmpty(fromEnv))
+            if (string.IsNullOrEmpty(fromEnv))
             {
-                return fromEnv;
+                throw new InvalidOperationException(
+                    HelperEnvKey + " is not set. " +
+                    "Run the perf test from a shell where the helper path is exported " +
+                    "(see docs/unity-ros2-perf-results.md).");
             }
-
-            string cwd = Directory.GetCurrentDirectory();
-            return Path.GetFullPath(Path.Combine(
-                cwd,
-                "..",
-                "tools",
-                "ros2-perf-helper",
-                "install",
-                "rosettadds_ros2_perf_helper",
-                "lib",
-                "rosettadds_ros2_perf_helper",
-                "ros2_perf_helper"));
-        }
-
-        internal static string ResolveRos2Install()
-        {
-            string fromEnv = Environment.GetEnvironmentVariable("AMENT_PREFIX_PATH");
-            if (!string.IsNullOrEmpty(fromEnv))
-            {
-                foreach (string candidate in fromEnv.Split(System.IO.Path.PathSeparator))
-                {
-                    if (!string.IsNullOrEmpty(candidate) && Directory.Exists(candidate))
-                    {
-                        return candidate;
-                    }
-                }
-            }
-
-            foreach (string distro in new[] { "humble", "iron", "foxy" })
-            {
-                string candidate = "/opt/ros/" + distro;
-                if (Directory.Exists(System.IO.Path.Combine(candidate, "lib")))
-                {
-                    return candidate;
-                }
-            }
-
-            if (Directory.Exists("/nix/store"))
-            {
-                foreach (string dir in Directory.EnumerateDirectories("/nix/store", "*-ros-env"))
-                {
-                    if (IsUsableRosEnv(dir))
-                    {
-                        return dir;
-                    }
-                }
-            }
-
-            return null;
-        }
-
-        private static bool IsUsableRosEnv(string dir)
-        {
-            string lib = System.IO.Path.Combine(dir, "lib");
-            if (!Directory.Exists(lib))
-            {
-                return false;
-            }
-            if (!File.Exists(System.IO.Path.Combine(lib, "librmw_fastrtps_cpp.so")))
-            {
-                return false;
-            }
-            string rclPath = System.IO.Path.Combine(lib, "librcl.so");
-            if (!File.Exists(rclPath))
-            {
-                return false;
-            }
-            try
-            {
-                using FileStream stream = File.OpenRead(rclPath);
-                byte[] header = new byte[65536];
-                int read = stream.Read(header, 0, header.Length);
-                string content = System.Text.Encoding.ASCII.GetString(header, 0, read);
-                return content.Contains("ros-humble");
-            }
-            catch
-            {
-                return false;
-            }
+            return fromEnv;
         }
 
         internal static bool IsAvailable()
         {
-            return File.Exists(ResolveExecutablePath());
+            string path = Environment.GetEnvironmentVariable(HelperEnvKey);
+            return !string.IsNullOrEmpty(path) && File.Exists(path);
         }
 
         internal static Ros2PerfHelperProcess Start(string arguments, int domainId, string qos)
@@ -151,25 +76,6 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 RedirectStandardError = true,
                 CreateNoWindow = true,
             };
-            string ros2Install = ResolveRos2Install();
-            if (!string.IsNullOrEmpty(ros2Install))
-            {
-                if (!startInfo.Environment.ContainsKey("AMENT_PREFIX_PATH") ||
-                    string.IsNullOrEmpty(startInfo.Environment["AMENT_PREFIX_PATH"]))
-                {
-                    startInfo.Environment["AMENT_PREFIX_PATH"] = ros2Install;
-                }
-                string libPath = System.IO.Path.Combine(ros2Install, "lib");
-                if (!startInfo.Environment.ContainsKey("LD_LIBRARY_PATH") ||
-                    string.IsNullOrEmpty(startInfo.Environment["LD_LIBRARY_PATH"]))
-                {
-                    startInfo.Environment["LD_LIBRARY_PATH"] = libPath;
-                }
-                else if (!startInfo.Environment["LD_LIBRARY_PATH"].Split(System.IO.Path.PathSeparator).Contains(libPath))
-                {
-                    startInfo.Environment["LD_LIBRARY_PATH"] = libPath + System.IO.Path.PathSeparator + startInfo.Environment["LD_LIBRARY_PATH"];
-                }
-            }
             startInfo.Environment["ROS_LOCALHOST_ONLY"] = "1";
             startInfo.Environment["RMW_IMPLEMENTATION"] = "rmw_fastrtps_cpp";
             startInfo.Environment["ROS_DOMAIN_ID"] = domainId.ToString(CultureInfo.InvariantCulture);

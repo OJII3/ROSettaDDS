@@ -44,7 +44,10 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
         {
             if (!Ros2PerfHelperProcess.IsAvailable())
             {
-                Assert.Ignore("ROS 2 perf helper not found: " + Ros2PerfHelperProcess.ResolveExecutablePath());
+                string envValue = System.Environment.GetEnvironmentVariable("ROSETTADDS_ROS2_PERF_HELPER");
+                Assert.Ignore("ROSETTADDS_ROS2_PERF_HELPER が未設定 (現在値: " +
+                    (envValue ?? "<null>") + ")。nix develop シェル内で実行するか " +
+                    "scripts/ros2/build_helper.sh で helper を build して環境変数を export してください。");
             }
 
             for (int i = 0; i < Scenarios.Length; i++)
