@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 
@@ -67,6 +68,50 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 "ros2_perf_helper"));
         }
 
+        internal static string ResolveRos2Install()
+        {
+            string fromEnv = Environment.GetEnvironmentVariable("AMENT_PREFIX_PATH");
+            if (!string.IsNullOrEmpty(fromEnv))
+            {
+                foreach (string candidate in fromEnv.Split(System.IO.Path.PathSeparator))
+                {
+                    if (!string.IsNullOrEmpty(candidate) && Directory.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+
+            foreach (string distro in new[] { "humble", "iron", "jazzy", "foxy" })
+            {
+                string candidate = "/opt/ros/" + distro;
+                if (Directory.Exists(System.IO.Path.Combine(candidate, "lib")))
+                {
+                    return candidate;
+                }
+            }
+
+            if (Directory.Exists("/nix/store"))
+            {
+                foreach (string dir in Directory.EnumerateDirectories("/nix/store", "*-ros-env"))
+                {
+                    if (Directory.Exists(System.IO.Path.Combine(dir, "lib")))
+                    {
+                        return dir;
+                    }
+                }
+                foreach (string dir in Directory.EnumerateDirectories("/nix/store", "*-ros-humble*"))
+                {
+                    if (Directory.Exists(System.IO.Path.Combine(dir, "lib")))
+                    {
+                        return dir;
+                    }
+                }
+            }
+
+            return null;
+        }
+
         internal static bool IsAvailable()
         {
             return File.Exists(ResolveExecutablePath());
@@ -83,6 +128,25 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 RedirectStandardError = true,
                 CreateNoWindow = true,
             };
+            string ros2Install = ResolveRos2Install();
+            if (!string.IsNullOrEmpty(ros2Install))
+            {
+                if (!startInfo.Environment.ContainsKey("AMENT_PREFIX_PATH") ||
+                    string.IsNullOrEmpty(startInfo.Environment["AMENT_PREFIX_PATH"]))
+                {
+                    startInfo.Environment["AMENT_PREFIX_PATH"] = ros2Install;
+                }
+                string libPath = System.IO.Path.Combine(ros2Install, "lib");
+                if (!startInfo.Environment.ContainsKey("LD_LIBRARY_PATH") ||
+                    string.IsNullOrEmpty(startInfo.Environment["LD_LIBRARY_PATH"]))
+                {
+                    startInfo.Environment["LD_LIBRARY_PATH"] = libPath;
+                }
+                else if (!startInfo.Environment["LD_LIBRARY_PATH"].Split(System.IO.Path.PathSeparator).Contains(libPath))
+                {
+                    startInfo.Environment["LD_LIBRARY_PATH"] = libPath + System.IO.Path.PathSeparator + startInfo.Environment["LD_LIBRARY_PATH"];
+                }
+            }
             startInfo.Environment["ROS_LOCALHOST_ONLY"] = "1";
             startInfo.Environment["RMW_IMPLEMENTATION"] = "rmw_fastrtps_cpp";
             startInfo.Environment["ROS_DOMAIN_ID"] = domainId.ToString(CultureInfo.InvariantCulture);
@@ -162,6 +226,14 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             }
         }
 
+        internal string StdoutSnapshot()
+        {
+            lock (_gate)
+            {
+                return string.Join("\n", _stdout);
+            }
+        }
+
         public void Dispose()
         {
             try
@@ -175,6 +247,23 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             finally
             {
                 _process.Dispose();
+            }
+        }
+
+        internal void WaitForExit(System.TimeSpan timeout)
+        {
+            if (_process.WaitForExit((int)timeout.TotalMilliseconds))
+            {
+                _process.WaitForExit();
+                return;
+            }
+            try
+            {
+                _process.Kill();
+                _process.WaitForExit(2000);
+            }
+            catch
+            {
             }
         }
 

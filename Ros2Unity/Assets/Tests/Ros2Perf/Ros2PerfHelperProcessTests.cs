@@ -85,5 +85,149 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 System.Environment.SetEnvironmentVariable(key, original);
             }
         }
+
+        [Test]
+        public void Start_は親_process_の_LD_LIBRARY_PATH_を継承する()
+        {
+            const string key = "ROSETTADDS_ROS2_PERF_HELPER";
+            const string shellPath = "/bin/sh";
+            if (!File.Exists(shellPath))
+            {
+                Assert.Ignore(shellPath + " is required for this process wrapper test.");
+            }
+
+            string originalHelper = System.Environment.GetEnvironmentVariable(key);
+            string originalLdPath = System.Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
+            const string sentinel = "/tmp/opencode/test_ld_path_" + "abcdef0123456789";
+            try
+            {
+                System.Environment.SetEnvironmentVariable(key, shellPath);
+                System.Environment.SetEnvironmentVariable("LD_LIBRARY_PATH", sentinel);
+                using (var helper = Ros2PerfHelperProcess.Start(
+                    "-c \"printf 'LD=%s' \\\"$LD_LIBRARY_PATH\\\"\"",
+                    42,
+                    "reliable"))
+                {
+                    helper.WaitForExit(System.TimeSpan.FromSeconds(5));
+                    StringAssert.Contains(sentinel, helper.StdoutSnapshot());
+                }
+            }
+            finally
+            {
+                System.Environment.SetEnvironmentVariable(key, originalHelper);
+                System.Environment.SetEnvironmentVariable("LD_LIBRARY_PATH", originalLdPath);
+            }
+        }
+
+        [Test]
+        public void Start_は親_process_の_AMENT_PREFIX_PATH_を継承する()
+        {
+            const string key = "ROSETTADDS_ROS2_PERF_HELPER";
+            const string shellPath = "/bin/sh";
+            if (!File.Exists(shellPath))
+            {
+                Assert.Ignore(shellPath + " is required for this process wrapper test.");
+            }
+
+            string originalHelper = System.Environment.GetEnvironmentVariable(key);
+            string originalAment = System.Environment.GetEnvironmentVariable("AMENT_PREFIX_PATH");
+            const string sentinel = "/tmp/opencode/test_ament_" + "abcdef0123456789";
+            try
+            {
+                System.Environment.SetEnvironmentVariable(key, shellPath);
+                System.Environment.SetEnvironmentVariable("AMENT_PREFIX_PATH", sentinel);
+                using (var helper = Ros2PerfHelperProcess.Start(
+                    "-c \"printf 'AMENT=%s' \\\"$AMENT_PREFIX_PATH\\\"\"",
+                    42,
+                    "reliable"))
+                {
+                    helper.WaitForExit(System.TimeSpan.FromSeconds(5));
+                    StringAssert.Contains(sentinel, helper.StdoutSnapshot());
+                }
+            }
+            finally
+            {
+                System.Environment.SetEnvironmentVariable(key, originalHelper);
+                System.Environment.SetEnvironmentVariable("AMENT_PREFIX_PATH", originalAment);
+            }
+        }
+
+        [Test]
+        public void ResolveRos2Install_は_colcon_install_の親に_AMENT_PREFIX_PATH_を見つけた場合それを返す()
+        {
+            string originalAment = System.Environment.GetEnvironmentVariable("AMENT_PREFIX_PATH");
+            try
+            {
+                System.Environment.SetEnvironmentVariable("AMENT_PREFIX_PATH", "/tmp");
+                string resolved = Ros2PerfHelperProcess.ResolveRos2Install();
+                Assert.AreEqual("/tmp", resolved);
+            }
+            finally
+            {
+                System.Environment.SetEnvironmentVariable("AMENT_PREFIX_PATH", originalAment);
+            }
+        }
+
+        [Test]
+        public void ResolveRos2Install_は_Nix_store_の_ros_env_を発見できる()
+        {
+            string originalAment = System.Environment.GetEnvironmentVariable("AMENT_PREFIX_PATH");
+            try
+            {
+                System.Environment.SetEnvironmentVariable("AMENT_PREFIX_PATH", null);
+                string resolved = Ros2PerfHelperProcess.ResolveRos2Install();
+                if (Directory.Exists("/nix/store"))
+                {
+                    Assert.IsNotNull(resolved, "expected to find a ros-env in /nix/store");
+                    StringAssert.StartsWith("/nix/store/", resolved);
+                    Directory.Exists(System.IO.Path.Combine(resolved, "lib"));
+                }
+                else
+                {
+                    Assert.Ignore("not on a system with /nix/store");
+                }
+            }
+            finally
+            {
+                System.Environment.SetEnvironmentVariable("AMENT_PREFIX_PATH", originalAment);
+            }
+        }
+
+        [Test]
+        public void Start_は_AMENT_PREFIX_PATH_未設定_でも_Nix_ros_env_を_発見して_子に引き継ぐ()
+        {
+            const string key = "ROSETTADDS_ROS2_PERF_HELPER";
+            const string shellPath = "/bin/sh";
+            if (!File.Exists(shellPath))
+            {
+                Assert.Ignore(shellPath + " is required for this process wrapper test.");
+            }
+
+            string originalHelper = System.Environment.GetEnvironmentVariable(key);
+            string originalAment = System.Environment.GetEnvironmentVariable("AMENT_PREFIX_PATH");
+            try
+            {
+                System.Environment.SetEnvironmentVariable(key, shellPath);
+                System.Environment.SetEnvironmentVariable("AMENT_PREFIX_PATH", null);
+                if (Ros2PerfHelperProcess.ResolveRos2Install() == null)
+                {
+                    Assert.Ignore("no ros2 install found on this system");
+                }
+                using (var helper = Ros2PerfHelperProcess.Start(
+                    "-c \"printf 'AMENT=%s' \\\"$AMENT_PREFIX_PATH\\\"\"",
+                    42,
+                    "reliable"))
+                {
+                    helper.WaitForExit(System.TimeSpan.FromSeconds(5));
+                    string snapshot = helper.StdoutSnapshot();
+                    StringAssert.StartsWith("AMENT=/nix/store/", snapshot);
+                }
+            }
+            finally
+            {
+                System.Environment.SetEnvironmentVariable(key, originalHelper);
+                System.Environment.SetEnvironmentVariable("AMENT_PREFIX_PATH", originalAment);
+            }
+        }
     }
 }
