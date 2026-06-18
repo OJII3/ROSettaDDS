@@ -95,6 +95,44 @@ Console.WriteLine($"2 + 3 = {resp.Sum}");
 `2 + 3 = 5` が表示されれば、request/reply の相関 (Fast DDS の related_sample_identity) を含めて
 相互運用できている。
 
+## Unity ROS 2 performance tests
+
+疎通確認は `demo_nodes_cpp` や ROS 2 CLI で実 message の到達を確認する。
+性能計測は別系統として、`tools/ros2-perf-helper` と
+`ROSettaDDS.UnityRos2Perf.Tests` を使う。
+
+性能計測では Unity PlayMode test が C++ helper process を起動し、
+JSON Lines の `ready` / `done` event で同期する。対象は Humble + Fast DDS
+(`rmw_fastrtps_cpp`) の同一マシン loopback 通信で、マシン間通信や Cyclone DDS は初期対象外。
+
+### Linux での helper 動作確認
+
+`tools/ros2-perf-helper` の C++ helper は、Unity Editor が無い環境でも単体で
+build / 動作確認できる。Nix devShell (`flake.nix` の `rosEnv`) 配下で次の 2
+スクリプトを使う。
+
+```sh
+nix develop
+scripts/ros2/build_helper.sh      # colcon build
+scripts/ros2/verify_helper.sh      # 6 ケースの smoke
+```
+
+`scripts/ros2/verify_helper.sh` は次の 6 ケースを連続実行する。すべて
+helper の stdout を JSON Lines で受け取り、`done.received` または `error.message`
+で合否判定する。
+
+1. reliable pub<->sub, 1000 messages, 64 B
+2. best\_effort pub<->sub, 500 messages, 128 B
+3. fanout: 1 pub vs 4 subs, 250 messages, 32 B
+4. idle timeout: pub 10 / sub 1000 expected / idle 2s
+5. invalid `--mode` の JSON error event
+6. large payload 100 messages × 32 KiB
+
+ヘルパーが `demo_nodes_cpp` の talker / listener と直接通信することも
+確認済み (helper sub <-> talker / helper pub <-> listener) で、JSON Lines
+に `"received":<件数>` または listener の `I heard: [...]` ログで疎通を
+確認できる。
+
 ## 次に追加する検証
 
 - Best Effort publisher/subscriber の組み合わせ

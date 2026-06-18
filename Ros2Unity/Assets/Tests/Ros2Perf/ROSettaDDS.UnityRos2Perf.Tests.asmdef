@@ -1,0 +1,22 @@
+{
+    "name": "ROSettaDDS.UnityRos2Perf.Tests",
+    "rootNamespace": "ROSettaDDS.UnityRos2Perf.Tests",
+    "references": [
+        "ROSettaDDS",
+        "Unity.PerformanceTesting",
+        "UnityEngine.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
