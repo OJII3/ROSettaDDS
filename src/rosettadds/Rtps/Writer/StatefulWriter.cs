@@ -154,24 +154,27 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         {
             int current;
             long total;
+            int currentChange;
+            long totalChange;
             Guid? lastHandle;
             lock (_matchedLock)
             {
                 current = _matched.Count;
                 total = _totalMatchedReaders;
                 lastHandle = _lastSubscriptionHandle;
+                currentChange = current - _lastReportedCurrentReaders;
+                totalChange = total - _lastReportedTotalReaders;
+                _lastReportedCurrentReaders = current;
+                _lastReportedTotalReaders = total;
             }
-            var status = new PublicationMatchedStatus
+            return new PublicationMatchedStatus
             {
                 CurrentCount = current,
-                CurrentCountChange = current - _lastReportedCurrentReaders,
+                CurrentCountChange = currentChange,
                 TotalCount = checked((int)Math.Min(total, int.MaxValue)),
-                TotalCountChange = checked((int)Math.Min(total - _lastReportedTotalReaders, int.MaxValue)),
+                TotalCountChange = checked((int)Math.Min(totalChange, int.MaxValue)),
                 LastSubscriptionHandle = lastHandle,
             };
-            _lastReportedCurrentReaders = current;
-            _lastReportedTotalReaders = total;
-            return status;
         }
     }
 
