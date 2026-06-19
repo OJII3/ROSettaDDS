@@ -21,6 +21,9 @@ public sealed class Publisher<T> : IDisposable
     public Guid Guid => _writer.Guid;
     internal StatefulWriter Writer => _writer;
 
+    /// <summary>Publication マッチ状態 (Fast DDS 互換)。</summary>
+    public PublicationMatchedStatus PublicationMatchedStatus => _writer.PublicationMatchedStatus;
+
     public Publisher(
         string topicName,
         StatefulWriter writer,
@@ -66,6 +69,19 @@ public sealed class Publisher<T> : IDisposable
         _serializer.Serialize(ref w, in value);
         int payloadLength = w.Position;
         return buffer.AsMemory(0, payloadLength);
+    }
+
+    /// <summary>
+    /// matched reader 数が <paramref name="minCount"/> に達するまで待機する。
+    /// 戻り値: true=達成 / false=タイムアウト。
+    /// </summary>
+    public Task<bool> WaitForMatchedAsync(
+        int minCount, TimeSpan timeout, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return MatchWaiter.WaitUntilMatchedAsync(
+            () => _writer.MatchedReaderCount,
+            minCount, timeout, cancellationToken);
     }
 
     public void Start() => _writer.Start();

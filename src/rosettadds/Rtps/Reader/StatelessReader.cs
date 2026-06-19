@@ -1,6 +1,7 @@
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Dds;
 using ROSettaDDS.Rtps.Submessages;
 using ROSettaDDS.Transport;
 
@@ -24,6 +25,10 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
     private readonly object _reassemblyLock = new();
     private readonly object _matchedLock = new();
     private readonly HashSet<Guid> _matchedWriters = new();
+    private long _totalMatchedWriters;
+    private Guid? _lastPublicationHandle;
+    private int _lastReportedCurrentWriters;
+    private long _lastReportedTotalWriters;
     private readonly object _pendingLock = new();
     private readonly Dictionary<Guid, Queue<PendingPayload>> _pendingPayloads = new();
     private int _pendingPayloadCount;
@@ -88,7 +93,11 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
         {
             lock (_matchedLock)
             {
-                _matchedWriters.Add(writerGuid);
+                if (_matchedWriters.Add(writerGuid))
+                {
+                    _totalMatchedWriters++;
+                    _lastPublicationHandle = writerGuid;
+                }
             }
             foreach (var payload in TakePendingPayloads(writerGuid).OrderBy(static p => p.SequenceNumber.Value))
             {
@@ -97,6 +106,41 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
                     PayloadReceived?.Invoke(payload.Payload, payload.SourcePrefix);
                 }
             }
+        }
+    }
+
+    public int MatchedWriterCount
+    {
+        get { lock (_matchedLock) { return _matchedWriters.Count; } }
+    }
+
+    public SubscriptionMatchedStatus SubscriptionMatchedStatus
+    {
+        get
+        {
+            int current;
+            long total;
+            int currentChange;
+            long totalChange;
+            Guid? lastHandle;
+            lock (_matchedLock)
+            {
+                current = _matchedWriters.Count;
+                total = _totalMatchedWriters;
+                lastHandle = _lastPublicationHandle;
+                currentChange = current - _lastReportedCurrentWriters;
+                totalChange = total - _lastReportedTotalWriters;
+                _lastReportedCurrentWriters = current;
+                _lastReportedTotalWriters = total;
+            }
+            return new SubscriptionMatchedStatus
+            {
+                CurrentCount = current,
+                CurrentCountChange = currentChange,
+                TotalCount = checked((int)Math.Min(total, int.MaxValue)),
+                TotalCountChange = checked((int)Math.Min(totalChange, int.MaxValue)),
+                LastPublicationHandle = lastHandle,
+            };
         }
     }
 

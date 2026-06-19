@@ -32,6 +32,14 @@ internal interface IUserReader : IDisposable
     void MatchWriter(Guid writerGuid, Locator? unicastReplyLocator);
     void UnmatchWriter(Guid writerGuid);
 
+    /// <summary>現在マッチ中の writer 数 (current_count 相当)。</summary>
+    int MatchedWriterCount { get; }
+
+    /// <summary>
+    /// Subscription matched status snapshot (Fast DDS SubscriptionMatchedStatus 互換)。
+    /// </summary>
+    SubscriptionMatchedStatus SubscriptionMatchedStatus { get; }
+
     void Start();
     void Stop();
 }
