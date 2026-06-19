@@ -120,24 +120,27 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
         {
             int current;
             long total;
+            int currentChange;
+            long totalChange;
             Guid? lastHandle;
             lock (_matchedLock)
             {
                 current = _matchedWriters.Count;
                 total = _totalMatchedWriters;
                 lastHandle = _lastPublicationHandle;
+                currentChange = current - _lastReportedCurrentWriters;
+                totalChange = total - _lastReportedTotalWriters;
+                _lastReportedCurrentWriters = current;
+                _lastReportedTotalWriters = total;
             }
-            var status = new SubscriptionMatchedStatus
+            return new SubscriptionMatchedStatus
             {
                 CurrentCount = current,
-                CurrentCountChange = current - _lastReportedCurrentWriters,
+                CurrentCountChange = currentChange,
                 TotalCount = checked((int)Math.Min(total, int.MaxValue)),
-                TotalCountChange = checked((int)Math.Min(total - _lastReportedTotalWriters, int.MaxValue)),
+                TotalCountChange = checked((int)Math.Min(totalChange, int.MaxValue)),
                 LastPublicationHandle = lastHandle,
             };
-            _lastReportedCurrentWriters = current;
-            _lastReportedTotalWriters = total;
-            return status;
         }
     }
 
