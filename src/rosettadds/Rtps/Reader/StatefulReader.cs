@@ -103,6 +103,11 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
         get { lock (_matchedLock) { return _matched.Values.ToArray(); } }
     }
 
+    public int MatchedWriterCount
+    {
+        get { lock (_matchedLock) { return _matched.Count; } }
+    }
+
     public SubscriptionMatchedStatus SubscriptionMatchedStatus
     {
         get

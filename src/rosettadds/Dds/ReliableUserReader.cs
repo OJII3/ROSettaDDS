@@ -49,7 +49,7 @@ internal sealed class ReliableUserReader : IUserReader
     /// <summary>inline QoS を含む CacheChange を必要とする利用者向け (サービス reply 等)。</summary>
     public event Action<CacheChange>? SampleReceived;
 
-    public int MatchedWriterCount => _reader.MatchedWriters.Count;
+    public int MatchedWriterCount => _reader.MatchedWriterCount;
 
     public SubscriptionMatchedStatus SubscriptionMatchedStatus => _reader.SubscriptionMatchedStatus;
 
