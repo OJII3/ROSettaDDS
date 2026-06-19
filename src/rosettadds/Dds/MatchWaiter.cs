@@ -1,8 +1,7 @@
+using System.Diagnostics;
+
 namespace ROSettaDDS.Dds;
 
-/// <summary>
-/// matched 数 polling 用の内部ヘルパ。
-/// </summary>
 internal static class MatchWaiter
 {
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromMilliseconds(20);
@@ -19,14 +18,14 @@ internal static class MatchWaiter
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var deadline = DateTime.UtcNow + timeout;
+        var sw = Stopwatch.StartNew();
         while (true)
         {
             if (currentCountAccessor() >= minCount)
             {
                 return true;
             }
-            if (DateTime.UtcNow >= deadline)
+            if (sw.Elapsed >= timeout)
             {
                 return false;
             }
