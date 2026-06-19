@@ -148,6 +148,11 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         get { lock (_matchedLock) { return _matched.Values.ToArray(); } }
     }
 
+    public int MatchedReaderCount
+    {
+        get { lock (_matchedLock) { return _matched.Count; } }
+    }
+
     public PublicationMatchedStatus PublicationMatchedStatus
     {
         get
