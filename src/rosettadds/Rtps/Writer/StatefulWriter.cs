@@ -105,12 +105,12 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
             {
                 addedProxy = new ReaderProxy(readerGuid, unicastLocator, reliability);
                 _matched[readerGuid] = addedProxy;
+                _totalMatchedReaders++;
+                _lastSubscriptionHandle = readerGuid;
             }
         }
         if (addedProxy is not null)
         {
-            _totalMatchedReaders++;
-            _lastSubscriptionHandle = readerGuid;
             if (_resendHistoryOnMatch)
             {
                 RunBackground(
