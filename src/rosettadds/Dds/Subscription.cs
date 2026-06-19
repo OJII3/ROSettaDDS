@@ -26,6 +26,9 @@ public sealed class Subscription<T> : IDisposable
     public Guid Guid { get; }
     public EntityId ReaderEntityId => _reader.ReaderEntityId;
 
+    /// <summary>Subscription マッチ状態 (Fast DDS 互換)。</summary>
+    public SubscriptionMatchedStatus SubscriptionMatchedStatus => _reader.SubscriptionMatchedStatus;
+
     internal Subscription(
         string topicName,
         Guid guid,
@@ -99,6 +102,19 @@ public sealed class Subscription<T> : IDisposable
         }
     }
 
+    /// <summary>
+    /// matched writer 数が <paramref name="minCount"/> に達するまで待機する。
+    /// 戻り値: true=達成 / false=タイムアウト。
+    /// </summary>
+    public Task<bool> WaitForMatchedAsync(
+        int minCount, TimeSpan timeout, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return MatchWaiter.WaitUntilMatchedAsync(
+            () => _reader.MatchedWriterCount,
+            minCount, timeout, cancellationToken);
+    }
+
     /// <summary>encap header を解釈してデシリアライズする (テスト/デバッグ用)。</summary>
     public T DeserializeWithEncapsulation(ReadOnlySpan<byte> payload)
     {
@@ -124,6 +140,11 @@ public sealed class Subscription<T> : IDisposable
         _reader.PayloadReceived -= OnPayloadReceived;
         _unregisterEndpoint?.Invoke(Guid, _reader);
         _reader.Dispose();
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed) throw new ObjectDisposedException(GetType().Name);
     }
 
     private sealed class HandlerCallback
