@@ -7,43 +7,39 @@ namespace ROSettaDDS.Tests.Dds;
 public class MatchWaiterTests
 {
     [Fact]
-    public void minCount_0_は即_true_を返す()
+    public async Task minCount_0_は即_true_を返す()
     {
-        bool result = MatchWaiter.WaitUntilMatchedAsync(
-            () => 0, minCount: 0, timeout: TimeSpan.FromSeconds(1))
-            .GetAwaiter().GetResult();
+        bool result = await MatchWaiter.WaitUntilMatchedAsync(
+            () => 0, minCount: 0, timeout: TimeSpan.FromSeconds(1));
         Assert.True(result);
     }
 
     [Fact]
-    public void 即時達成済みなら_true()
+    public async Task 即時達成済みなら_true()
     {
-        bool result = MatchWaiter.WaitUntilMatchedAsync(
-            () => 5, minCount: 3, timeout: TimeSpan.FromMilliseconds(100))
-            .GetAwaiter().GetResult();
+        bool result = await MatchWaiter.WaitUntilMatchedAsync(
+            () => 5, minCount: 3, timeout: TimeSpan.FromMilliseconds(100));
         Assert.True(result);
     }
 
     [Fact]
-    public void タイムアウトで_false()
+    public async Task タイムアウトで_false()
     {
         int counter = 0;
-        bool result = MatchWaiter.WaitUntilMatchedAsync(
-            () => counter, minCount: 1, timeout: TimeSpan.FromMilliseconds(50))
-            .GetAwaiter().GetResult();
+        bool result = await MatchWaiter.WaitUntilMatchedAsync(
+            () => counter, minCount: 1, timeout: TimeSpan.FromMilliseconds(50));
         Assert.False(result);
     }
 
     [Fact]
-    public void ポーリング_中に_達成したら_true()
+    public async Task ポーリング_中に_達成したら_true()
     {
         int counter = 0;
-        var task = MatchWaiter.WaitUntilMatchedAsync(
+        var waitTask = MatchWaiter.WaitUntilMatchedAsync(
             () => Volatile.Read(ref counter),
             minCount: 3,
             timeout: TimeSpan.FromSeconds(2));
-        // 50ms 後にカウンタを上げる
-        Task.Run(async () =>
+        var pumpTask = Task.Run(async () =>
         {
             await Task.Delay(50);
             Interlocked.Increment(ref counter);
@@ -52,40 +48,38 @@ public class MatchWaiterTests
             await Task.Delay(20);
             Interlocked.Increment(ref counter);
         });
-        bool result = task.GetAwaiter().GetResult();
+        bool result = await waitTask;
+        await pumpTask;
         Assert.True(result);
     }
 
     [Fact]
-    public void 事前キャンセルで_OperationCanceledException()
+    public async Task 事前キャンセルで_OperationCanceledException()
     {
         using var cts = new CancellationTokenSource();
         cts.Cancel();
-        Assert.Throws<OperationCanceledException>(() =>
-        {
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
             MatchWaiter.WaitUntilMatchedAsync(
                 () => 0, minCount: 1, timeout: TimeSpan.FromSeconds(1),
-                cancellationToken: cts.Token)
-                .GetAwaiter().GetResult();
-        });
+                cancellationToken: cts.Token));
     }
 
     [Fact]
-    public void 待機中のキャンセルで_OperationCanceledException()
+    public async Task 待機中のキャンセルで_OperationCanceledException()
     {
         int counter = 0;
         using var cts = new CancellationTokenSource();
-        var task = MatchWaiter.WaitUntilMatchedAsync(
+        var waitTask = MatchWaiter.WaitUntilMatchedAsync(
             () => Volatile.Read(ref counter),
             minCount: 1,
             timeout: TimeSpan.FromSeconds(5),
             cancellationToken: cts.Token);
-        // 50ms 後にキャンセル
-        Task.Run(async () =>
+        var cancelTask = Task.Run(async () =>
         {
             await Task.Delay(50);
             cts.Cancel();
         });
-        Assert.Throws<OperationCanceledException>(() => task.GetAwaiter().GetResult());
+        await Assert.ThrowsAsync<OperationCanceledException>(() => waitTask);
+        await cancelTask;
     }
 }
