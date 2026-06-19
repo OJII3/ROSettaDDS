@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Threading;
 using NUnit.Framework;
 using ROSettaDDS.Cdr;
@@ -99,7 +98,7 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                     ToReliability(scenario.Qos),
                     DurabilityQos.Volatile);
                 participant.Start();
-                yield return WaitForRemoteReader(participant, TopicName(topic), TimeSpan.FromSeconds(10));
+                yield return WaitForPublisherMatched(publisher, 1, TimeSpan.FromSeconds(10));
 
                 // 3. 計測対象の message と 1 件あたり byte 数 (両方向で同じ式)
                 var message = CreatePayloadMessage(scenario.PayloadBytes);
@@ -199,7 +198,7 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 Assert.IsTrue(helper.TryWaitForEvent(Ros2PerfHelperEventKind.Ready, TimeSpan.FromSeconds(10), out _, out var readyErr), readyErr);
                 Assert.IsTrue(helper.TryWaitForEvent(Ros2PerfHelperEventKind.Armed, TimeSpan.FromSeconds(10), out _, out var armedErr), armedErr);
                 // armed 時点で helper は stdin 待ち。SEDP は ready → armed の間に交換済み。
-                yield return WaitForRemoteWriter(participant, TopicName(topic), TimeSpan.FromSeconds(10));
+                yield return WaitForSubscriptionMatched(subscription, 1, TimeSpan.FromSeconds(10));
 
                 var stopwatch = Stopwatch.StartNew();
                 helper.SendMeasureStart();
@@ -230,9 +229,6 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
                 helper?.Dispose();
             }
         }
-
-        private static string TopicName(string topic)
-            => "rt/" + topic.TrimStart('/');
 
         private static string BuildHelperArgs(string topic, int count, Ros2PerfScenario scenario)
         {
@@ -319,18 +315,28 @@ namespace ROSettaDDS.UnityRos2Perf.Tests
             }
         }
 
-        private static IEnumerator WaitForRemoteReader(DomainParticipant participant, string ddsTopic, TimeSpan timeout)
+        private static IEnumerator WaitForPublisherMatched(
+            Publisher<StringMessage> publisher, int minCount, TimeSpan timeout)
         {
-            yield return WaitUntil(
-                () => participant.DiscoveryDb.ReaderSnapshot().Any(ep => ep.TopicName == ddsTopic),
-                timeout);
+            var task = publisher.WaitForMatchedAsync(minCount, timeout);
+            while (!task.IsCompleted)
+            {
+                yield return null;
+            }
+            Assert.IsTrue(task.Result,
+                $"Publisher did not reach matched count {minCount} within {timeout}");
         }
 
-        private static IEnumerator WaitForRemoteWriter(DomainParticipant participant, string ddsTopic, TimeSpan timeout)
+        private static IEnumerator WaitForSubscriptionMatched(
+            Subscription<StringMessage> subscription, int minCount, TimeSpan timeout)
         {
-            yield return WaitUntil(
-                () => participant.DiscoveryDb.WriterSnapshot().Any(ep => ep.TopicName == ddsTopic),
-                timeout);
+            var task = subscription.WaitForMatchedAsync(minCount, timeout);
+            while (!task.IsCompleted)
+            {
+                yield return null;
+            }
+            Assert.IsTrue(task.Result,
+                $"Subscription did not reach matched count {minCount} within {timeout}");
         }
 
         private static void ForceFullCollection()
