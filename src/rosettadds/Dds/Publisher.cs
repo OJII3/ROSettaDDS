@@ -80,7 +80,7 @@ public sealed class Publisher<T> : IDisposable
     {
         ThrowIfDisposed();
         return MatchWaiter.WaitUntilMatchedAsync(
-            () => _writer.MatchedReaders.Count,
+            () => _writer.MatchedReaderCount,
             minCount, timeout, cancellationToken);
     }
 
