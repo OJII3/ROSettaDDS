@@ -19,7 +19,7 @@ public class PublisherHotPathTests
         public required DomainParticipant ParticipantB { get; init; }
     }
 
-    private static TestEnv CreatePair()
+    private static TestEnv CreatePair(TimeSpan? writerHeartbeatPeriod = null)
     {
         var hub = new LoopbackHub();
         var multicastIp = IPAddress.Parse("239.255.0.1");
@@ -35,12 +35,14 @@ public class PublisherHotPathTests
         var userUcA = hub.Create(Locator.FromUdpV4(IPAddress.Parse("10.0.0.1"), 7412u));
         var userUcB = hub.Create(Locator.FromUdpV4(IPAddress.Parse("10.0.0.2"), 7414u));
 
+        var hbPeriod = writerHeartbeatPeriod ?? TimeSpan.FromSeconds(1);
         var optionsA = new DomainParticipantOptions
         {
             DomainId = 0, ParticipantId = 1, EntityName = "node_a",
             MulticastGroup = multicastIp,
             SpdpInterval = TimeSpan.FromMilliseconds(50),
             SedpInterval = TimeSpan.FromMilliseconds(50),
+            UserWriterHeartbeatPeriod = hbPeriod,
             CustomMulticastTransport = spdpA,
             CustomUnicastTransport = ucA,
             CustomUserMulticastTransport = userMcA,
@@ -52,6 +54,7 @@ public class PublisherHotPathTests
             MulticastGroup = multicastIp,
             SpdpInterval = TimeSpan.FromMilliseconds(50),
             SedpInterval = TimeSpan.FromMilliseconds(50),
+            UserWriterHeartbeatPeriod = hbPeriod,
             CustomMulticastTransport = spdpB,
             CustomUnicastTransport = ucB,
             CustomUserMulticastTransport = userMcB,
@@ -149,7 +152,7 @@ public class PublisherHotPathTests
     [Fact]
     public async Task Publish_1件あたりの_GC_allocation_が_過剰でない()
     {
-        var env = CreatePair();
+        var env = CreatePair(writerHeartbeatPeriod: TimeSpan.FromSeconds(10));
         using var pA = env.ParticipantA;
         using var pB = env.ParticipantB;
 
@@ -203,7 +206,7 @@ public class PublisherHotPathTests
     [Fact]
     public async Task Reliable_small_payload_の_LoopbackHub_スループットが_ベースラインを満たす()
     {
-        var env = CreatePair();
+        var env = CreatePair(writerHeartbeatPeriod: TimeSpan.FromSeconds(10));
         using var pA = env.ParticipantA;
         using var pB = env.ParticipantB;
 
@@ -233,6 +236,7 @@ public class PublisherHotPathTests
             await Task.Delay(1);
         }
         await Task.Delay(100);
+        Volatile.Write(ref received, 0);
 
         var sw = Stopwatch.StartNew();
         for (int i = 0; i < N; i++)
@@ -240,6 +244,15 @@ public class PublisherHotPathTests
             await pub.PublishAsync(msg);
         }
         sw.Stop();
+
+        // 全メッセージが配信されるまで待機
+        var deliveryDeadline = DateTime.UtcNow + ReceiveTimeout;
+        while (Volatile.Read(ref received) < N && DateTime.UtcNow < deliveryDeadline)
+        {
+            await Task.Delay(10);
+        }
+        Volatile.Read(ref received).Should().Be(N,
+            "全メッセージが配信されるべき");
 
         double tps = N / Math.Max(0.000001, sw.Elapsed.TotalSeconds);
         tps.Should().BeGreaterThan(10_000,
