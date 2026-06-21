@@ -77,7 +77,9 @@ parse_args() {
 
 uloop_editor_available() {
   command -v uloop >/dev/null 2>&1 || return 1
-  uloop get-version --project-path "$PROJECT_PATH" >/dev/null 2>&1
+  uloop execute-dynamic-code \
+    --project-path "$PROJECT_PATH" \
+    --code 'return "ok";' >/dev/null 2>&1
 }
 
 run_tests_uloop() {
@@ -124,10 +126,16 @@ detect_unity_editor() {
     return 1
   fi
 
-  local candidates=("/Applications/Unity/Hub/Editor/$version/Unity.app/Contents/MacOS/Unity")
+  local candidates=(
+    "/Applications/Unity/Hub/Editor/$version/Unity.app/Contents/MacOS/Unity"
+    "$HOME/Unity/Hub/Editor/$version/Editor/Unity"
+  )
   local series="${version%.*}"
   local candidate
   for candidate in /Applications/Unity/Hub/Editor/"$series".*/Unity.app/Contents/MacOS/Unity; do
+    candidates+=("$candidate")
+  done
+  for candidate in "$HOME"/Unity/Hub/Editor/"$series".*/Editor/Unity; do
     candidates+=("$candidate")
   done
   for candidate in "${candidates[@]}"; do
