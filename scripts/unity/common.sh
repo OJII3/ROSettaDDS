@@ -124,10 +124,16 @@ detect_unity_editor() {
     return 1
   fi
 
-  local candidates=("/Applications/Unity/Hub/Editor/$version/Unity.app/Contents/MacOS/Unity")
+  local candidates=(
+    "/Applications/Unity/Hub/Editor/$version/Unity.app/Contents/MacOS/Unity"
+    "$HOME/Unity/Hub/Editor/$version/Editor/Unity"
+  )
   local series="${version%.*}"
   local candidate
   for candidate in /Applications/Unity/Hub/Editor/"$series".*/Unity.app/Contents/MacOS/Unity; do
+    candidates+=("$candidate")
+  done
+  for candidate in "$HOME"/Unity/Hub/Editor/"$series".*/Editor/Unity; do
     candidates+=("$candidate")
   done
   for candidate in "${candidates[@]}"; do
