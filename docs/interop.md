@@ -101,9 +101,11 @@ Console.WriteLine($"2 + 3 = {resp.Sum}");
 性能計測は別系統として、`tools/ros2-perf-helper` と
 `tools/rosettadds-perf-runner` を使う。
 
-性能計測では ROS 2 devShell 内で起動した runner が C++ helper process と
-Unity Standalone Player を起動し、JSON Lines と sentinel file で同期する。
-Unity Editor / Unity Player は ROS 2 CLI や ROS 2 環境を持たず、DDS/RTPS 通信だけを行う。
+性能計測では ROS 2 devShell 内で起動した runner が、起動済み Unity Editor に
+`uloop execute-dynamic-code` で Player build を依頼し、その後 C++ helper process と
+Unity Standalone Player を起動して JSON Lines と sentinel file で同期する。
+runner は Unity Editor executable を shell から起動しない。Unity Editor / Unity Player は
+ROS 2 CLI や ROS 2 環境を持たず、DDS/RTPS 通信だけを行う。
 対象は Humble + Fast DDS (`rmw_fastrtps_cpp`) の同一マシン loopback 通信で、
 マシン間通信や Cyclone DDS は初期対象外。
 
@@ -140,6 +142,7 @@ helper の stdout を JSON Lines で受け取り、`done.received` または `er
 ```sh
 nix develop
 scripts/ros2/build_helper.sh
+uloop get-version --project-path Ros2Unity
 dotnet run --project tools/rosettadds-perf-runner -- \
   --scenario unity-to-ros2-reliable-1024 \
   --capture-frames 1200

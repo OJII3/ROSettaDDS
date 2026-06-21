@@ -13,10 +13,7 @@ namespace ROSettaDDS.EditorTools
         public static void PrintUsage()
         {
             Debug.Log(
-                "ROSettaDDSPerfPlayerBuilder.Build " +
-                "--rosettadds-perf-build-path <path> " +
-                "--rosettadds-perf-build-target StandaloneLinux64|StandaloneOSX " +
-                "--rosettadds-perf-backend il2cpp|mono");
+                "ROSettaDDSPerfPlayerBuilder.BuildPlayer(path, target, backend)");
         }
 
         public static void Build()
@@ -28,31 +25,36 @@ namespace ROSettaDDS.EditorTools
                 string targetText = Require(args, "--rosettadds-perf-build-target");
                 string backendText = Require(args, "--rosettadds-perf-backend");
 
-                BuildTarget target = ParseBuildTarget(targetText);
-                ScriptingImplementation backend = ParseBackend(backendText);
-                PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, backend);
-
-                string directory = Path.GetDirectoryName(buildPath);
-                if (!string.IsNullOrEmpty(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-
-                var options = new BuildPlayerOptions
-                {
-                    scenes = EnabledScenes(),
-                    target = target,
-                    locationPathName = buildPath,
-                    options = BuildOptions.Development,
-                };
-
-                BuildReportOrThrow(options);
+                BuildPlayer(buildPath, targetText, backendText);
             }
             catch (Exception ex)
             {
                 Debug.LogError(ex);
                 EditorApplication.Exit(1);
             }
+        }
+
+        public static void BuildPlayer(string buildPath, string targetText, string backendText)
+        {
+            BuildTarget target = ParseBuildTarget(targetText);
+            ScriptingImplementation backend = ParseBackend(backendText);
+            PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, backend);
+
+            string directory = Path.GetDirectoryName(buildPath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var options = new BuildPlayerOptions
+            {
+                scenes = EnabledScenes(),
+                target = target,
+                locationPathName = buildPath,
+                options = BuildOptions.Development,
+            };
+
+            BuildReportOrThrow(options);
         }
 
         private static void BuildReportOrThrow(BuildPlayerOptions options)

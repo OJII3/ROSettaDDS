@@ -7,7 +7,6 @@ internal sealed class RunnerOptions
     internal string Backend { get; private set; } = "il2cpp";
     internal string BuildTarget { get; private set; } = DefaultBuildTarget();
     internal string Scenario { get; private set; } = "all";
-    internal string? UnityEditor { get; private set; }
     internal string? Helper { get; private set; }
     internal string Artifacts { get; private set; } = Path.Combine("artifacts", "perf");
     internal int CaptureFrames { get; private set; } = 1200;
@@ -35,9 +34,6 @@ internal sealed class RunnerOptions
                     break;
                 case "--scenario":
                     options.Scenario = RequireValue(args, ref i, arg);
-                    break;
-                case "--unity-editor":
-                    options.UnityEditor = RequireValue(args, ref i, arg);
                     break;
                 case "--helper":
                     options.Helper = RequireValue(args, ref i, arg);
@@ -79,7 +75,6 @@ internal sealed class RunnerOptions
         output.WriteLine("  --backend <il2cpp|mono>                  Default: il2cpp");
         output.WriteLine("  --build-target <StandaloneLinux64|StandaloneOSX>");
         output.WriteLine("  --scenario <name|all>                    Default: all");
-        output.WriteLine("  --unity-editor <path>                    Default: UNITY_EDITOR or Unity Hub path");
         output.WriteLine("  --helper <path>                          Default: tools/ros2-perf-helper install output");
         output.WriteLine("  --artifacts <path>                       Default: artifacts/perf");
         output.WriteLine("  --capture-frames <count>                 Default: 1200");

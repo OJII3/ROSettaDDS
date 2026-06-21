@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using ROSettaDDS.PerfRunner;
 
 int exitCode = await MainAsync(args).ConfigureAwait(false);
@@ -16,7 +15,6 @@ static async Task<int> MainAsync(string[] args)
         }
 
         string root = FindRepoRoot();
-        string unityEditor = ResolveUnityEditor(root, options);
         string helper = ResolveHelper(root, options);
         string runId = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
         string runDir = Path.GetFullPath(Path.Combine(root, options.Artifacts, runId));
@@ -25,7 +23,7 @@ static async Task<int> MainAsync(string[] args)
         string playerPath = PlayerBuildPath(runDir, options.BuildTarget);
         if (!options.SkipBuild)
         {
-            await BuildPlayer(root, unityEditor, playerPath, options, runDir).ConfigureAwait(false);
+            await BuildPlayer(root, playerPath, options, runDir).ConfigureAwait(false);
         }
 
         IReadOnlyList<PerfScenario> scenarios = PerfScenario.Select(options.Scenario);
@@ -58,34 +56,35 @@ static async Task<int> MainAsync(string[] args)
 
 static async Task BuildPlayer(
     string root,
-    string unityEditor,
     string playerPath,
     RunnerOptions options,
     string runDir)
 {
-    string logPath = Path.Combine(runDir, "unity-build.log");
-    using ProcessCapture unity = ProcessCapture.Start(
-        unityEditor,
+    string code =
+        "ROSettaDDS.EditorTools.ROSettaDDSPerfPlayerBuilder.BuildPlayer(" +
+        CSharpString(playerPath) + ", " +
+        CSharpString(options.BuildTarget) + ", " +
+        CSharpString(options.Backend) + ");\n" +
+        "return \"ok\";";
+
+    using ProcessCapture uloop = ProcessCapture.Start(
+        "uloop",
         new[]
         {
-            "-batchmode",
-            "-nographics",
-            "-projectPath", Path.Combine(root, "Ros2Unity"),
-            "-quit",
-            "-executeMethod", "ROSettaDDS.EditorTools.ROSettaDDSPerfPlayerBuilder.Build",
-            "--rosettadds-perf-build-path", playerPath,
-            "--rosettadds-perf-build-target", options.BuildTarget,
-            "--rosettadds-perf-backend", options.Backend,
-            "-logFile", logPath,
+            "execute-dynamic-code",
+            "--project-path", Path.Combine(root, "Ros2Unity"),
+            "--code", code,
         },
-        Path.Combine(runDir, "unity-build.stdout.log"),
-        Path.Combine(runDir, "unity-build.stderr.log"),
+        Path.Combine(runDir, "uloop-build.stdout.log"),
+        Path.Combine(runDir, "uloop-build.stderr.log"),
         SanitizeUnityEnvironment);
 
-    int code = await unity.WaitForExitAsync(TimeSpan.FromMinutes(20)).ConfigureAwait(false);
-    if (code != 0)
+    int exitCode = await uloop.WaitForExitAsync(TimeSpan.FromMinutes(20)).ConfigureAwait(false);
+    if (exitCode != 0)
     {
-        throw new InvalidOperationException("Unity Player build failed with exit code " + code);
+        throw new InvalidOperationException(
+            "uloop Player build failed with exit code " + exitCode +
+            ". Open the Ros2Unity project in Unity Editor with uLoopMCP enabled, then rerun.");
     }
 }
 
@@ -307,49 +306,6 @@ static string ResolveHelper(string root, RunnerOptions options)
     return path;
 }
 
-static string ResolveUnityEditor(string root, RunnerOptions options)
-{
-    if (!string.IsNullOrEmpty(options.UnityEditor))
-    {
-        return options.UnityEditor;
-    }
-    string? fromEnv = Environment.GetEnvironmentVariable("UNITY_EDITOR");
-    if (!string.IsNullOrEmpty(fromEnv))
-    {
-        return fromEnv;
-    }
-
-    string version = File.ReadLines(Path.Combine(root, "Ros2Unity", "ProjectSettings", "ProjectVersion.txt"))
-        .First(line => line.StartsWith("m_EditorVersion: ", StringComparison.Ordinal))
-        .Substring("m_EditorVersion: ".Length);
-
-    var candidates = new List<string>();
-    if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-    {
-        candidates.Add("/Applications/Unity/Hub/Editor/" + version + "/Unity.app/Contents/MacOS/Unity");
-    }
-    else
-    {
-        candidates.Add(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Unity",
-            "Hub",
-            "Editor",
-            version,
-            "Editor",
-            "Unity"));
-    }
-
-    foreach (string candidate in candidates)
-    {
-        if (File.Exists(candidate))
-        {
-            return candidate;
-        }
-    }
-    throw new FileNotFoundException("Unity Editor not found. Set UNITY_EDITOR or pass --unity-editor.");
-}
-
 static string PlayerBuildPath(string runDir, string buildTarget)
 {
     string buildDir = Path.Combine(runDir, "build");
@@ -366,4 +322,9 @@ static string PlayerExecutablePath(string buildPath, string buildTarget)
         return buildPath;
     }
     return Path.Combine(buildPath, "Contents", "MacOS", Path.GetFileNameWithoutExtension(buildPath));
+}
+
+static string CSharpString(string value)
+{
+    return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 }
