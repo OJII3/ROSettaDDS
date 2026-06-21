@@ -121,17 +121,19 @@ Unity Performance Testing の sample group (throughput / leak guard の計測値
 batchmode 実行で生成される results XML にのみ埋め込まれる。性能値を確認するときは
 `--batch` で実行し、XML を直接参照する。README への性能値の自動反映は行わない。
 
-## ROS 2 performance tests
-
-`ROSettaDDS.UnityRos2Perf.Tests` は Unity PlayMode から ROS 2 C++ helper process を起動し、
-同一マシン loopback の Fast DDS 相互通信性能を記録する。通常の PlayMode / Soak には含めず、
-明示指定したときだけ実行する。
+## ROS 2 Player Profiler performance
 
 前提:
 
 - ROS 2 Humble が source 済みであること
 - `rmw_fastrtps_cpp` が利用できること
 - `tools/ros2-perf-helper` が build 済みであること
+- Unity Editor / Unity Player には ROS 2 CLI や ROS 2 環境を要求しないこと
+
+ROS 2 との性能計測は Unity PlayMode test ではなく、外部 runner から Standalone Player と
+ROS 2 helper を別 process として起動する。runner は ROS 2 devShell 内で動き、
+helper / Player の同期、Profiler capture、metrics、logs、manifest の保存を担当する。
+Unity 側から `ros2` や helper process は起動しない。
 
 ### Linux (Nix) での helper build
 
@@ -173,27 +175,31 @@ scripts/ros2/verify_helper.sh
 Fast DDS の SPDP / SEDP と fragmentation が絡むため `ready-timeout-ms` を 15s に
 広げている。
 
-### Unity PlayMode での実行
+### Unity Player Profiler 計測
 
 ```sh
-ROSETTADDS_ROS2_PERF_HELPER="$PWD/tools/ros2-perf-helper/install/rosettadds_ros2_perf_helper/lib/rosettadds_ros2_perf_helper/ros2_perf_helper" \
-  scripts/unity/run_playmode.sh --batch \
-  --filter-type assembly \
-  --filter-value ROSettaDDS.UnityRos2Perf.Tests
+nix develop
+scripts/ros2/build_helper.sh
+dotnet run --project tools/rosettadds-perf-runner -- \
+  --scenario unity-to-ros2-reliable-1024 \
+  --capture-frames 1200
 ```
 
-この test は `ROS_LOCALHOST_ONLY=1`、`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`、
-scenario ごとの `ROS_DOMAIN_ID` を helper process に設定する。helper が見つからない環境では
-`Assert.Ignore` し、通常の Unity 検証を壊さない。
+runner は Unity Editor で専用 Development Player をビルドし、Player 起動時に
+`-profiler-enable` / `-profiler-log-file` / `-profiler-capture-frame-count` を渡す。
+ROS 2 helper は runner が ROS 2 devShell 環境から起動する。
 
-主な sample group:
+主な artifact:
 
-- `rosettadds.ros2perf.unity_to_ros2.<qos>.<payload>B.subscribers_<n>.elapsed_ms`
-- `rosettadds.ros2perf.unity_to_ros2.<qos>.<payload>B.subscribers_<n>.messages_per_second`
-- `rosettadds.ros2perf.ros2_to_unity.<qos>.<payload>B.publishers_<n>.elapsed_ms`
-- `rosettadds.ros2perf.ros2_to_unity.<qos>.<payload>B.publishers_<n>.messages_per_second`
-- `rosettadds.ros2perf.*.managed_heap_delta_bytes`
-- `rosettadds.ros2perf.*.unity_mono_used_delta_bytes`
+- `artifacts/perf/<run-id>/manifest.json`
+- `artifacts/perf/<run-id>/<scenario>/player.profiler.raw`
+- `artifacts/perf/<run-id>/<scenario>/metrics.ndjson`
+- `artifacts/perf/<run-id>/<scenario>/player.log`
+- `artifacts/perf/<run-id>/<scenario>/helper.stdout.ndjson`
+- `artifacts/perf/<run-id>/<scenario>/helper.stderr.log`
+
+初期 scenario は 32 B / 1024 B / 8192 B の `std_msgs/msg/String` 相当 payload、
+Reliable / BestEffort、Unity→ROS 2 と ROS 2→Unity の 1 対 1 loopback を対象にする。
 
 ## IL2CPP / AOT 棚卸し
 

@@ -99,11 +99,13 @@ Console.WriteLine($"2 + 3 = {resp.Sum}");
 
 疎通確認は `demo_nodes_cpp` や ROS 2 CLI で実 message の到達を確認する。
 性能計測は別系統として、`tools/ros2-perf-helper` と
-`ROSettaDDS.UnityRos2Perf.Tests` を使う。
+`tools/rosettadds-perf-runner` を使う。
 
-性能計測では Unity PlayMode test が C++ helper process を起動し、
-JSON Lines の `ready` / `done` event で同期する。対象は Humble + Fast DDS
-(`rmw_fastrtps_cpp`) の同一マシン loopback 通信で、マシン間通信や Cyclone DDS は初期対象外。
+性能計測では ROS 2 devShell 内で起動した runner が C++ helper process と
+Unity Standalone Player を起動し、JSON Lines と sentinel file で同期する。
+Unity Editor / Unity Player は ROS 2 CLI や ROS 2 環境を持たず、DDS/RTPS 通信だけを行う。
+対象は Humble + Fast DDS (`rmw_fastrtps_cpp`) の同一マシン loopback 通信で、
+マシン間通信や Cyclone DDS は初期対象外。
 
 ### Linux での helper 動作確認
 
@@ -132,6 +134,20 @@ helper の stdout を JSON Lines で受け取り、`done.received` または `er
 確認済み (helper sub <-> talker / helper pub <-> listener) で、JSON Lines
 に `"received":<件数>` または listener の `I heard: [...]` ログで疎通を
 確認できる。
+
+### Unity Player Profiler 計測
+
+```sh
+nix develop
+scripts/ros2/build_helper.sh
+dotnet run --project tools/rosettadds-perf-runner -- \
+  --scenario unity-to-ros2-reliable-1024 \
+  --capture-frames 1200
+```
+
+生成物は `artifacts/perf/<run-id>/` に保存される。主な内容は
+`manifest.json`、scenario ごとの `metrics.ndjson`、`player.profiler.raw`、
+Player log、helper stdout/stderr log。
 
 ## 次に追加する検証
 
