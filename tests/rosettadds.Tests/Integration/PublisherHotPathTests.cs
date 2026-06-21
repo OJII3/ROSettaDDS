@@ -179,13 +179,18 @@ public class PublisherHotPathTests
 
         await Task.Delay(200);
 
+        // Drain pending allocations from warmup
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
         const int N = 500;
-        long before = GC.GetAllocatedBytesForCurrentThread();
+        long before = GC.GetTotalAllocatedBytes(precise: true);
         for (int i = 0; i < N; i++)
         {
             await pub.PublishAsync(msg);
         }
-        long after = GC.GetAllocatedBytesForCurrentThread();
+        long after = GC.GetTotalAllocatedBytes(precise: true);
 
         double perPublish = (after - before) / (double)N;
         // 環境依存の allocation を吸収するため 2 KB を閾値とする。
