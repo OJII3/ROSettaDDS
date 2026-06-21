@@ -21,10 +21,15 @@ static async Task<int> MainAsync(string[] args)
         string runDir = Path.GetFullPath(Path.Combine(root, options.Artifacts, runId));
         Directory.CreateDirectory(runDir);
 
-        string playerPath = PlayerBuildPath(runDir, options.BuildTarget);
+        string playerPath = PerfRunnerPaths.ResolvePlayerBuildPath(runDir, options);
         if (!options.SkipBuild)
         {
             await BuildPlayer(root, playerPath, options, runDir).ConfigureAwait(false);
+        }
+        string playerExecutable = PerfRunnerPaths.PlayerExecutablePath(playerPath, options.BuildTarget);
+        if (options.SkipBuild)
+        {
+            PerfRunnerPaths.EnsurePlayerExecutableExists(playerExecutable);
         }
 
         IReadOnlyList<PerfScenario> scenarios = PerfScenario.Select(options.Scenario);
@@ -36,7 +41,7 @@ static async Task<int> MainAsync(string[] args)
             ScenarioManifest scenarioManifest = await RunScenario(
                 root,
                 helper,
-                PlayerExecutablePath(playerPath, options.BuildTarget),
+                playerExecutable,
                 runDir,
                 scenarios[i],
                 options,
@@ -152,10 +157,10 @@ static async Task<ScenarioManifest> RunScenario(
 
     if (scenario.Direction == PerfDirection.UnityToRos2)
     {
-        using ProcessCapture helperProcess = StartHelper(helper, scenario, domainId, topic, "sub", helperStdout, helperStderr, measureStart: false);
-        await helperProcess.WaitForEventAsync("ready", TimeSpan.FromSeconds(20)).ConfigureAwait(false);
         using ProcessCapture player = StartPlayer(playerExecutable, scenario, domainId, topic, options, readyFile, doneFile, releaseFile, metricsFile, profilerFile, playerLog, scenarioDir);
         await WaitForFile(readyFile, TimeSpan.FromSeconds(20), "Player ready sentinel", player).ConfigureAwait(false);
+        using ProcessCapture helperProcess = StartHelper(helper, scenario, domainId, topic, "sub", helperStdout, helperStderr, measureStart: false);
+        await helperProcess.WaitForEventAsync("ready", TimeSpan.FromSeconds(20)).ConfigureAwait(false);
         manifest.HelperExitCode = await helperProcess.WaitForExitAsync(TimeSpan.FromMinutes(1)).ConfigureAwait(false);
         File.WriteAllText(releaseFile, "release");
         manifest.PlayerExitCode = await player.WaitForExitAsync(TimeSpan.FromMinutes(1)).ConfigureAwait(false);
@@ -186,21 +191,7 @@ static ProcessCapture StartHelper(
     string stderrPath,
     bool measureStart)
 {
-    var args = new List<string>
-    {
-        "--mode", mode,
-        "--topic", topic,
-        "--messages", scenario.Messages.ToString(),
-        "--payload-bytes", scenario.PayloadBytes.ToString(),
-        "--rate-hz", "0",
-        "--qos", scenario.Qos,
-        "--ready-timeout-ms", "15000",
-        "--idle-timeout-ms", "5000",
-    };
-    if (measureStart)
-    {
-        args.Add("--measure-start");
-    }
+    IReadOnlyList<string> args = PerfRunnerProcessArgs.Helper(scenario, topic, mode, measureStart);
 
     return ProcessCapture.Start(
         helper,
@@ -337,24 +328,6 @@ static string ResolveHelper(string root, RunnerOptions options)
         throw new FileNotFoundException("ROS 2 perf helper not found. Run scripts/ros2/build_helper.sh first.", path);
     }
     return path;
-}
-
-static string PlayerBuildPath(string runDir, string buildTarget)
-{
-    string buildDir = Path.Combine(runDir, "build");
-    Directory.CreateDirectory(buildDir);
-    return buildTarget == "StandaloneOSX"
-        ? Path.Combine(buildDir, "ROSettaDDSPerfPlayer.app")
-        : Path.Combine(buildDir, "ROSettaDDSPerfPlayer");
-}
-
-static string PlayerExecutablePath(string buildPath, string buildTarget)
-{
-    if (buildTarget != "StandaloneOSX")
-    {
-        return buildPath;
-    }
-    return Path.Combine(buildPath, "Contents", "MacOS", Path.GetFileNameWithoutExtension(buildPath));
 }
 
 static string CSharpString(string value)

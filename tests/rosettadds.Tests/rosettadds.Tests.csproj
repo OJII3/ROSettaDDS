@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\rosettadds\rosettadds.csproj" />
     <ProjectReference Include="..\..\src\ROSettaDDS.MsgGen\ROSettaDDS.MsgGen.csproj" />
+    <ProjectReference Include="..\..\tools\rosettadds-perf-runner\rosettadds-perf-runner.csproj" />
   </ItemGroup>
 
   <ItemGroup>

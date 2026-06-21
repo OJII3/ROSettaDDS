@@ -183,7 +183,7 @@ Fast DDS の SPDP / SEDP と fragmentation が絡むため `ready-timeout-ms` �
 ```sh
 nix develop
 scripts/ros2/build_helper.sh
-uloop list --project-path Ros2Unity
+uloop execute-dynamic-code --project-path Ros2Unity --code 'return "ok";'
 dotnet run --project tools/rosettadds-perf-runner -- \
   --scenario unity-to-ros2-reliable-1024 \
   --capture-frames 1200

@@ -8,6 +8,7 @@ internal sealed class RunnerOptions
     internal string BuildTarget { get; private set; } = DefaultBuildTarget();
     internal string Scenario { get; private set; } = "all";
     internal string? Helper { get; private set; }
+    internal string? PlayerBuild { get; private set; }
     internal string Artifacts { get; private set; } = Path.Combine("artifacts", "perf");
     internal int CaptureFrames { get; private set; } = 1200;
     internal long ProfilerMemory { get; private set; } = 256L * 1024L * 1024L;
@@ -38,6 +39,9 @@ internal sealed class RunnerOptions
                 case "--helper":
                     options.Helper = RequireValue(args, ref i, arg);
                     break;
+                case "--player-build":
+                    options.PlayerBuild = RequireValue(args, ref i, arg);
+                    break;
                 case "--artifacts":
                     options.Artifacts = RequireValue(args, ref i, arg);
                     break;
@@ -63,6 +67,10 @@ internal sealed class RunnerOptions
         {
             throw new ArgumentException("--build-target must be StandaloneLinux64 or StandaloneOSX");
         }
+        if (options.SkipBuild && string.IsNullOrWhiteSpace(options.PlayerBuild))
+        {
+            throw new ArgumentException("--player-build is required with --skip-build");
+        }
         _ = PerfScenario.Select(options.Scenario);
         return options;
     }
@@ -76,10 +84,11 @@ internal sealed class RunnerOptions
         output.WriteLine("  --build-target <StandaloneLinux64|StandaloneOSX>");
         output.WriteLine("  --scenario <name|all>                    Default: all");
         output.WriteLine("  --helper <path>                          Default: tools/ros2-perf-helper install output");
+        output.WriteLine("  --player-build <path>                    Existing Player build path for --skip-build");
         output.WriteLine("  --artifacts <path>                       Default: artifacts/perf");
         output.WriteLine("  --capture-frames <count>                 Default: 1200");
         output.WriteLine("  --profiler-memory <bytes>                Default: 268435456");
-        output.WriteLine("  --skip-build                             Reuse existing Player build");
+        output.WriteLine("  --skip-build                             Reuse --player-build instead of building");
     }
 
     private static string RequireValue(string[] args, ref int index, string name)

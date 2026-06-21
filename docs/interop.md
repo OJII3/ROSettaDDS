@@ -142,7 +142,7 @@ helper の stdout を JSON Lines で受け取り、`done.received` または `er
 ```sh
 nix develop
 scripts/ros2/build_helper.sh
-uloop list --project-path Ros2Unity
+uloop execute-dynamic-code --project-path Ros2Unity --code 'return "ok";'
 dotnet run --project tools/rosettadds-perf-runner -- \
   --scenario unity-to-ros2-reliable-1024 \
   --capture-frames 1200

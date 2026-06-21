@@ -87,6 +87,9 @@ namespace ROSettaDDS.UnityPerfHarness
                        DurabilityQos.Volatile))
             {
                 participant.Start();
+                metrics.WriteSentinel(args.ReadyFile, "ready");
+                metrics.Event("ready");
+
                 bool matched = await publisher.WaitForMatchedAsync(1, TimeSpan.FromSeconds(10));
                 if (!matched)
                 {
@@ -94,8 +97,6 @@ namespace ROSettaDDS.UnityPerfHarness
                 }
 
                 metrics.Event("matched");
-                metrics.WriteSentinel(args.ReadyFile, "ready");
-
                 var message = CreatePayloadMessage(args.PayloadBytes);
                 int serializedBytes = publisher.SerializeWithEncapsulation(message).Length;
                 var stopwatch = Stopwatch.StartNew();

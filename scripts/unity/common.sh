@@ -77,7 +77,9 @@ parse_args() {
 
 uloop_editor_available() {
   command -v uloop >/dev/null 2>&1 || return 1
-  uloop list --project-path "$PROJECT_PATH" >/dev/null 2>&1
+  uloop execute-dynamic-code \
+    --project-path "$PROJECT_PATH" \
+    --code 'return "ok";' >/dev/null 2>&1
 }
 
 run_tests_uloop() {
