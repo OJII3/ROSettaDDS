@@ -655,7 +655,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         written = writer.BytesWritten;
     }
 
-    private int WriteDataFragToScratch(byte[] buffer, DataFragSubmessage dataFrag)
+    private int WriteDataFragToScratch(Span<byte> buffer, DataFragSubmessage dataFrag)
     {
         var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
         writer.WriteDataFrag(dataFrag);
