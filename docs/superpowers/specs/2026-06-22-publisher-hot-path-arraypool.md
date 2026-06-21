@@ -52,13 +52,19 @@ publish 1 回あたりに確保するヒープバッファを 0 件にし、Unit
 ## スコープ
 
 - **本スペック**: `StatefulWriter.BuildDataPacket` /
-  `StatefulWriter.BuildDataFragPackets` / `StatelessWriter.BuildPacket` を
-  `ArrayPool<byte>.Shared` 利用に書き換え。`IRtpsTransport.SendAsync` の
-  `ReadOnlyMemory<byte>` lifetime 規約を尊重
-- **本スペック外**: `Publisher.SerializeWithEncapsulation` の payload buffer
-  pool 化 (B 案 / 別 issue)、`HeartbeatPacket` / `GapPacket` の buffer 化
-  (hot path ではない)、best-effort 8 KiB ROS 2→Unity タイムアウト失敗の対処
-  (別 issue)、async/await 段数削減 (C 案 / 別 issue)
+  `StatefulWriter.BuildDataFragPackets` を `ArrayPool<byte>.Shared` 利用に
+  書き換え。`IRtpsTransport.SendAsync` の `ReadOnlyMemory<byte>` lifetime
+  規約を尊重
+- **本スペック外**:
+  - `StatelessWriter.BuildPacket` の ArrayPool 化 → `StatelessWriter` は
+    現在 `Publisher<T>` API からもテストからも参照されていないデッドコード
+    (`rg -n "new StatelessWriter" src/ tests/` の結果 0 件)。将来 `Publisher<T>`
+    で Best-Effort 経路を有効化したときに再評価する
+  - `Publisher.SerializeWithEncapsulation` の payload buffer pool 化
+    (B 案 / 別 issue)
+  - `HeartbeatPacket` / `GapPacket` の buffer 化 (hot path ではない)
+  - best-effort 8 KiB ROS 2→Unity タイムアウト失敗の対処 (別 issue)
+  - async/await 段数削減 (C 案 / 別 issue)
 
 ## アーキテクチャ
 
@@ -152,53 +158,10 @@ private async ValueTask SendDataToDestinationAsync(
 
 ### 3. `StatelessWriter` 側実装
 
-```csharp
-public async ValueTask WriteAsync(
-    ReadOnlyMemory<byte> serializedPayload,
-    CancellationToken cancellationToken = default)
-{
-    long sn = Interlocked.Increment(ref _sequenceNumber);
-
-    byte[] scratch = ArrayPool<byte>.Shared.Rent(SendBufferSize);
-    try
-    {
-        BuildPacket(serializedPayload, sn, scratch, out int written);
-        await _transport.SendAsync(scratch.AsMemory(0, written), _destination, cancellationToken)
-            .ConfigureAwait(false);
-    }
-    catch (OperationCanceledException) { throw; }
-    catch (Exception ex)
-    {
-        _logger.Error("StatelessWriter SendAsync failed", ex);
-    }
-    finally
-    {
-        ArrayPool<byte>.Shared.Return(scratch);
-    }
-}
-
-internal void BuildPacket(
-    ReadOnlyMemory<byte> serializedPayload, long sequenceNumber,
-    Span<byte> destination, out int written)
-{
-    var writer = new RtpsMessageWriter(destination, _version, _vendorId, _localPrefix);
-    writer.WriteInfoTimestamp(new InfoTimestampSubmessage(Time.Now()));
-    var dataSubmsg = new DataSubmessage(
-        readerEntityId: EntityId.Unknown,
-        writerEntityId: _writerEntityId,
-        writerSn: new SequenceNumber(sequenceNumber),
-        serializedPayload: serializedPayload,
-        dataPresent: true);
-    writer.WriteData(dataSubmsg, CdrEndianness.LittleEndian);
-    written = writer.BytesWritten;
-}
-```
-
-`public ReadOnlyMemory<byte> BuildPacket(...)` の現行シグネチャは
-外部呼び出しがあるので残す。オーバーロードで `Span<byte>, out int` 版を
-追加し、内部経路は新シグネチャに切り替える。テストで使う
-`tests/rosettadds.Tests/Integration/PubSubLoopbackTests.cs:550` の
-`BuildDataPacket` (テスト側のローカル関数) はこの変更と独立なので影響なし。
+スコープ外 (「スコープ」セクション参照)。`StatelessWriter` はデッドコードの
+ため、API 互換のためだけに既存実装を維持する。将来 `Publisher<T>` で
+Best-Effort 経路を有効化したタイミングで同じパターン
+(`Span<byte> destination, out int written` + `ArrayPool` 経由) を適用する。
 
 ### 4. Heartbeat / Gap 経路
 
