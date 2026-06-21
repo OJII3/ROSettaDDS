@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using ROSettaDDS.Common;
 using ROSettaDDS.Dds;
@@ -143,5 +144,100 @@ public class PublisherHotPathTests
 
         var received = await receivedTcs.Task.WaitAsync(ReceiveTimeout);
         received.Data.Length.Should().Be(8192);
+    }
+
+    [Fact]
+    public async Task Publish_1件あたりの_GC_allocation_が_過剰でない()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        using var sub = pB.CreateSubscription<StringMessage>(
+            "alloc_topic",
+            StringMessageSerializer.Instance,
+            (_, _) => { },
+            reliability: ReliabilityQos.Reliable);
+
+        using var pub = pA.CreatePublisher<StringMessage>(
+            "alloc_topic",
+            StringMessageSerializer.Instance,
+            reliability: ReliabilityQos.Reliable,
+            durability: DurabilityQos.Volatile);
+
+        pA.Start();
+        pB.Start();
+        await pub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+
+        var msg = new StringMessage("hello");
+
+        for (int i = 0; i < 100; i++)
+        {
+            await pub.PublishAsync(msg);
+            await Task.Delay(1);
+        }
+
+        await Task.Delay(200);
+
+        const int N = 500;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < N; i++)
+        {
+            await pub.PublishAsync(msg);
+        }
+        long after = GC.GetAllocatedBytesForCurrentThread();
+
+        double perPublish = (after - before) / (double)N;
+        // 環境依存の allocation を吸収するため 2 KB を閾値とする。
+        // LoopbackTransport の packet.ToArray() が受信側で allocation を発生させるため、
+        // 完璧な 0 にはならない。
+        perPublish.Should().BeLessThan(2048,
+            $"1 publish あたりの allocation が想定外: {perPublish:F1} bytes");
+    }
+
+    [Fact]
+    public async Task Reliable_small_payload_の_LoopbackHub_スループットが_ベースラインを満たす()
+    {
+        var env = CreatePair();
+        using var pA = env.ParticipantA;
+        using var pB = env.ParticipantB;
+
+        int received = 0;
+        using var sub = pB.CreateSubscription<StringMessage>(
+            "tput_topic",
+            StringMessageSerializer.Instance,
+            (_, _) => Interlocked.Increment(ref received),
+            reliability: ReliabilityQos.Reliable);
+
+        using var pub = pA.CreatePublisher<StringMessage>(
+            "tput_topic",
+            StringMessageSerializer.Instance,
+            reliability: ReliabilityQos.Reliable,
+            durability: DurabilityQos.Volatile);
+
+        pA.Start();
+        pB.Start();
+        await pub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+
+        const int N = 1000;
+        var msg = new StringMessage("payload");
+
+        for (int i = 0; i < 50; i++)
+        {
+            await pub.PublishAsync(msg);
+            await Task.Delay(1);
+        }
+        await Task.Delay(100);
+
+        var sw = Stopwatch.StartNew();
+        for (int i = 0; i < N; i++)
+        {
+            await pub.PublishAsync(msg);
+        }
+        sw.Stop();
+
+        double tps = N / Math.Max(0.000001, sw.Elapsed.TotalSeconds);
+        tps.Should().BeGreaterThan(10_000,
+            $"LoopbackHub throughput {tps:F0} msg/s が 10,000 msg/s 未満");
     }
 }
