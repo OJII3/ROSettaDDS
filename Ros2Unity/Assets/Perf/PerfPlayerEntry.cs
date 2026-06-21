@@ -155,7 +155,9 @@ namespace ROSettaDDS.UnityPerfHarness
                 }
                 if (Volatile.Read(ref received) < args.Messages)
                 {
-                    throw new TimeoutException("Timed out waiting for ROS 2 messages.");
+                    throw new TimeoutException(
+                        "Timed out waiting for ROS 2 messages: received " +
+                        Volatile.Read(ref received) + "/" + args.Messages + ".");
                 }
                 stopwatch?.Stop();
 

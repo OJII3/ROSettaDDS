@@ -39,6 +39,7 @@ internal sealed class ProcessCapture : IDisposable
 
     internal int Id => _process.Id;
     internal bool HasExited => _process.HasExited;
+    internal int? ExitCodeOrNull => _process.HasExited ? _process.ExitCode : null;
     internal StreamWriter StandardInput => _process.StandardInput;
 
     internal static ProcessCapture Start(

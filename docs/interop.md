@@ -142,7 +142,7 @@ helper の stdout を JSON Lines で受け取り、`done.received` または `er
 ```sh
 nix develop
 scripts/ros2/build_helper.sh
-uloop get-version --project-path Ros2Unity
+uloop list --project-path Ros2Unity
 dotnet run --project tools/rosettadds-perf-runner -- \
   --scenario unity-to-ros2-reliable-1024 \
   --capture-frames 1200
@@ -150,7 +150,8 @@ dotnet run --project tools/rosettadds-perf-runner -- \
 
 生成物は `artifacts/perf/<run-id>/` に保存される。主な内容は
 `manifest.json`、scenario ごとの `metrics.ndjson`、`player.profiler.raw`、
-Player log、helper stdout/stderr log。
+Player log、helper stdout/stderr log。いずれかの scenario が失敗した場合 runner は
+非 0 で終了するが、成功/失敗の内訳と生成済み artifact は `manifest.json` に残る。
 
 ## 次に追加する検証
 

@@ -93,28 +93,35 @@ namespace ROSettaDDS.UnityPerfHarness
             }
 
             var result = new PerfPlayerArguments();
-            if (!ReadRequired(values, "--rosettadds-scenario", out result.Scenario, out error)) return false;
-            if (!ReadDirection(values, out result.Direction, out error)) return false;
+            if (!ReadRequired(values, "--rosettadds-scenario", out string scenario, out error)) return false;
+            if (!ReadDirection(values, out PerfDirection direction, out error)) return false;
             if (!ReadInt(values, "--rosettadds-domain-id", positive: false, out int domainId, out error)) return false;
-            if (!ReadRequired(values, "--rosettadds-topic", out result.Topic, out error)) return false;
-            if (!ReadQos(values, out result.Qos, out error)) return false;
+            if (!ReadRequired(values, "--rosettadds-topic", out string topic, out error)) return false;
+            if (!ReadQos(values, out PerfQos qos, out error)) return false;
             if (!ReadInt(values, "--rosettadds-payload-bytes", positive: true, out int payloadBytes, out error)) return false;
             if (!ReadInt(values, "--rosettadds-messages", positive: true, out int messages, out error)) return false;
-            if (!ReadRequired(values, "--rosettadds-ready-file", out result.ReadyFile, out error)) return false;
-            if (!ReadRequired(values, "--rosettadds-done-file", out result.DoneFile, out error)) return false;
-            if (!ReadRequired(values, "--rosettadds-metrics-file", out result.MetricsFile, out error)) return false;
+            if (!ReadRequired(values, "--rosettadds-ready-file", out string readyFile, out error)) return false;
+            if (!ReadRequired(values, "--rosettadds-done-file", out string doneFile, out error)) return false;
+            if (!ReadRequired(values, "--rosettadds-metrics-file", out string metricsFile, out error)) return false;
             values.TryGetValue("--rosettadds-release-file", out string releaseFile);
-            result.ReleaseFile = releaseFile;
 
-            if (string.IsNullOrEmpty(result.Topic) || result.Topic[0] != '/')
+            if (string.IsNullOrEmpty(topic) || topic[0] != '/')
             {
                 error = "--rosettadds-topic must be an absolute ROS topic";
                 return false;
             }
 
+            result.Scenario = scenario;
+            result.Direction = direction;
             result.DomainId = domainId;
+            result.Topic = topic;
+            result.Qos = qos;
             result.PayloadBytes = payloadBytes;
             result.Messages = messages;
+            result.ReadyFile = readyFile;
+            result.DoneFile = doneFile;
+            result.MetricsFile = metricsFile;
+            result.ReleaseFile = releaseFile;
             parsed = result;
             return true;
         }

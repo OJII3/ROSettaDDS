@@ -38,23 +38,35 @@ namespace ROSettaDDS.EditorTools
         {
             BuildTarget target = ParseBuildTarget(targetText);
             ScriptingImplementation backend = ParseBackend(backendText);
-            PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, backend);
+            ScriptingImplementation originalBackend =
+                PlayerSettings.GetScriptingBackend(NamedBuildTarget.Standalone);
+            Dictionary<string, string> preservedFiles = SnapshotProjectFiles();
 
-            string directory = Path.GetDirectoryName(buildPath);
-            if (!string.IsNullOrEmpty(directory))
+            try
             {
-                Directory.CreateDirectory(directory);
+                PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, backend);
+
+                string directory = Path.GetDirectoryName(buildPath);
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                var options = new BuildPlayerOptions
+                {
+                    scenes = EnabledScenes(),
+                    target = target,
+                    locationPathName = buildPath,
+                    options = BuildOptions.Development,
+                };
+
+                BuildReportOrThrow(options);
             }
-
-            var options = new BuildPlayerOptions
+            finally
             {
-                scenes = EnabledScenes(),
-                target = target,
-                locationPathName = buildPath,
-                options = BuildOptions.Development,
-            };
-
-            BuildReportOrThrow(options);
+                PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, originalBackend);
+                RestoreProjectFiles(preservedFiles);
+            }
         }
 
         private static void BuildReportOrThrow(BuildPlayerOptions options)
@@ -134,6 +146,41 @@ namespace ROSettaDDS.EditorTools
                 return ScriptingImplementation.Mono2x;
             }
             throw new ArgumentException("--rosettadds-perf-backend must be il2cpp or mono");
+        }
+
+        private static Dictionary<string, string> SnapshotProjectFiles()
+        {
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (string relativePath in PreservedProjectFiles())
+            {
+                string path = ProjectFilePath(relativePath);
+                if (File.Exists(path))
+                {
+                    result[relativePath] = File.ReadAllText(path);
+                }
+            }
+            return result;
+        }
+
+        private static void RestoreProjectFiles(Dictionary<string, string> snapshots)
+        {
+            foreach (KeyValuePair<string, string> snapshot in snapshots)
+            {
+                File.WriteAllText(ProjectFilePath(snapshot.Key), snapshot.Value);
+            }
+            AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+        }
+
+        private static IEnumerable<string> PreservedProjectFiles()
+        {
+            yield return "ProjectSettings/ProjectSettings.asset";
+            yield return "Assets/Settings/PC_RPAsset.asset";
+            yield return "Assets/Settings/UniversalRenderPipelineGlobalSettings.asset";
+        }
+
+        private static string ProjectFilePath(string relativePath)
+        {
+            return Path.GetFullPath(Path.Combine(Application.dataPath, "..", relativePath));
         }
     }
 }
