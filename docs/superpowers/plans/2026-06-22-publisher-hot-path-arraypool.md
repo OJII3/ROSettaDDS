@@ -259,7 +259,9 @@ private void BuildDataPacket(
 
 - [ ] **Step 2: `BuildDataPackets` を削除し `SendDataToDestinationAsync` を ArrayPool 経由に書き換え**
 
-`StatefulWriter.cs` の `BuildDataPackets` (L549-568) と `SendDataToDestinationAsync` (L533-547) を以下に置換:
+`StatefulWriter.cs` の `BuildDataPackets` (L549-568) と `SendDataToDestinationAsync` (L533-547) を以下に置換。
+
+> **注**: `RtpsMessageWriter` は `ref struct` (`src/rosettadds/Rtps/RtpsMessageWriter.cs:11` で `public ref struct`) なので、async メソッド内で直接ローカル変数として使えない (ref struct は await を越えられない)。そのため fragment ループ内の `new RtpsMessageWriter(scratch, ...)` 部分は同期ヘルパー `WriteDataFragToScratch(Span<byte> buffer, DataFragSubmessage dataFrag)` に切り出して呼び出す。
 
 ```csharp
 private async ValueTask SendDataToDestinationAsync(
@@ -363,6 +365,33 @@ private async ValueTask SendDataFragPacketsSequentialAsync(
             _logger.Error("StatefulWriter DATA_FRAG send failed", ex);
         }
     }
+}
+```
+
+上記コードブロックの `var writer = new RtpsMessageWriter(...)` 〜 `int written = writer.BytesWritten;` の 3 行は実際にはコンパイルできないので、代わりに次の同期ヘルパーを `StatefulWriter` 内に追加し、fragment ループから呼び出す:
+
+```csharp
+private int WriteDataFragToScratch(Span<byte> buffer, DataFragSubmessage dataFrag)
+{
+    var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
+    writer.WriteDataFrag(dataFrag);
+    return writer.BytesWritten;
+}
+```
+
+呼び出し側:
+
+```csharp
+int written = WriteDataFragToScratch(scratch, dataFrag);
+try
+{
+    await _transport.SendAsync(scratch.AsMemory(0, written), destination, cancellationToken)
+        .ConfigureAwait(false);
+}
+catch (OperationCanceledException) { throw; }
+catch (Exception ex)
+{
+    _logger.Error("StatefulWriter DATA_FRAG send failed", ex);
 }
 ```
 
