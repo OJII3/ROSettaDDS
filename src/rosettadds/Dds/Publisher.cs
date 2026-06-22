@@ -1,5 +1,7 @@
+using System.Buffers;
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
+using ROSettaDDS.Rtps.HistoryCache;
 using ROSettaDDS.Rtps.Writer;
 
 using Guid = ROSettaDDS.Common.Guid;
@@ -40,8 +42,10 @@ public sealed class Publisher<T> : IDisposable
     public async ValueTask PublishAsync(T value, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var payload = SerializeWithEncapsulation(value);
-        await _writer.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+        var (owner, memory) = SerializeOwned(value);
+        // WriteOwnedAsync 内で Add 失敗時のみ owner は release 済み。
+        // ここでは catch しない (二重 dispose / Use-After-Return 防止)。
+        await _writer.WriteOwnedAsync(owner, memory, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>値を送信し、採番された RTPS シーケンス番号を返す (サービス用)。</summary>
@@ -69,6 +73,32 @@ public sealed class Publisher<T> : IDisposable
         _serializer.Serialize(ref w, in value);
         int payloadLength = w.Position;
         return buffer.AsMemory(0, payloadLength);
+    }
+
+    /// <summary>
+    /// ArrayPool から rent した buffer に serialize し、所有者情報 (RtpsPayloadOwner) と
+    /// ペイロード (ReadOnlyMemory) を返す。所有者は history に移転し、
+    /// history.Add 失敗時のみ呼び出し側で release する。
+    /// </summary>
+    private (RtpsPayloadOwner owner, ReadOnlyMemory<byte> memory) SerializeOwned(T value)
+    {
+        int sizeEstimate = _serializer.GetSerializedSize(value);
+        int totalCapacity = CdrEncapsulation.Size + sizeEstimate + 16;
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(totalCapacity);
+        try
+        {
+            CdrEncapsulation.Write(buffer, CdrEncapsulation.CdrLittleEndian);
+            var w = new CdrWriter(buffer, CdrEndianness.LittleEndian, cdrOrigin: CdrEncapsulation.Size);
+            _serializer.Serialize(ref w, in value);
+            int payloadLength = w.Position;
+            var owner = new RtpsPayloadOwner(buffer);
+            return (owner, buffer.AsMemory(0, payloadLength));
+        }
+        catch
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+            throw;
+        }
     }
 
     /// <summary>
