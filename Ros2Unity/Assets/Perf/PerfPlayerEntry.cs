@@ -124,7 +124,6 @@ namespace ROSettaDDS.UnityPerfHarness
         {
             int received = 0;
             Stopwatch stopwatch = null;
-            using (var receivedEvent = new AutoResetEvent(false))
             using (var participant = CreateParticipant(args.DomainId, "player_sub"))
             using (var subscription = participant.CreateSubscription<StringMessage>(
                        args.Topic,
@@ -135,7 +134,6 @@ namespace ROSettaDDS.UnityPerfHarness
                            {
                                stopwatch = Stopwatch.StartNew();
                            }
-                           receivedEvent.Set();
                        },
                        reliability: args.Reliability))
             {
@@ -151,18 +149,15 @@ namespace ROSettaDDS.UnityPerfHarness
                 metrics.Event("matched");
                 metrics.Event("measure_start");
 
-                TimeSpan receiveDeadline = TimeSpan.FromSeconds(30);
-                var deadline = Stopwatch.StartNew();
-                while (Volatile.Read(ref received) < args.Messages)
-                {
-                    TimeSpan remaining = receiveDeadline - deadline.Elapsed;
-                    if (remaining <= TimeSpan.Zero)
+                bool completed = await AsyncReceiveWaiter.WaitUntilAsync(
+                    () => Volatile.Read(ref received) >= args.Messages,
+                    TimeSpan.FromSeconds(30),
+                    async delay =>
                     {
-                        break;
-                    }
-                    receivedEvent.WaitOne(remaining);
-                }
-                if (Volatile.Read(ref received) < args.Messages)
+                        recorders.Collect();
+                        await Task.Delay(delay);
+                    });
+                if (!completed)
                 {
                     throw new TimeoutException(
                         "Timed out waiting for ROS 2 messages: received " +

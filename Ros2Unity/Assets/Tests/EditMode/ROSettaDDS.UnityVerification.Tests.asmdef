@@ -3,6 +3,7 @@
     "rootNamespace": "ROSettaDDS.UnityVerification.Tests",
     "references": [
         "ROSettaDDS",
+        "ROSettaDDS.UnityPerfHarness",
         "Unity.PerformanceTesting",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
