@@ -218,12 +218,12 @@ public class PublisherBatchTests
             {
                 lock (receivedLock) { received.Add(msg.Data); }
             },
-            reliability: ReliabilityQos.BestEffort);
+            reliability: ReliabilityQos.Reliable);
 
         using var pub = pA.CreatePublisher<StringMessage>(
             "max_samples_batch_topic",
             StringMessageSerializer.Instance,
-            ReliabilityQos.BestEffort,
+            ReliabilityQos.Reliable,
             DurabilityQos.Volatile);
 
         pA.Start();
