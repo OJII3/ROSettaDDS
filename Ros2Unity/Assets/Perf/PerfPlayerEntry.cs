@@ -124,6 +124,7 @@ namespace ROSettaDDS.UnityPerfHarness
         {
             int received = 0;
             Stopwatch stopwatch = null;
+            using (var receivedEvent = new AutoResetEvent(false))
             using (var participant = CreateParticipant(args.DomainId, "player_sub"))
             using (var subscription = participant.CreateSubscription<StringMessage>(
                        args.Topic,
@@ -134,6 +135,7 @@ namespace ROSettaDDS.UnityPerfHarness
                            {
                                stopwatch = Stopwatch.StartNew();
                            }
+                           receivedEvent.Set();
                        },
                        reliability: args.Reliability))
             {
@@ -149,10 +151,16 @@ namespace ROSettaDDS.UnityPerfHarness
                 metrics.Event("matched");
                 metrics.Event("measure_start");
 
+                TimeSpan receiveDeadline = TimeSpan.FromSeconds(30);
                 var deadline = Stopwatch.StartNew();
-                while (Volatile.Read(ref received) < args.Messages && deadline.Elapsed < TimeSpan.FromSeconds(30))
+                while (Volatile.Read(ref received) < args.Messages)
                 {
-                    await Task.Delay(2);
+                    TimeSpan remaining = receiveDeadline - deadline.Elapsed;
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        break;
+                    }
+                    receivedEvent.WaitOne(remaining);
                 }
                 if (Volatile.Read(ref received) < args.Messages)
                 {
