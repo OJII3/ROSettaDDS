@@ -29,10 +29,13 @@ internal sealed class PerfScenario
     {
         new PerfScenario("unity-to-ros2-reliable-32", PerfDirection.UnityToRos2, "reliable", 32, 500),
         new PerfScenario("unity-to-ros2-reliable-1024", PerfDirection.UnityToRos2, "reliable", 1024, 500),
+        new PerfScenario("unity-to-ros2-reliable-1400", PerfDirection.UnityToRos2, "reliable", 1400, 500),
+        new PerfScenario("unity-to-ros2-reliable-8000", PerfDirection.UnityToRos2, "reliable", 8000, 200),
         new PerfScenario("unity-to-ros2-best-effort-8192", PerfDirection.UnityToRos2, "best_effort", 8192, 200),
         new PerfScenario("ros2-to-unity-reliable-32", PerfDirection.Ros2ToUnity, "reliable", 32, 500),
         new PerfScenario("ros2-to-unity-reliable-1024", PerfDirection.Ros2ToUnity, "reliable", 1024, 500),
         new PerfScenario("ros2-to-unity-best-effort-8192", PerfDirection.Ros2ToUnity, "best_effort", 8192, 200),
+        new PerfScenario("ros2-to-unity-best-effort-32k", PerfDirection.Ros2ToUnity, "best_effort", 32768, 100),
     };
 
     internal static IReadOnlyList<PerfScenario> Select(string value)
