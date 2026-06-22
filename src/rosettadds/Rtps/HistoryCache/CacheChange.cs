@@ -18,6 +18,12 @@ public sealed class CacheChange
     public ReadOnlyMemory<byte> SerializedPayload { get; }
     public ReadOnlyMemory<byte> InlineQos { get; }
     public CdrEndianness InlineQosEndianness { get; }
+    /// <summary>
+    /// Pool-owned ペイロードの所有者。所有権は通常 WriterHistoryCache が持ち、
+    /// CacheChange 自身は dispose しません。所有者の release は WriterHistoryCache の
+    /// Remove / RemoveBelowOrEqual / EvictIfNeeded / Dispose 経路で行います。
+    /// </summary>
+    internal RtpsPayloadOwner? PayloadOwner { get; }
 
     public CacheChange(
         ChangeKind kind,
@@ -35,6 +41,20 @@ public sealed class CacheChange
         SerializedPayload = serializedPayload;
         InlineQos = inlineQos;
         InlineQosEndianness = inlineQosEndianness;
+    }
+
+    internal CacheChange(
+        ChangeKind kind,
+        Guid writerGuid,
+        SequenceNumber sequenceNumber,
+        Time sourceTimestamp,
+        ReadOnlyMemory<byte> serializedPayload,
+        RtpsPayloadOwner? payloadOwner,
+        ReadOnlyMemory<byte> inlineQos = default,
+        CdrEndianness inlineQosEndianness = CdrEndianness.LittleEndian)
+        : this(kind, writerGuid, sequenceNumber, sourceTimestamp, serializedPayload, inlineQos, inlineQosEndianness)
+    {
+        PayloadOwner = payloadOwner;
     }
 
     public override string ToString()
