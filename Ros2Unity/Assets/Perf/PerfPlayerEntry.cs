@@ -149,12 +149,15 @@ namespace ROSettaDDS.UnityPerfHarness
                 metrics.Event("matched");
                 metrics.Event("measure_start");
 
-                var deadline = Stopwatch.StartNew();
-                while (Volatile.Read(ref received) < args.Messages && deadline.Elapsed < TimeSpan.FromSeconds(30))
-                {
-                    await Task.Delay(2);
-                }
-                if (Volatile.Read(ref received) < args.Messages)
+                bool completed = await AsyncReceiveWaiter.WaitUntilAsync(
+                    () => Volatile.Read(ref received) >= args.Messages,
+                    TimeSpan.FromSeconds(30),
+                    async delay =>
+                    {
+                        recorders.Collect();
+                        await Task.Delay(delay);
+                    });
+                if (!completed)
                 {
                     throw new TimeoutException(
                         "Timed out waiting for ROS 2 messages: received " +

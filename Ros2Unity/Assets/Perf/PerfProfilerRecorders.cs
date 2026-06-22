@@ -7,6 +7,7 @@ namespace ROSettaDDS.UnityPerfHarness
     internal sealed class PerfProfilerRecorders : IDisposable
     {
         private readonly List<RecorderEntry> _recorders = new List<RecorderEntry>();
+        private readonly ProfilerCounterAccumulator _gcAllocatedAccumulator = new ProfilerCounterAccumulator();
 
         private PerfProfilerRecorders()
         {
@@ -18,12 +19,16 @@ namespace ROSettaDDS.UnityPerfHarness
             result.Add("main_thread_time_ns", ProfilerCategory.Internal, "Main Thread");
             result.Add("gc_reserved_memory_bytes", ProfilerCategory.Memory, "GC Reserved Memory");
             result.Add("gc_used_memory_bytes", ProfilerCategory.Memory, "GC Used Memory");
+            result.Add("total_used_memory_bytes", ProfilerCategory.Memory, "Total Used Memory");
             result.Add("system_used_memory_bytes", ProfilerCategory.Memory, "System Used Memory");
+            result.Add("gc_allocated_in_frame_bytes", ProfilerCategory.Memory, "GC Allocated In Frame");
             return result;
         }
 
         internal Dictionary<string, object> Snapshot()
         {
+            Collect();
+
             var result = new Dictionary<string, object>();
             for (int i = 0; i < _recorders.Count; i++)
             {
@@ -32,9 +37,34 @@ namespace ROSettaDDS.UnityPerfHarness
                 if (entry.Recorder.Valid)
                 {
                     result[entry.Name + "_last"] = entry.Recorder.LastValue;
+                    if (entry.Name == "gc_allocated_in_frame_bytes")
+                    {
+                        result[entry.Name + "_last"] = _gcAllocatedAccumulator.LastValue;
+                        result[entry.Name + "_total"] = _gcAllocatedAccumulator.Total;
+                        result[entry.Name + "_samples"] = _gcAllocatedAccumulator.Samples;
+                    }
                 }
             }
             return result;
+        }
+
+        internal void Collect()
+        {
+            for (int i = 0; i < _recorders.Count; i++)
+            {
+                RecorderEntry entry = _recorders[i];
+                if (entry.Name != "gc_allocated_in_frame_bytes" || !entry.Recorder.Valid)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < entry.Recorder.Count; j++)
+                {
+                    _gcAllocatedAccumulator.Add(entry.Recorder.GetSample(j).Value);
+                }
+
+                entry.Recorder.Reset();
+            }
         }
 
         public void Dispose()
@@ -47,7 +77,7 @@ namespace ROSettaDDS.UnityPerfHarness
 
         private void Add(string name, ProfilerCategory category, string counterName)
         {
-            var recorder = ProfilerRecorder.StartNew(category, counterName, 128);
+            var recorder = ProfilerRecorder.StartNew(category, counterName, 4096);
             _recorders.Add(new RecorderEntry(name, recorder));
         }
 
