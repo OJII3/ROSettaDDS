@@ -101,10 +101,7 @@ namespace ROSettaDDS.UnityPerfHarness
                 int serializedBytes = publisher.SerializeWithEncapsulation(message).Length;
                 var stopwatch = Stopwatch.StartNew();
                 metrics.Event("measure_start");
-                for (int i = 0; i < args.Messages; i++)
-                {
-                    await publisher.PublishAsync(message);
-                }
+                await publisher.PublishRepeatedAsync(message, args.Messages);
                 stopwatch.Stop();
 
                 Dictionary<string, object> fields = recorders.Snapshot();
