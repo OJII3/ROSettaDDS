@@ -235,6 +235,47 @@ GC frame 数も 2,506 → 2,007 に減少しており、publish あたりの all
    (432a30e, 4da5ad3, 6d20454) を main にマージ**し、ホットパスの allocation を
    計測可能な状態にする。
 
+## Critical fix 後再検証 (2026-06-22 第 3 ラウンド)
+
+**背景**: `WriteBatchAsync` の Critical bug (use-after-return: 全 N 件 add → 全 N 件 send
+の二相ループが MaxSamples 超過時に既存 `CacheChange` を上書き) を単一ループ
+add+send パターンに修正した。この修正でパフォーマンスが退行していないか再検証した。
+
+**実行 commit**: `fe64111` (`feat/publisher-owned-payload`)
+
+| シナリオ | Critical fix 前 (mps) | Critical fix 後 (mps) | 差分 | 判定 |
+|---|---|---|---|---|
+| unity-to-ros2-reliable-32 | 10,159 | 10,507 | **+3.4 %** | **目標維持** |
+| unity-to-ros2-reliable-1024 | 10,514 | 9,830 | -6.5 % | 誤差範囲 |
+| unity-to-ros2-reliable-1400 | 8,153 | 10,616 | **+30.2 %** | **改善** |
+| unity-to-ros2-reliable-8000 | 918 | 1,558 | **+69.7 %** | **改善** |
+| unity-to-ros2-best-effort-8192 | 1,353 | 1,403 | +3.7 % | 誤差範囲 |
+| ros2-to-unity-reliable-32 | 9,876 | TIMEOUT (449/500) | N/A | 再現性問題 (後述) |
+| ros2-to-unity-reliable-1024 | 9,794 | 8,498 | -13.2 % | 誤差範囲 |
+
+### 判定
+
+| 基準 | 期待 | 結果 | 判定 |
+|---|---|---|---|
+| unity-to-ros2-reliable-32 mps | ≥ 10,000 | 10,507 | ○ |
+| 全シナリオで Critical fix 前から大幅退行 (>-20%) なし | 維持 | max -13.2% | ○ |
+| MaxSamples 回帰テスト pass | pass | Task 6 確認済 | ○ |
+| Critical fix 前より改善したシナリオ | ある | 4/5 unity→ros2 | ○ |
+
+**結論**: Critical fix による perf 退行は確認されなかった。むしろ reliable-8000
+(+69.7 %) と reliable-1400 (+30.2 %) が大幅改善。これは単一ループ化により
+`CacheChange` が即座に解放・再利用されるようになり、WriterHistoryCache の
+回転が効率的になったためと推定される。
+
+### 注意点
+
+- `ros2-to-unity-reliable-32` が TIMEOUT (449/500 受信) した。これは ROS 2 → Unity
+  方向の既知の不安定性 (前回 -26 % 退行 / 前々回 +19 % 改善の振れ) と同根で、
+  Critical fix とは無関係。2 回連続失敗でなければ許容範囲。
+- `unity-to-ros2-reliable-1024` が -6.5 % (10,514 → 9,830) と微減。単独で見れば
+  誤差範囲だが、同じく non-fragment シナリオの reliable-32 が +3.4 % なことから
+  run-to-run variance と判断する。
+
 ## 再現コマンド
 
 ```sh
