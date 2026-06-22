@@ -201,6 +201,87 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         await SendDataAsync(change, cancellationToken).ConfigureAwait(false);
     }
 
+    private CacheChange AddOwnedChange(RtpsPayloadOwner owner, ReadOnlyMemory<byte> payload)
+    {
+        try
+        {
+            return _history.Add(ChangeKind.Alive, payload, owner, Time.Now());
+        }
+        catch
+        {
+            owner.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Pool-owned payload を 1 件送信。所有権は history に移転し、
+    /// history.Add 失敗時のみ owner を release する。
+    /// </summary>
+    internal async ValueTask WriteOwnedAsync(
+        RtpsPayloadOwner owner,
+        ReadOnlyMemory<byte> payload,
+        CancellationToken cancellationToken = default)
+    {
+        bool ownerHandedOff = false;
+        try
+        {
+            ThrowIfDisposed();
+            var change = AddOwnedChange(owner, payload);
+            ownerHandedOff = true;
+            await SendDataAsync(change, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (!ownerHandedOff)
+            {
+                owner.Dispose();
+            }
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Pool-owned payload を N 件 batch 送信。各 Add の直後に Send することで、
+    /// 後続の Add による evict で未送信の PayloadOwner が Dispose される
+    /// use-after-return を防止する。
+    /// 所有権は history に移転。Add 失敗時の owner release は outer catch が行う。
+    /// </summary>
+    internal async ValueTask WriteBatchAsync(
+        RtpsPayloadOwner[] owners,
+        ReadOnlyMemory<byte>[] memories,
+        CancellationToken cancellationToken = default)
+    {
+        int n = owners.Length;
+        if (n != memories.Length)
+        {
+            throw new ArgumentException(
+                $"owners.Length ({n}) != memories.Length ({memories.Length})",
+                nameof(memories));
+        }
+
+        int lastAdded = -1;
+        try
+        {
+            ThrowIfDisposed();
+
+            for (int i = 0; i < n; i++)
+            {
+                var change = _history.Add(ChangeKind.Alive, memories[i], owners[i], Time.Now());
+                lastAdded = i;
+                await SendDataAsync(change, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            for (int j = lastAdded + 1; j < n; j++)
+            {
+                owners[j].Dispose();
+            }
+            throw;
+        }
+    }
+
     /// <summary>
     /// <see cref="WriteAsync(ReadOnlyMemory{byte}, ChangeKind, CancellationToken)"/> と同じだが、
     /// 採番された RTPS シーケンス番号を返す。サービスの request/reply 相関に使う。
@@ -285,6 +366,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         if (_disposed) return;
         _disposed = true;
         Stop();
+        _history.Dispose();
     }
 
     /// <summary>
