@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Generic;
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Rtps.HistoryCache;
@@ -60,6 +61,69 @@ public sealed class Publisher<T> : IDisposable
         ThrowIfDisposed();
         var payload = SerializeWithEncapsulation(value);
         return await _writer.WriteReturningSequenceNumberAsync(payload, onSequenceAssigned, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 複数の値を一括送信する batch API。所有権は WriteBatchAsync 境界に集約。
+    /// </summary>
+    public async ValueTask PublishManyAsync(IReadOnlyList<T> values, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (values is null) throw new ArgumentNullException(nameof(values));
+        if (values.Count == 0) return;
+
+        int n = values.Count;
+        var owners = new RtpsPayloadOwner[n];
+        var memories = new ReadOnlyMemory<byte>[n];
+        int created = 0;
+        try
+        {
+            for (int i = 0; i < n; i++)
+            {
+                (owners[i], memories[i]) = SerializeOwned(values[i]);
+                created = i + 1;
+            }
+        }
+        catch
+        {
+            for (int j = 0; j < created; j++)
+                owners[j].Dispose();
+            throw;
+        }
+        await _writer.WriteBatchAsync(owners, memories, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 同じ値を <paramref name="count"/> 回連続送信する shortcut。
+    /// </summary>
+    public ValueTask PublishRepeatedAsync(T value, int count, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (count <= 0) return default;
+
+        return PublishRepeatedCoreAsync(value, count, cancellationToken);
+    }
+
+    private async ValueTask PublishRepeatedCoreAsync(T value, int count, CancellationToken cancellationToken)
+    {
+        var owners = new RtpsPayloadOwner[count];
+        var memories = new ReadOnlyMemory<byte>[count];
+        int created = 0;
+        try
+        {
+            for (int i = 0; i < count; i++)
+            {
+                (owners[i], memories[i]) = SerializeOwned(value);
+                created = i + 1;
+            }
+        }
+        catch
+        {
+            for (int j = 0; j < created; j++)
+                owners[j].Dispose();
+            throw;
+        }
+        await _writer.WriteBatchAsync(owners, memories, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>シリアライズ後のバイト列 (encap header 込み) を返す (テスト/デバッグ用)。</summary>
