@@ -18,7 +18,9 @@ namespace ROSettaDDS.UnityPerfHarness
             result.Add("main_thread_time_ns", ProfilerCategory.Internal, "Main Thread");
             result.Add("gc_reserved_memory_bytes", ProfilerCategory.Memory, "GC Reserved Memory");
             result.Add("gc_used_memory_bytes", ProfilerCategory.Memory, "GC Used Memory");
+            result.Add("total_used_memory_bytes", ProfilerCategory.Memory, "Total Used Memory");
             result.Add("system_used_memory_bytes", ProfilerCategory.Memory, "System Used Memory");
+            result.Add("gc_allocated_in_frame_bytes", ProfilerCategory.Memory, "GC Allocated In Frame");
             return result;
         }
 
@@ -32,6 +34,17 @@ namespace ROSettaDDS.UnityPerfHarness
                 if (entry.Recorder.Valid)
                 {
                     result[entry.Name + "_last"] = entry.Recorder.LastValue;
+                    if (entry.Name == "gc_allocated_in_frame_bytes")
+                    {
+                        long total = 0;
+                        int count = entry.Recorder.Count;
+                        for (int j = 0; j < count; j++)
+                        {
+                            total += entry.Recorder.GetSample(j).Value;
+                        }
+                        result[entry.Name + "_total"] = total;
+                        result[entry.Name + "_samples"] = count;
+                    }
                 }
             }
             return result;
