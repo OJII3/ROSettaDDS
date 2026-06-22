@@ -1,1 +1,5 @@
 .uloop/
+
+# Unity Performance Testing API が Assets/Resources/ に書き出す
+# run ごとの成果物 (フォルダ自体は .gitkeep で追跡)。
+/Assets/Resources/PerformanceTestRun*
