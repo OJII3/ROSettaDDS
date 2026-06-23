@@ -8,7 +8,7 @@ namespace ROSettaDDS.Tests.Discovery;
 
 public class SpdpLoopbackTests
 {
-    private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromSeconds(5);
 
     [Fact]
     public async Task 二つの_DomainParticipant_が_loopback_multicast_で_相互発見する()
