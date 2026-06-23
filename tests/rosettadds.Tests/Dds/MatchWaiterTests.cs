@@ -39,17 +39,19 @@ public class MatchWaiterTests
             () => Volatile.Read(ref counter),
             minCount: 3,
             timeout: TimeSpan.FromSeconds(2));
-        var pumpTask = Task.Run(async () =>
+        var pumpThread = new Thread(() =>
         {
-            await Task.Delay(50);
+            Thread.Sleep(50);
             Interlocked.Increment(ref counter);
-            await Task.Delay(20);
+            Thread.Sleep(20);
             Interlocked.Increment(ref counter);
-            await Task.Delay(20);
+            Thread.Sleep(20);
             Interlocked.Increment(ref counter);
-        });
+        })
+        { IsBackground = true, Name = "MatchWaiterTest-Pump" };
+        pumpThread.Start();
         bool result = await waitTask;
-        await pumpTask;
+        pumpThread.Join();
         Assert.True(result);
     }
 

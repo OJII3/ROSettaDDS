@@ -120,7 +120,14 @@ public class UdpTransportTests
         {
             await sender.SendAsync(new byte[] { (byte)i }, receiver.LocalLocator);
         }
-        await Task.Delay(100);
+
+        // 高負荷 CI で loopback 受信が 100ms では完了しないことがあるため、
+        // Diagnostics.DatagramsEnqueued で enqueue 完了を待つ。
+        var enqDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        while (DateTime.UtcNow < enqDeadline && receiver.Diagnostics.DatagramsEnqueued < count)
+        {
+            await Task.Delay(20);
+        }
 
         receiver.Stop();
 

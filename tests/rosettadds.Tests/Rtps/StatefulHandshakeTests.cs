@@ -105,11 +105,15 @@ public class StatefulHandshakeTests
             change.SequenceNumber.Value.Should().Be(1L);
             change.SerializedPayload.ToArray().Should().Equal(0x01, 0x02, 0x03);
 
-            // HB が flow して ACKNACK で acked になるまで少し待つ
-            await Task.Delay(200);
-
+            // HB→ACKNACK サイクルが回るまで polling。高負荷 CI で固定 delay が
+            // サイクル完了前に尽き HighestAcked=0 のまま失敗することがあるため。
             var proxy = writer.GetReaderProxy(new Guid(s.ReaderPrefix, s.ReaderEntityId));
             proxy.Should().NotBeNull();
+            var ackDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+            while (DateTime.UtcNow < ackDeadline && proxy!.HighestAcked.Value < 1L)
+            {
+                await Task.Delay(20);
+            }
             proxy!.HighestAcked.Value.Should().BeGreaterOrEqualTo(1L);
         }
     }
@@ -166,10 +170,15 @@ public class StatefulHandshakeTests
                 await writer.WriteAsync(new byte[] { (byte)i });
             }
 
-            // HB→ACKNACK が 1 サイクル回るのを待つ
-            await Task.Delay(200);
-
+            // HB→ACKNACK が回るまで polling。高負荷 CI で固定 delay が
+            // サイクル完了前に尽きることがあるため、condition を待つ形にする。
             var proxy = writer.GetReaderProxy(new Guid(s.ReaderPrefix, s.ReaderEntityId))!;
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+            while (DateTime.UtcNow < deadline && proxy.HighestAcked.Value < 3L)
+            {
+                await Task.Delay(20);
+            }
+
             proxy.HighestAcked.Value.Should().Be(3L);
         }
     }
