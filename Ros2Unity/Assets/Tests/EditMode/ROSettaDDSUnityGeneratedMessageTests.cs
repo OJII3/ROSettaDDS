@@ -5,6 +5,7 @@ using System.Threading;
 using NUnit.Framework;
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Msgs.BuiltinInterfaces;
+using ROSettaDDS.Msgs.Geometry;
 using ROSettaDDS.Msgs.Std;
 
 namespace ROSettaDDS.UnityVerification.Tests
@@ -14,6 +15,8 @@ namespace ROSettaDDS.UnityVerification.Tests
         private static readonly MultiArrayLayout SampleLayout = new MultiArrayLayout(
             new[] { new MultiArrayDimension("axis", 3u, 3u) },
             1u);
+
+        private static readonly Header SampleHeader = new Header(new Time(321, 654u), "geometry_test");
 
         private static readonly IGeneratedMessageRoundTripCase[] GeneratedMessageCases =
         {
@@ -49,6 +52,35 @@ namespace ROSettaDDS.UnityVerification.Tests
             Case("std_msgs/UInt32MultiArray", UInt32MultiArraySerializer.Instance, new UInt32MultiArray(SampleLayout, new[] { 1u, 2u, 4000000000u })),
             Case("std_msgs/UInt64", UInt64MessageSerializer.Instance, new UInt64Message(18000000000000000000ul)),
             Case("std_msgs/UInt64MultiArray", UInt64MultiArraySerializer.Instance, new UInt64MultiArray(SampleLayout, new[] { 1ul, 2ul, 18000000000000000000ul })),
+            Case("geometry_msgs/Accel", AccelSerializer.Instance, new Accel(new Vector3(0.5, 0, 0), new Vector3(0, 0, 0.1))),
+            Case("geometry_msgs/AccelStamped", AccelStampedSerializer.Instance, new AccelStamped(SampleHeader, new Accel(new Vector3(0.5, 0, 0), new Vector3(0, 0, 0.1)))),
+            Case("geometry_msgs/AccelWithCovariance", AccelWithCovarianceSerializer.Instance, new AccelWithCovariance(new Accel(new Vector3(0.5, 0, 0), new Vector3(0, 0, 0.1)), new double[36])),
+            Case("geometry_msgs/AccelWithCovarianceStamped", AccelWithCovarianceStampedSerializer.Instance, new AccelWithCovarianceStamped(SampleHeader, new AccelWithCovariance(new Accel(new Vector3(0.5, 0, 0), new Vector3(0, 0, 0.1)), new double[36]))),
+            Case("geometry_msgs/Inertia", InertiaSerializer.Instance, new Inertia(1.5, new Vector3(0, 0, 0.1), 0.1, 0, 0, 0.1, 0, 0.1)),
+            Case("geometry_msgs/InertiaStamped", InertiaStampedSerializer.Instance, new InertiaStamped(SampleHeader, new Inertia(1.5, new Vector3(0, 0, 0.1), 0.1, 0, 0, 0.1, 0, 0.1))),
+            Case("geometry_msgs/Point", PointSerializer.Instance, new Point(1.0, 2.0, 3.0)),
+            Case("geometry_msgs/Point32", Point32Serializer.Instance, new Point32(1.0f, 2.0f, 3.0f)),
+            Case("geometry_msgs/PointStamped", PointStampedSerializer.Instance, new PointStamped(SampleHeader, new Point(1.0, 2.0, 3.0))),
+            Case("geometry_msgs/Polygon", PolygonSerializer.Instance, new Polygon(new[] { new Point32(1.0f, 2.0f, 3.0f), new Point32(4.0f, 5.0f, 6.0f) })),
+            Case("geometry_msgs/PolygonStamped", PolygonStampedSerializer.Instance, new PolygonStamped(SampleHeader, new Polygon(new[] { new Point32(1.0f, 2.0f, 3.0f), new Point32(4.0f, 5.0f, 6.0f) }))),
+            Case("geometry_msgs/Pose", PoseSerializer.Instance, new Pose(new Point(1.0, 2.0, 3.0), new Quaternion(0, 0, 0, 1))),
+            Case("geometry_msgs/Pose2D", Pose2DSerializer.Instance, new Pose2D(1.0, 2.0, 0.5)),
+            Case("geometry_msgs/PoseArray", PoseArraySerializer.Instance, new PoseArray(SampleHeader, new[] { new Pose(new Point(1.0, 2.0, 3.0), new Quaternion(0, 0, 0, 1)) })),
+            Case("geometry_msgs/PoseStamped", PoseStampedSerializer.Instance, new PoseStamped(SampleHeader, new Pose(new Point(1.0, 2.0, 3.0), new Quaternion(0, 0, 0, 1)))),
+            Case("geometry_msgs/PoseWithCovariance", PoseWithCovarianceSerializer.Instance, new PoseWithCovariance(new Pose(new Point(1.0, 2.0, 3.0), new Quaternion(0, 0, 0, 1)), new double[36])),
+            Case("geometry_msgs/PoseWithCovarianceStamped", PoseWithCovarianceStampedSerializer.Instance, new PoseWithCovarianceStamped(SampleHeader, new PoseWithCovariance(new Pose(new Point(1.0, 2.0, 3.0), new Quaternion(0, 0, 0, 1)), new double[36]))),
+            Case("geometry_msgs/Quaternion", QuaternionSerializer.Instance, new Quaternion(0, 0, 0, 1)),
+            Case("geometry_msgs/QuaternionStamped", QuaternionStampedSerializer.Instance, new QuaternionStamped(SampleHeader, new Quaternion(0, 0, 0, 1))),
+            Case("geometry_msgs/Transform", TransformSerializer.Instance, new Transform(new Vector3(1.0, 2.0, 3.0), new Quaternion(0, 0, 0, 1))),
+            Case("geometry_msgs/TransformStamped", TransformStampedSerializer.Instance, new TransformStamped(SampleHeader, "child_frame", new Transform(new Vector3(1.0, 2.0, 3.0), new Quaternion(0, 0, 0, 1)))),
+            Case("geometry_msgs/Twist", TwistSerializer.Instance, new Twist(new Vector3(1.0, 0, 0), new Vector3(0, 0, 1.0))),
+            Case("geometry_msgs/TwistStamped", TwistStampedSerializer.Instance, new TwistStamped(SampleHeader, new Twist(new Vector3(1.0, 0, 0), new Vector3(0, 0, 1.0)))),
+            Case("geometry_msgs/TwistWithCovariance", TwistWithCovarianceSerializer.Instance, new TwistWithCovariance(new Twist(new Vector3(1.0, 0, 0), new Vector3(0, 0, 1.0)), new double[36])),
+            Case("geometry_msgs/TwistWithCovarianceStamped", TwistWithCovarianceStampedSerializer.Instance, new TwistWithCovarianceStamped(SampleHeader, new TwistWithCovariance(new Twist(new Vector3(1.0, 0, 0), new Vector3(0, 0, 1.0)), new double[36]))),
+            Case("geometry_msgs/Vector3", Vector3Serializer.Instance, new Vector3(0.1, 0.2, 0.3)),
+            Case("geometry_msgs/Vector3Stamped", Vector3StampedSerializer.Instance, new Vector3Stamped(SampleHeader, new Vector3(0.1, 0.2, 0.3))),
+            Case("geometry_msgs/Wrench", WrenchSerializer.Instance, new Wrench(new Vector3(10.0, 0, 0), new Vector3(0, 0, 5.0))),
+            Case("geometry_msgs/WrenchStamped", WrenchStampedSerializer.Instance, new WrenchStamped(SampleHeader, new Wrench(new Vector3(10.0, 0, 0), new Vector3(0, 0, 5.0)))),
         };
 
         public static IEnumerable MessageRoundTripCases
