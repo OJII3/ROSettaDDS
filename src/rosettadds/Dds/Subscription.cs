@@ -20,11 +20,22 @@ public sealed class Subscription<T> : IDisposable
     private readonly SynchronizationContext? _handlerContext;
     private readonly ILogger _logger;
     private readonly CdrReadLimits _cdrReadLimits;
+    private long _payloadsReceivedFromReader;
+    private long _messagesDeserialized;
+    private long _deserializeFailures;
+    private long _handlerInvocations;
     private bool _disposed;
 
     public string TopicName { get; }
     public Guid Guid { get; }
     public EntityId ReaderEntityId => _reader.ReaderEntityId;
+
+    public SubscriptionDiagnostics Diagnostics => new(
+        _reader.Diagnostics,
+        Volatile.Read(ref _payloadsReceivedFromReader),
+        Volatile.Read(ref _messagesDeserialized),
+        Volatile.Read(ref _deserializeFailures),
+        Volatile.Read(ref _handlerInvocations));
 
     /// <summary>Subscription マッチ状態 (Fast DDS 互換)。</summary>
     public SubscriptionMatchedStatus SubscriptionMatchedStatus => _reader.SubscriptionMatchedStatus;
@@ -59,13 +70,16 @@ public sealed class Subscription<T> : IDisposable
 
     private void OnPayloadReceived(ReadOnlyMemory<byte> payload, GuidPrefix sourcePrefix)
     {
+        Interlocked.Increment(ref _payloadsReceivedFromReader);
         T value;
         try
         {
             value = DeserializeWithEncapsulation(payload.Span);
+            Interlocked.Increment(ref _messagesDeserialized);
         }
         catch (Exception ex)
         {
+            Interlocked.Increment(ref _deserializeFailures);
             _logger.Warn($"Subscription failed to deserialize payload on topic {TopicName}", ex);
             return;
         }
@@ -95,6 +109,7 @@ public sealed class Subscription<T> : IDisposable
         try
         {
             _handler(value, sourcePrefix);
+            Interlocked.Increment(ref _handlerInvocations);
         }
         catch (Exception ex)
         {

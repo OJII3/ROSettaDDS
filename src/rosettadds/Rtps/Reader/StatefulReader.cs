@@ -39,8 +39,22 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
 
     private bool _disposed;
 
+    private long _dataSubmessagesReceived;
+    private long _dataFragSubmessagesReceived;
+    private long _reassembledPayloads;
+    private long _payloadsDelivered;
+    private long _payloadsDropped;
+
     public Guid Guid { get; }
     public EntityId ReaderEntityId => _readerEntityId;
+
+    public RtpsReaderDiagnostics Diagnostics => new(
+        Volatile.Read(ref _dataSubmessagesReceived),
+        Volatile.Read(ref _dataFragSubmessagesReceived),
+        Volatile.Read(ref _reassembledPayloads),
+        Volatile.Read(ref _payloadsDelivered),
+        payloadsBufferedPendingMatch: 0,
+        Volatile.Read(ref _payloadsDropped));
 
     /// <summary>
     /// 新規 (非重複) サンプルを受信したときに発火。
@@ -170,11 +184,12 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
         {
             return;
         }
+        Interlocked.Increment(ref _dataSubmessagesReceived);
         var writerGuid = new Guid(ctx.SourceGuidPrefix, data.WriterEntityId);
         WriterProxy? proxy;
         lock (_matchedLock) { _matched.TryGetValue(writerGuid, out proxy); }
-        if (proxy is null) return;
-        if (data.SerializedPayload.IsEmpty) return;
+        if (proxy is null) { Interlocked.Increment(ref _payloadsDropped); return; }
+        if (data.SerializedPayload.IsEmpty) { Interlocked.Increment(ref _payloadsDropped); return; }
 
         bool isNew = proxy.MarkReceived(data.WriterSequenceNumber);
         if (isNew)
@@ -189,6 +204,11 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
                 data.InlineQos,
                 endianness);
             PayloadReceived?.Invoke(change);
+            Interlocked.Increment(ref _payloadsDelivered);
+        }
+        else
+        {
+            Interlocked.Increment(ref _payloadsDropped);
         }
     }
 
@@ -199,10 +219,11 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
         {
             return;
         }
+        Interlocked.Increment(ref _dataFragSubmessagesReceived);
         var writerGuid = new Guid(ctx.SourceGuidPrefix, dataFrag.WriterEntityId);
         WriterProxy? proxy;
         lock (_matchedLock) { _matched.TryGetValue(writerGuid, out proxy); }
-        if (proxy is null) return;
+        if (proxy is null) { Interlocked.Increment(ref _payloadsDropped); return; }
 
         DataFragReassemblyResult? completed;
         lock (_reassemblyLock)
@@ -210,6 +231,7 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
             completed = _dataFragReassembly.Add(writerGuid, dataFrag, endianness);
         }
         if (completed is null) return;
+        Interlocked.Increment(ref _reassembledPayloads);
 
         bool isNew = proxy.MarkReceived(dataFrag.WriterSequenceNumber);
         if (isNew)
@@ -224,6 +246,11 @@ public sealed class StatefulReader : IDisposable, IRtpsSubmessageHandler
                 completed.Value.InlineQos,
                 completed.Value.InlineQosEndianness);
             PayloadReceived?.Invoke(change);
+            Interlocked.Increment(ref _payloadsDelivered);
+        }
+        else
+        {
+            Interlocked.Increment(ref _payloadsDropped);
         }
     }
 

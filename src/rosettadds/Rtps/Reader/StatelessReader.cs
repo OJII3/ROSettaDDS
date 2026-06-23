@@ -35,11 +35,25 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
     private readonly object _deliveredLock = new();
     private readonly Dictionary<Guid, DeliveredSequenceWindow> _deliveredSequences = new();
     private readonly object _deliveryLock = new();
+    private long _dataSubmessagesReceived;
+    private long _dataFragSubmessagesReceived;
+    private long _reassembledPayloads;
+    private long _payloadsDelivered;
+    private long _payloadsBufferedPendingMatch;
+    private long _payloadsDropped;
 
     private bool _started;
     private bool _disposed;
 
     public EntityId ReaderEntityId => _readerEntityId;
+
+    public RtpsReaderDiagnostics Diagnostics => new(
+        Volatile.Read(ref _dataSubmessagesReceived),
+        Volatile.Read(ref _dataFragSubmessagesReceived),
+        Volatile.Read(ref _reassembledPayloads),
+        Volatile.Read(ref _payloadsDelivered),
+        Volatile.Read(ref _payloadsBufferedPendingMatch),
+        Volatile.Read(ref _payloadsDropped));
 
     /// <summary>
     /// マッチング DATA を受信したときに発火。第二引数は送信元 Participant の GuidPrefix。
@@ -103,6 +117,7 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
             {
                 if (MarkDelivered(writerGuid, payload.SequenceNumber))
                 {
+                    Interlocked.Increment(ref _payloadsDelivered);
                     PayloadReceived?.Invoke(payload.Payload, payload.SourcePrefix);
                 }
             }
@@ -231,8 +246,10 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
         {
             return;
         }
+        Interlocked.Increment(ref _dataSubmessagesReceived);
         if (data.SerializedPayload.IsEmpty)
         {
+            Interlocked.Increment(ref _payloadsDropped);
             return;
         }
 
@@ -251,6 +268,7 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
         {
             return;
         }
+        Interlocked.Increment(ref _dataFragSubmessagesReceived);
 
         var writerGuid = new Guid(ctx.SourceGuidPrefix, dataFrag.WriterEntityId);
         DataFragReassemblyResult? completed;
@@ -260,6 +278,7 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
         }
         if (completed is not null)
         {
+            Interlocked.Increment(ref _reassembledPayloads);
             if (!IsMatchedWriter(writerGuid))
             {
                 BufferPendingPayload(writerGuid, completed.Value.Payload, ctx.SourceGuidPrefix, dataFrag.WriterSequenceNumber);
@@ -292,10 +311,12 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
     {
         if (payload.Length > _dataFragOptions.MaxSampleSize)
         {
+            Interlocked.Increment(ref _payloadsDropped);
             return;
         }
         if (HasDelivered(writerGuid, sequenceNumber))
         {
+            Interlocked.Increment(ref _payloadsDropped);
             return;
         }
 
@@ -311,10 +332,12 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
             }
             if (queue.Any(p => p.SequenceNumber.Equals(sequenceNumber)))
             {
+                Interlocked.Increment(ref _payloadsDropped);
                 return;
             }
             queue.Enqueue(new PendingPayload(payload.ToArray(), sourcePrefix, sequenceNumber, now));
             _pendingPayloadCount++;
+            Interlocked.Increment(ref _payloadsBufferedPendingMatch);
         }
     }
 
@@ -350,6 +373,7 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
         {
             if (MarkDelivered(writerGuid, sequenceNumber))
             {
+                Interlocked.Increment(ref _payloadsDelivered);
                 PayloadReceived?.Invoke(payload, sourcePrefix);
             }
         }
@@ -377,6 +401,7 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
             {
                 return;
             }
+            Interlocked.Add(ref _payloadsDropped, queue.Count);
             _pendingPayloadCount -= queue.Count;
         }
     }
@@ -390,6 +415,7 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
             {
                 queue.Dequeue();
                 _pendingPayloadCount--;
+                Interlocked.Increment(ref _payloadsDropped);
             }
             if (queue.Count == 0)
             {
@@ -425,6 +451,7 @@ public sealed class StatelessReader : IDisposable, IRtpsSubmessageHandler
             var selected = _pendingPayloads[oldestKey.Value];
             selected.Dequeue();
             _pendingPayloadCount--;
+            Interlocked.Increment(ref _payloadsDropped);
             if (selected.Count == 0)
             {
                 _pendingPayloads.Remove(oldestKey.Value);

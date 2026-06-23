@@ -1,5 +1,6 @@
 using ROSettaDDS.Common;
 using ROSettaDDS.Rtps;
+using ROSettaDDS.Rtps.Reader;
 
 using Guid = ROSettaDDS.Common.Guid;
 
@@ -39,6 +40,8 @@ internal interface IUserReader : IDisposable
     /// Subscription matched status snapshot (Fast DDS SubscriptionMatchedStatus 互換)。
     /// </summary>
     SubscriptionMatchedStatus SubscriptionMatchedStatus { get; }
+
+    RtpsReaderDiagnostics Diagnostics { get; }
 
     void Start();
     void Stop();

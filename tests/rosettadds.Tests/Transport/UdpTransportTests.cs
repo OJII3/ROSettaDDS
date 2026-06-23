@@ -73,6 +73,101 @@ public class UdpTransportTests
     }
 
     [Fact]
+    public async Task 受信handlerが遅くても_burst_受信を取りこぼしにくい()
+    {
+        using var receiver = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+        using var sender = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+
+        const int count = 200;
+        int received = 0;
+        var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        receiver.Received += (_, _) =>
+        {
+            Thread.Sleep(2);
+            if (Interlocked.Increment(ref received) == count)
+            {
+                allReceived.TrySetResult();
+            }
+        };
+        receiver.Start();
+
+        var payload = new byte[8192];
+        for (int i = 0; i < count; i++)
+        {
+            await sender.SendAsync(payload, receiver.LocalLocator);
+        }
+
+        await allReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Volatile.Read(ref received).Should().Be(count);
+    }
+
+    [Fact]
+    public async Task Stop_は_enqueue済み受信packetを処理してから戻る()
+    {
+        using var receiver = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+        using var sender = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+
+        const int count = 3;
+        int received = 0;
+        receiver.Received += (_, _) =>
+        {
+            Thread.Sleep(600);
+            Interlocked.Increment(ref received);
+        };
+        receiver.Start();
+
+        for (int i = 0; i < count; i++)
+        {
+            await sender.SendAsync(new byte[] { (byte)i }, receiver.LocalLocator);
+        }
+        await Task.Delay(100);
+
+        receiver.Stop();
+
+        Volatile.Read(ref received).Should().Be(count);
+    }
+
+    [Fact]
+    public async Task Received_handler_内で_Stop_してもデッドロックしない()
+    {
+        using var receiver = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+        using var sender = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        receiver.Received += (_, _) =>
+        {
+            receiver.Stop();
+            stopped.TrySetResult();
+        };
+        receiver.Start();
+
+        await sender.SendAsync(new byte[] { 1 }, receiver.LocalLocator);
+
+        await stopped.Task.WaitAsync(ReceiveTimeout);
+    }
+
+    [Fact]
+    public async Task Diagnostics_は受信queue境界の件数を返す()
+    {
+        using var receiver = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+        using var sender = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        receiver.Received += (_, _) => tcs.TrySetResult();
+        receiver.Start();
+
+        await sender.SendAsync(new byte[] { 1, 2, 3 }, receiver.LocalLocator);
+        await tcs.Task.WaitAsync(ReceiveTimeout);
+
+        var diagnostics = receiver.Diagnostics;
+        diagnostics.DatagramsReceived.Should().Be(1);
+        diagnostics.DatagramsEnqueued.Should().Be(1);
+        diagnostics.DatagramsDispatched.Should().Be(1);
+        diagnostics.DatagramsDropped.Should().Be(0);
+        diagnostics.QueueCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task Dispose_後の_SendAsync_は_ObjectDisposedException()
     {
         var transport = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);

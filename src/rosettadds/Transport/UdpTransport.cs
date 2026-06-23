@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -14,12 +15,14 @@ namespace ROSettaDDS.Transport;
 /// </summary>
 /// <remarks>
 /// 受信ループは <see cref="Start"/> で起動する。<see cref="Stop"/> または <see cref="Dispose"/> で停止。
-/// 受信ハンドラ (<see cref="Received"/>) に渡す <see cref="ReadOnlyMemory{T}"/> は呼び出し中のみ有効
-/// (<see cref="ArrayPool{T}"/> から借りたバッファを再利用する)。保持したい場合は呼び出し側で複製すること。
+/// 受信ハンドラ (<see cref="Received"/>) に渡す <see cref="ReadOnlyMemory{T}"/> は呼び出し中のみ有効。
+/// 保持したい場合は呼び出し側で複製すること。
 /// </remarks>
 public sealed class UdpTransport : IRtpsTransport
 {
     private const int ReceivePollTimeoutMilliseconds = 100;
+    private const int RequestedSocketReceiveBufferSize = 4 * 1024 * 1024;
+    private const int MaxQueuedReceivedPackets = 8192;
     private static int s_activeReceiveLoopCount;
 
     private readonly Socket _socket;
@@ -31,11 +34,24 @@ public sealed class UdpTransport : IRtpsTransport
 
     private CancellationTokenSource? _receiveCts;
     private Task? _receiveTask;
+    private BlockingCollection<ReceivedPacket>? _dispatchQueue;
+    private Task? _dispatchTask;
+    private long _datagramsReceived;
+    private long _datagramsEnqueued;
+    private long _datagramsDropped;
+    private long _datagramsDispatched;
     private bool _disposed;
 
     public Locator LocalLocator => _localLocator;
 
     internal static int ActiveReceiveLoopCount => Volatile.Read(ref s_activeReceiveLoopCount);
+
+    public UdpTransportDiagnostics Diagnostics => new(
+        Volatile.Read(ref _datagramsReceived),
+        Volatile.Read(ref _datagramsEnqueued),
+        Volatile.Read(ref _datagramsDropped),
+        Volatile.Read(ref _datagramsDispatched),
+        _dispatchQueue?.Count ?? 0);
 
     public event Action<ReadOnlyMemory<byte>, Locator>? Received;
 
@@ -78,6 +94,7 @@ public sealed class UdpTransport : IRtpsTransport
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         try
         {
+            ConfigureReceiveBuffer(socket);
             // SO_REUSEADDR は設定しない。
             // Linux では双方に SO_REUSEADDR があると同一ポートへの二重 bind が成功してしまい、
             // ParticipantId auto-probe の前提である AddressAlreadyInUse が発生しなくなるため。
@@ -122,6 +139,7 @@ public sealed class UdpTransport : IRtpsTransport
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         try
         {
+            ConfigureReceiveBuffer(socket);
             socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             // 全 NIC からマルチキャスト受信を取りこぼさないため ANY:port にバインドする
             socket.Bind(new IPEndPoint(IPAddress.Any, port));
@@ -175,7 +193,9 @@ public sealed class UdpTransport : IRtpsTransport
             return;
         }
         _receiveCts = new CancellationTokenSource();
+        _dispatchQueue = new BlockingCollection<ReceivedPacket>(MaxQueuedReceivedPackets);
         var token = _receiveCts.Token;
+        _dispatchTask = Task.Run(DispatchLoop, token);
         _receiveTask = Task.Run(() => ReceiveLoop(token), token);
     }
 
@@ -185,6 +205,7 @@ public sealed class UdpTransport : IRtpsTransport
         {
             return;
         }
+        bool calledFromDispatchTask = Task.CurrentId == _dispatchTask?.Id;
         _receiveCts.Cancel();
         try
         {
@@ -197,6 +218,22 @@ public sealed class UdpTransport : IRtpsTransport
         catch (Exception ex)
         {
             _logger.Warn("UdpTransport receive task did not exit cleanly", ex);
+        }
+        _dispatchQueue?.CompleteAdding();
+        if (!calledFromDispatchTask)
+        {
+            try
+            {
+                _dispatchTask?.Wait();
+            }
+            catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException))
+            {
+                // 想定内
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn("UdpTransport dispatch task did not exit cleanly", ex);
+            }
         }
         _receiveCts.Dispose();
         _receiveCts = null;
@@ -226,12 +263,15 @@ public sealed class UdpTransport : IRtpsTransport
                     {
                         continue;
                     }
+                    Interlocked.Increment(ref _datagramsReceived);
 
                     var sourceLocator = src.Address.AddressFamily == AddressFamily.InterNetwork
                         ? Locator.FromUdpV4(src.Address, (uint)src.Port)
                         : Locator.FromUdpV6(src.Address, (uint)src.Port);
 
-                    Received?.Invoke(buffer.AsMemory(0, receivedBytes), sourceLocator);
+                    var packet = new byte[receivedBytes];
+                    Buffer.BlockCopy(buffer, 0, packet, 0, receivedBytes);
+                    EnqueueReceivedPacket(new ReceivedPacket(packet, sourceLocator));
                 }
                 catch (SocketException ex) when (ex.SocketErrorCode is SocketError.TimedOut or SocketError.WouldBlock)
                 {
@@ -261,6 +301,70 @@ public sealed class UdpTransport : IRtpsTransport
         }
     }
 
+    private void EnqueueReceivedPacket(ReceivedPacket packet)
+    {
+        var queue = _dispatchQueue;
+        if (queue is null || queue.IsAddingCompleted)
+        {
+            Interlocked.Increment(ref _datagramsDropped);
+            return;
+        }
+
+        try
+        {
+            if (queue.TryAdd(packet))
+            {
+                Interlocked.Increment(ref _datagramsEnqueued);
+            }
+            else
+            {
+                Interlocked.Increment(ref _datagramsDropped);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // Stop と競合して CompleteAdding 済みの場合は破棄する。
+            Interlocked.Increment(ref _datagramsDropped);
+        }
+    }
+
+    private void DispatchLoop()
+    {
+        var queue = _dispatchQueue;
+        if (queue is null)
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var packet in queue.GetConsumingEnumerable())
+            {
+                try
+                {
+                    Received?.Invoke(packet.Data, packet.Source);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("UdpTransport dispatch error", ex);
+                }
+                finally
+                {
+                    Interlocked.Increment(ref _datagramsDispatched);
+                }
+            }
+        }
+        finally
+        {
+            queue.Dispose();
+            if (ReferenceEquals(_dispatchQueue, queue))
+            {
+                _dispatchQueue = null;
+                _dispatchTask = null;
+            }
+        }
+    }
+
     private static IPEndPoint LocatorToEndPoint(Locator destination)
     {
         return destination.Kind switch
@@ -270,6 +374,11 @@ public sealed class UdpTransport : IRtpsTransport
             _ => throw new NotSupportedException(
                 $"UdpTransport supports only UDPv4/UDPv6 destinations. Got {destination.Kind}."),
         };
+    }
+
+    private static void ConfigureReceiveBuffer(Socket socket)
+    {
+        socket.ReceiveBufferSize = Math.Max(socket.ReceiveBufferSize, RequestedSocketReceiveBufferSize);
     }
 
     public void Dispose()
@@ -298,5 +407,17 @@ public sealed class UdpTransport : IRtpsTransport
     private void ThrowIfDisposed()
     {
         if (_disposed) throw new ObjectDisposedException(GetType().Name);
+    }
+
+    private readonly struct ReceivedPacket
+    {
+        public ReceivedPacket(byte[] data, Locator source)
+        {
+            Data = data;
+            Source = source;
+        }
+
+        public byte[] Data { get; }
+        public Locator Source { get; }
     }
 }
