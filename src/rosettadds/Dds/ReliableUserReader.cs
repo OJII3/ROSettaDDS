@@ -53,6 +53,8 @@ internal sealed class ReliableUserReader : IUserReader
 
     public SubscriptionMatchedStatus SubscriptionMatchedStatus => _reader.SubscriptionMatchedStatus;
 
+    public RtpsReaderDiagnostics Diagnostics => _reader.Diagnostics;
+
     public void MatchWriter(Guid writerGuid, Locator? unicastReplyLocator)
         => _reader.MatchWriter(writerGuid, unicastReplyLocator);
     public void UnmatchWriter(Guid writerGuid) => _reader.UnmatchWriter(writerGuid);

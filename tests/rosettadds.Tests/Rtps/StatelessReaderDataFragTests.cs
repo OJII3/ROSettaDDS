@@ -49,6 +49,10 @@ public class StatelessReaderDataFragTests
 
         received.Should().ContainSingle();
         received[0].Should().Equal(payload);
+        var diagnostics = reader.Diagnostics;
+        diagnostics.DataFragSubmessagesReceived.Should().Be(4);
+        diagnostics.ReassembledPayloads.Should().Be(2);
+        diagnostics.PayloadsDelivered.Should().Be(1);
     }
 
     [Fact]
@@ -71,6 +75,20 @@ public class StatelessReaderDataFragTests
             fragmentPayload: payload));
 
         received.Should().BeFalse();
+    }
+
+    [Fact]
+    public void 未match_pending_payload_の_unmatch破棄は_dropped_に数える()
+    {
+        var reader = new StatelessReader(ReaderEntityId);
+        var payload = new byte[] { 1, 2, 3, 4, 5, 6 };
+
+        ProcessTwoFragments(reader, sequenceNumber: 7, payload);
+        reader.UnmatchWriter(WriterGuid);
+
+        var diagnostics = reader.Diagnostics;
+        diagnostics.PayloadsBufferedPendingMatch.Should().Be(1);
+        diagnostics.PayloadsDropped.Should().Be(1);
     }
 
     private static void ProcessTwoFragments(StatelessReader reader, long sequenceNumber, byte[] payload)

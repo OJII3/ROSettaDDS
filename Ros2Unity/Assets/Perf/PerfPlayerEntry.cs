@@ -7,6 +7,7 @@ using ROSettaDDS.Cdr;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Msgs.Std;
+using ROSettaDDS.Transport;
 using UnityEngine;
 
 namespace ROSettaDDS.UnityPerfHarness
@@ -156,6 +157,7 @@ namespace ROSettaDDS.UnityPerfHarness
                     });
                 if (!completed)
                 {
+                    metrics.Event("receive_diagnostics", BuildReceiveDiagnostics(participant, subscription));
                     throw new TimeoutException(
                         "Timed out waiting for ROS 2 messages: received " +
                         Volatile.Read(ref received) + "/" + args.Messages + ".");
@@ -171,8 +173,60 @@ namespace ROSettaDDS.UnityPerfHarness
                 fields["serialized_bytes_per_message"] = serializedBytes;
                 fields["serialized_bytes"] = (long)serializedBytes * received;
                 fields["messages_per_second"] = received / Math.Max(0.000001d, elapsedMs / 1000.0d);
+                AddReceiveDiagnostics(fields, participant, subscription);
                 metrics.Event("measure_done", fields);
             }
+        }
+
+        private static Dictionary<string, object> BuildReceiveDiagnostics(
+            DomainParticipant participant,
+            Subscription<StringMessage> subscription)
+        {
+            var fields = new Dictionary<string, object>();
+            AddReceiveDiagnostics(fields, participant, subscription);
+            return fields;
+        }
+
+        private static void AddReceiveDiagnostics(
+            Dictionary<string, object> fields,
+            DomainParticipant participant,
+            Subscription<StringMessage> subscription)
+        {
+            AddTransportDiagnostics(fields, "user_unicast", participant.UserUnicastTransport);
+            AddTransportDiagnostics(fields, "user_multicast", participant.UserMulticastTransport);
+
+            var subscriptionDiagnostics = subscription.Diagnostics;
+            var rtps = subscriptionDiagnostics.RtpsReader;
+            fields["subscription_payloads_from_reader"] = subscriptionDiagnostics.PayloadsReceivedFromReader;
+            fields["subscription_messages_deserialized"] = subscriptionDiagnostics.MessagesDeserialized;
+            fields["subscription_deserialize_failures"] = subscriptionDiagnostics.DeserializeFailures;
+            fields["subscription_handler_invocations"] = subscriptionDiagnostics.HandlerInvocations;
+            fields["rtps_data_submessages_received"] = rtps.DataSubmessagesReceived;
+            fields["rtps_datafrag_submessages_received"] = rtps.DataFragSubmessagesReceived;
+            fields["rtps_reassembled_payloads"] = rtps.ReassembledPayloads;
+            fields["rtps_payloads_delivered"] = rtps.PayloadsDelivered;
+            fields["rtps_payloads_buffered_pending_match"] = rtps.PayloadsBufferedPendingMatch;
+            fields["rtps_payloads_dropped"] = rtps.PayloadsDropped;
+        }
+
+        private static void AddTransportDiagnostics(
+            Dictionary<string, object> fields,
+            string prefix,
+            IRtpsTransport transport)
+        {
+            if (transport is not UdpTransport udp)
+            {
+                fields[prefix + "_transport_diagnostics_available"] = false;
+                return;
+            }
+
+            var diagnostics = udp.Diagnostics;
+            fields[prefix + "_transport_diagnostics_available"] = true;
+            fields[prefix + "_udp_datagrams_received"] = diagnostics.DatagramsReceived;
+            fields[prefix + "_udp_datagrams_enqueued"] = diagnostics.DatagramsEnqueued;
+            fields[prefix + "_udp_datagrams_dropped"] = diagnostics.DatagramsDropped;
+            fields[prefix + "_udp_datagrams_dispatched"] = diagnostics.DatagramsDispatched;
+            fields[prefix + "_udp_queue_count"] = diagnostics.QueueCount;
         }
 
         private static DomainParticipant CreateParticipant(int domainId, string entityName)
