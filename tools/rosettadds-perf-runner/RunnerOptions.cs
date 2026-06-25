@@ -12,6 +12,7 @@ internal sealed class RunnerOptions
     internal string Artifacts { get; private set; } = Path.Combine("artifacts", "perf");
     internal int CaptureFrames { get; private set; } = 1200;
     internal long ProfilerMemory { get; private set; } = 256L * 1024L * 1024L;
+    internal string ProfilerMode { get; private set; } = "lean";
     internal bool SkipBuild { get; private set; }
     internal bool Help { get; private set; }
 
@@ -51,6 +52,13 @@ internal sealed class RunnerOptions
                 case "--profiler-memory":
                     options.ProfilerMemory = ParsePositiveLong(RequireValue(args, ref i, arg), arg);
                     break;
+                case "--profiler-mode":
+                    options.ProfilerMode = RequireValue(args, ref i, arg);
+                    if (options.ProfilerMode != "lean" && options.ProfilerMode != "full")
+                    {
+                        throw new ArgumentException("--profiler-mode must be lean or full");
+                    }
+                    break;
                 case "--skip-build":
                     options.SkipBuild = true;
                     break;
@@ -88,6 +96,7 @@ internal sealed class RunnerOptions
         output.WriteLine("  --artifacts <path>                       Default: artifacts/perf");
         output.WriteLine("  --capture-frames <count>                 Default: 1200");
         output.WriteLine("  --profiler-memory <bytes>                Default: 268435456");
+        output.WriteLine("  --profiler-mode <lean|full>              Default: lean");
         output.WriteLine("  --skip-build                             Reuse --player-build instead of building");
     }
 

@@ -44,7 +44,10 @@ namespace ROSettaDDS.UnityPerfHarness
                     try
                     {
                         metrics.Event("start");
-                        using (PerfProfilerRecorders recorders = PerfProfilerRecorders.Start())
+                        PerfProfilerRecorders recorders = parsed.ProfilerMode == PerfProfilerMode.Full
+                            ? PerfProfilerRecorders.StartFull()
+                            : PerfProfilerRecorders.StartLean();
+                        using (recorders)
                         {
                             if (parsed.Direction == PerfDirection.UnityToRos2)
                             {

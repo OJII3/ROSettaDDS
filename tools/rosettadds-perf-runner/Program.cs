@@ -246,6 +246,8 @@ static ProcessCapture StartPlayer(
         args.Add("--rosettadds-release-file");
         args.Add(releaseFile);
     }
+    args.Add("--rosettadds-profiler-mode");
+    args.Add(options.ProfilerMode);
 
     return ProcessCapture.Start(
         playerExecutable,
