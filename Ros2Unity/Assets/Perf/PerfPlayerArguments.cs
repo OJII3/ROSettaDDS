@@ -17,6 +17,14 @@ namespace ROSettaDDS.UnityPerfHarness
         BestEffort,
     }
 
+    internal enum PerfProfilerMode
+    {
+        /// <summary>3 recorder (main thread / gc_used / gc_allocated)。perf 計測向け。</summary>
+        Lean,
+        /// <summary>6 recorder (lean + メモリ詳細 3 件)。診断用。</summary>
+        Full,
+    }
+
     internal sealed class PerfPlayerArguments
     {
         private PerfPlayerArguments()
@@ -34,6 +42,7 @@ namespace ROSettaDDS.UnityPerfHarness
         internal string DoneFile { get; private set; }
         internal string MetricsFile { get; private set; }
         internal string ReleaseFile { get; private set; }
+        internal PerfProfilerMode ProfilerMode { get; private set; } = PerfProfilerMode.Lean;
 
         internal ReliabilityQos Reliability
             => Qos == PerfQos.BestEffort ? ReliabilityQos.BestEffort : ReliabilityQos.Reliable;
@@ -122,8 +131,37 @@ namespace ROSettaDDS.UnityPerfHarness
             result.DoneFile = doneFile;
             result.MetricsFile = metricsFile;
             result.ReleaseFile = releaseFile;
+            // ProfilerMode は optional。既定 Lean。
+            if (values.TryGetValue("--rosettadds-profiler-mode", out string profilerModeRaw))
+            {
+                if (!TryParseProfilerMode(profilerModeRaw, out PerfProfilerMode mode, out error))
+                {
+                    return false;
+                }
+                result.ProfilerMode = mode;
+            }
             parsed = result;
             return true;
+        }
+
+        private static bool TryParseProfilerMode(
+            string raw, out PerfProfilerMode mode, out string error)
+        {
+            if (raw == "lean")
+            {
+                mode = PerfProfilerMode.Lean;
+                error = null;
+                return true;
+            }
+            if (raw == "full")
+            {
+                mode = PerfProfilerMode.Full;
+                error = null;
+                return true;
+            }
+            mode = PerfProfilerMode.Lean;
+            error = "--rosettadds-profiler-mode must be lean or full";
+            return false;
         }
 
         private static bool ReadRequired(
