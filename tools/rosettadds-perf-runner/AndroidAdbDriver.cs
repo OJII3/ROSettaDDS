@@ -72,7 +72,7 @@ internal sealed class AndroidAdbDriver : IProcessDriver
 
     public void Kill()
     {
-        _ = _adb.ForceStopAsync(_packageId, CancellationToken.None);
+        _adb.ForceStopAsync(_packageId, CancellationToken.None).GetAwaiter().GetResult();
     }
 
     public Stream OpenLogAsync(LogKind kind, CancellationToken ct)

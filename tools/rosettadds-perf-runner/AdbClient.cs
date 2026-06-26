@@ -38,20 +38,34 @@ internal sealed class AdbClient : IAdbCommandSink
         return r;
     }
 
-    public Task<AdbResult> ForceStopAsync(string packageId, CancellationToken ct)
-        => RunAsync($"adb -s {_serial} shell am force-stop {packageId}", ct);
+    public async Task<AdbResult> ForceStopAsync(string packageId, CancellationToken ct)
+    {
+        var r = await RunAsync($"adb -s {_serial} shell am force-stop {packageId}", ct);
+        if (r.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"adb force-stop failed (exit={r.ExitCode}): {r.Stderr.Trim()}");
+        }
+        return r;
+    }
 
-    public Task<AdbResult> StartActivityAsync(
+    public async Task<AdbResult> StartActivityAsync(
         string packageId,
         string activityComponent,
         IReadOnlyList<string> playerArgs,
         CancellationToken ct)
     {
         string joined = string.Join(" ", playerArgs);
-        return RunAsync(
+        var r = await RunAsync(
             $"adb -s {_serial} shell am start -W -n {packageId}/{activityComponent} " +
             $"--es args \"{joined}\"",
             ct);
+        if (r.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"adb start-activity failed (exit={r.ExitCode}): {r.Stderr.Trim()}");
+        }
+        return r;
     }
 
     public Task<AdbResult> PullFileAsync(string remotePath, string localPath, CancellationToken ct)
