@@ -62,18 +62,18 @@ internal sealed class RealAdbCommandSink : IAdbCommandSink
 {
     public async Task<AdbResult> RunAsync(string command, CancellationToken ct)
     {
-        var psi = new ProcessStartInfo("/bin/sh", "-c " + Escape(command))
+        var psi = new ProcessStartInfo("/bin/sh")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
         };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(command);
         using var p = Process.Start(psi)!;
         string stdout = await p.StandardOutput.ReadToEndAsync(ct);
         string stderr = await p.StandardError.ReadToEndAsync(ct);
         await p.WaitForExitAsync(ct);
         return new AdbResult(p.ExitCode, stdout, stderr);
     }
-
-    private static string Escape(string s) => "'" + s.Replace("'", "'\\''") + "'";
 }
