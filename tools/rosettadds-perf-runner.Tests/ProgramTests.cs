@@ -46,6 +46,15 @@ public class ProgramTests
     }
 
     [Fact]
+    public void CreatePlayerDriver_Android_で_android_device_未指定なら_例外()
+    {
+        var options = RunnerOptions.Parse(new[] { "--build-target", "Android" });
+        var act = () => Program.CreatePlayerDriver(options, "/tmp/x", "/tmp/x.apk");
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*--android-device*");
+    }
+
+    [Fact]
     public void CreateHelperDriver_は_desktop_と_android_両方で_DesktopProcessDriver_を返す()
     {
         var android = RunnerOptions.Parse(new[] { "--build-target", "Android" });

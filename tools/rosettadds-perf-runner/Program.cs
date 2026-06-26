@@ -293,7 +293,17 @@ static async Task<ScenarioManifest> RunScenarioAndroid(
 
     manifest.HelperExitCode = await helperProcess.WaitForExitAsync(
         TimeSpan.FromMinutes(1)).ConfigureAwait(false);
-    manifest.PlayerExitCode = 0;
+
+    if (scenario.Direction == PerfDirection.UnityToRos2)
+    {
+        string localRelease = Path.Combine(scenarioDir, "player.release");
+        File.WriteAllText(localRelease, "release");
+        var androidDriver = (AndroidAdbDriver)playerDriver;
+        await androidDriver.PushFileAsync(localRelease, devicePersistentDir + "/release", CancellationToken.None).ConfigureAwait(false);
+    }
+
+    manifest.PlayerExitCode = await playerDriver.WaitForExitAsync(
+        TimeSpan.FromMinutes(2), CancellationToken.None).ConfigureAwait(false);
 
     await playerDriver.CopyFileFromAsync("metrics.ndjson", metricsFile, CancellationToken.None).ConfigureAwait(false);
     await playerDriver.CopyFileFromAsync("player.profiler.raw", profilerFile, CancellationToken.None).ConfigureAwait(false);

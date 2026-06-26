@@ -70,6 +70,9 @@ internal sealed class AdbClient : IAdbCommandSink
 
     public Task<AdbResult> PullFileAsync(string remotePath, string localPath, CancellationToken ct)
         => RunAsync($"adb -s {_serial} pull {remotePath} {localPath}", ct);
+
+    public Task<AdbResult> PushFileAsync(string localPath, string remotePath, CancellationToken ct)
+        => RunAsync($"adb -s {_serial} push {localPath} {remotePath}", ct);
 }
 
 internal sealed class RealAdbCommandSink : IAdbCommandSink
