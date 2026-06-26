@@ -15,6 +15,10 @@ internal sealed class RunnerOptions
     internal string ProfilerMode { get; private set; } = "lean";
     internal bool SkipBuild { get; private set; }
     internal bool Help { get; private set; }
+    internal string Adb { get; private set; } = "adb";
+    internal string? AndroidDevice { get; private set; }
+    internal string AndroidPackage { get; private set; } = "com.ojii3.rosettadds.perf";
+    internal string AndroidActivity { get; private set; } = "com.unity3d.player.GameActivity";
 
     internal static RunnerOptions Parse(string[] args)
     {
@@ -62,6 +66,18 @@ internal sealed class RunnerOptions
                 case "--skip-build":
                     options.SkipBuild = true;
                     break;
+                case "--adb":
+                    options.Adb = RequireValue(args, ref i, arg);
+                    break;
+                case "--android-device":
+                    options.AndroidDevice = RequireValue(args, ref i, arg);
+                    break;
+                case "--android-package":
+                    options.AndroidPackage = RequireValue(args, ref i, arg);
+                    break;
+                case "--android-activity":
+                    options.AndroidActivity = RequireValue(args, ref i, arg);
+                    break;
                 default:
                     throw new ArgumentException("unknown argument: " + arg);
             }
@@ -101,6 +117,10 @@ internal sealed class RunnerOptions
         output.WriteLine("  --profiler-memory <bytes>                Default: 268435456");
         output.WriteLine("  --profiler-mode <lean|full>              Default: lean");
         output.WriteLine("  --skip-build                             Reuse --player-build instead of building");
+        output.WriteLine("  --adb <path>                               Default: adb (PATH 解決)");
+        output.WriteLine("  --android-device <serial>                  Default: adb devices -l の単独エントリ。複数時はエラー。");
+        output.WriteLine("  --android-package <id>                     Default: com.ojii3.rosettadds.perf");
+        output.WriteLine("  --android-activity <component>             Default: com.unity3d.player.GameActivity");
     }
 
     private static string RequireValue(string[] args, ref int index, string name)
