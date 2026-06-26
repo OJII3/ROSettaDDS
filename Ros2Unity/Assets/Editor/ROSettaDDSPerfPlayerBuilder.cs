@@ -38,13 +38,23 @@ namespace ROSettaDDS.EditorTools
         {
             BuildTarget target = ParseBuildTarget(targetText);
             ScriptingImplementation backend = ParseBackend(backendText);
+            NamedBuildTarget namedTarget = target == BuildTarget.Android
+                ? NamedBuildTarget.Android
+                : NamedBuildTarget.Standalone;
             ScriptingImplementation originalBackend =
-                PlayerSettings.GetScriptingBackend(NamedBuildTarget.Standalone);
+                PlayerSettings.GetScriptingBackend(namedTarget);
+            string originalApplicationIdentifier =
+                PlayerSettings.GetApplicationIdentifier(namedTarget);
             Dictionary<string, string> preservedFiles = SnapshotProjectFiles();
 
             try
             {
-                PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, backend);
+                PlayerSettings.SetScriptingBackend(namedTarget, backend);
+                if (target == BuildTarget.Android)
+                {
+                    PlayerSettings.SetApplicationIdentifier(
+                        namedTarget, "com.ojii3.rosettadds.perf");
+                }
 
                 string directory = Path.GetDirectoryName(buildPath);
                 if (!string.IsNullOrEmpty(directory))
@@ -56,6 +66,9 @@ namespace ROSettaDDS.EditorTools
                 {
                     scenes = EnabledScenes(),
                     target = target,
+                    targetGroup = target == BuildTarget.Android
+                        ? BuildTargetGroup.Android
+                        : BuildTargetGroup.Standalone,
                     locationPathName = buildPath,
                     options = BuildOptions.Development,
                 };
@@ -64,7 +77,11 @@ namespace ROSettaDDS.EditorTools
             }
             finally
             {
-                PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, originalBackend);
+                PlayerSettings.SetScriptingBackend(namedTarget, originalBackend);
+                if (target == BuildTarget.Android)
+                {
+                    PlayerSettings.SetApplicationIdentifier(namedTarget, originalApplicationIdentifier);
+                }
                 RestoreProjectFiles(preservedFiles);
             }
         }
@@ -132,7 +149,12 @@ namespace ROSettaDDS.EditorTools
             {
                 return BuildTarget.StandaloneOSX;
             }
-            throw new ArgumentException("--rosettadds-perf-build-target must be StandaloneLinux64 or StandaloneOSX");
+            if (value == "Android")
+            {
+                return BuildTarget.Android;
+            }
+            throw new ArgumentException(
+                "--rosettadds-perf-build-target must be StandaloneLinux64, StandaloneOSX, or Android");
         }
 
         private static ScriptingImplementation ParseBackend(string value)
