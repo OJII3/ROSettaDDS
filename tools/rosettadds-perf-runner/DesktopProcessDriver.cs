@@ -29,10 +29,7 @@ internal sealed class DesktopProcessDriver : IProcessDriver
         return _capture.WaitForExitAsync(timeout);
     }
 
-    public void Kill()
-    {
-        // _capture is always null until Task 13 wires StartImpl.
-    }
+    public void Kill() => _capture?.Kill();
 
     public Stream OpenLogAsync(LogKind kind, CancellationToken ct)
         => throw new NotImplementedException();
