@@ -39,6 +39,11 @@ internal sealed class DesktopProcessDriver : IProcessDriver
         return Task.CompletedTask;
     }
 
+    public Task PushFileAsync(string localPath, string remoteName, CancellationToken ct)
+    {
+        return Task.CompletedTask;
+    }
+
     public void Dispose()
     {
         if (_disposed) return;

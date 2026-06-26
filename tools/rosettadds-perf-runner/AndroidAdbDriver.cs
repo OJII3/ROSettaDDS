@@ -92,7 +92,7 @@ internal sealed class AndroidAdbDriver : IProcessDriver
         }
     }
 
-    internal async Task PushFileAsync(string localPath, string remotePath, CancellationToken ct)
+    public async Task PushFileAsync(string localPath, string remotePath, CancellationToken ct)
     {
         var r = await _adb.PushFileAsync(localPath, remotePath, ct);
         if (r.ExitCode != 0)

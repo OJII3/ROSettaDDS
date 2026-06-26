@@ -298,8 +298,7 @@ static async Task<ScenarioManifest> RunScenarioAndroid(
     {
         string localRelease = Path.Combine(scenarioDir, "player.release");
         File.WriteAllText(localRelease, "release");
-        var androidDriver = (AndroidAdbDriver)playerDriver;
-        await androidDriver.PushFileAsync(localRelease, devicePersistentDir + "/release", CancellationToken.None).ConfigureAwait(false);
+        await playerDriver.PushFileAsync(localRelease, devicePersistentDir + "/release", CancellationToken.None).ConfigureAwait(false);
     }
 
     manifest.PlayerExitCode = await playerDriver.WaitForExitAsync(
@@ -513,7 +512,7 @@ namespace ROSettaDDS.PerfRunner
                 string deviceSerial = options.AndroidDevice
                     ?? throw new System.InvalidOperationException(
                         "--android-device is required (no auto-detect implemented yet)");
-                var adb = new AdbClient(new RealAdbCommandSink(), deviceSerial);
+                var adb = new AdbClient(new RealAdbCommandSink(options.Adb), deviceSerial);
                 string devicePersistentDir =
                     $"/sdcard/Android/data/{options.AndroidPackage}/files/rosettadds-perf";
                 return new AndroidAdbDriver(

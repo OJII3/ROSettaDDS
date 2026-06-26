@@ -77,8 +77,18 @@ internal sealed class AdbClient : IAdbCommandSink
 
 internal sealed class RealAdbCommandSink : IAdbCommandSink
 {
+    private readonly string _adbPath;
+
+    public RealAdbCommandSink(string adbPath = "adb")
+    {
+        _adbPath = adbPath;
+    }
+
     public async Task<AdbResult> RunAsync(string command, CancellationToken ct)
     {
+        string resolved = command.StartsWith("adb ", StringComparison.Ordinal)
+            ? _adbPath + command.Substring(3)
+            : command;
         var psi = new ProcessStartInfo("/bin/sh")
         {
             RedirectStandardOutput = true,
@@ -86,7 +96,7 @@ internal sealed class RealAdbCommandSink : IAdbCommandSink
             UseShellExecute = false,
         };
         psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add(command);
+        psi.ArgumentList.Add(resolved);
         using var p = Process.Start(psi)!;
         string stdout = await p.StandardOutput.ReadToEndAsync(ct);
         string stderr = await p.StandardError.ReadToEndAsync(ct);
