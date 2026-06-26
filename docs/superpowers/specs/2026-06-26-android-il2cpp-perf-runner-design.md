@@ -115,13 +115,7 @@ public interface IProcessDriver : IDisposable
   - タイムアウト時は process を `Kill()` して `TimeoutException`。
 - `Kill`:
   - `adb -s <serial> shell am force-stop <packageId>`。
-- `OpenLogAsync`:
-  - 内部で `adb -s <serial> logcat -T "<start-iso>" -s Unity:* PlayerActivity:*
-    Debug:*` を subprocess 起動し、`StreamReader` を `Stream` として返す。
-  - 戻り値の `Stream` を `Dispose` すると内部 subprocess にも SIGTERM が
-    飛ぶように `Dispose` 連動で実装する。runner 側は `Stream.CopyToAsync`
-    で `player.stdout.log` / `player.stderr.log` に書き出してから Dispose
-    する。
+- `OpenLogAsync`: `IProcessDriver` interface 上は存在するが、`AndroidAdbDriver` 実装は `NotSupportedException` を投げる。Android 経路の logcat tail は Program.RunScenario 側で `adb logcat -T <iso> -s Unity:* PlayerActivity:* Debug:*` を別 subprocess として起動し、`Stream.CopyToAsync` で `player.stdout.log` / `player.stderr.log` に書き出す。理由: logcat は player ライフサイクル (start/exit) とは独立した tail であり、driver 抽象に含めるとテスト容易性が落ちるため。
 - `CopyFileFromAsync`:
   - `adb -s <serial> pull <devicePersistentDir>/<remoteName> <localPath>`。
   - 上書き可 (一時ファイルを 1 度 staging path に置いて mv する方式はとらない)。
