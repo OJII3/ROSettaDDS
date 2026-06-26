@@ -71,9 +71,12 @@ internal sealed class RunnerOptions
         {
             throw new ArgumentException("--backend must be il2cpp or mono");
         }
-        if (options.BuildTarget != "StandaloneLinux64" && options.BuildTarget != "StandaloneOSX")
+        if (options.BuildTarget != "StandaloneLinux64"
+            && options.BuildTarget != "StandaloneOSX"
+            && options.BuildTarget != "Android")
         {
-            throw new ArgumentException("--build-target must be StandaloneLinux64 or StandaloneOSX");
+            throw new ArgumentException(
+                "--build-target must be StandaloneLinux64, StandaloneOSX, or Android");
         }
         if (options.SkipBuild && string.IsNullOrWhiteSpace(options.PlayerBuild))
         {
