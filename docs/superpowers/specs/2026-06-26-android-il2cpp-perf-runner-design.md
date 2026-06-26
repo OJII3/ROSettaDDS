@@ -110,9 +110,9 @@ public interface IProcessDriver : IDisposable
   - exit code 1 以外 (transport 断など) → `IOException` を投げる。
   - タイムアウトで `false`。
 - `WaitForExitAsync`:
-  - `adb -s <serial> shell pidof <packageId>` を 200ms 間隔で確認。
-  - 空文字 (プロセス無し) なら exit code 0 として返す。
-  - タイムアウト時は process を `Kill()` して `TimeoutException`。
+  - Android Player 側は `am force-stop` で同期的に kill される (SystemUI 経由で SIGKILL 相当) ので、process の自然な終了を待つ経路は本実装では省略する。
+  - 本メソッドは即座に `0` を返す (呼び出し元は process 終了を期待しない)。
+  - もし将来「計測が終わり、Player が自分で done sentinel を書いてから exit する」ような協調終了を実装する場合、ここで `pidof` polling を入れる。
 - `Kill`:
   - `adb -s <serial> shell am force-stop <packageId>`。
 - `OpenLogAsync`: `IProcessDriver` interface 上は存在するが、`AndroidAdbDriver` 実装は `NotSupportedException` を投げる。Android 経路の logcat tail は Program.RunScenario 側で `adb logcat -T <iso> -s Unity:* PlayerActivity:* Debug:*` を別 subprocess として起動し、`Stream.CopyToAsync` で `player.stdout.log` / `player.stderr.log` に書き出す。理由: logcat は player ライフサイクル (start/exit) とは独立した tail であり、driver 抽象に含めるとテスト容易性が落ちるため。
