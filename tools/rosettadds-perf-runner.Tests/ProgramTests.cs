@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using FluentAssertions;
 using Xunit;
 
@@ -62,5 +63,29 @@ public class ProgramTests
 
         var linux = RunnerOptions.Parse(new[] { "--build-target", "StandaloneLinux64" });
         Program.CreateHelperDriver(linux).Should().BeOfType<DesktopProcessDriver>();
+    }
+
+    [Fact]
+    public void Android_build_target_の_player_は_AndroidAdbDriver_helper_は_DesktopProcessDriver()
+    {
+        var options = RunnerOptions.Parse(new[] { "--build-target", "Android", "--android-device", "FAKE123" });
+        using var player = Program.CreatePlayerDriver(options, "/tmp/x", "/tmp/x.apk");
+        using var helper = Program.CreateHelperDriver(options);
+
+        player.Should().BeOfType<AndroidAdbDriver>();
+        helper.Should().BeOfType<DesktopProcessDriver>();
+    }
+
+    [Fact]
+    public void Android_build_target_の_player_artifact_dir_が_PersistentDir_に_反映される()
+    {
+        var options = RunnerOptions.Parse(new[] { "--build-target", "Android", "--android-device", "FAKE123" });
+        using var driver = Program.CreatePlayerDriver(options, "/tmp/x", "/tmp/x.apk");
+        var android = (AndroidAdbDriver)driver;
+        var field = typeof(AndroidAdbDriver).GetField(
+            "_devicePersistentDir",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        field!.GetValue(android).Should().Be(
+            "/sdcard/Android/data/com.ojii3.rosettadds.perf/files/rosettadds-perf");
     }
 }
