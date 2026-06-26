@@ -753,7 +753,7 @@ public class AdbClientTests
 }
 ```
 
-- [ ] **Step 9.2: FakeAdbClient スタブを追加**
+- [ ] **Step 9.2: FakeAdbClient スタブを追加 (`AdbResult` 対応版)**
 
 `tools/rosettadds-perf-runner.Tests/Fakes/FakeAdbClient.cs` を新規作成:
 
@@ -769,10 +769,10 @@ internal sealed class FakeAdbClient : IAdbCommandSink
 {
     public List<string> Calls { get; } = new();
 
-    public Task<int> RunAsync(string command, CancellationToken ct)
+    public Task<AdbResult> RunAsync(string command, CancellationToken ct)
     {
         Calls.Add(command);
-        return Task.FromResult(0);
+        return Task.FromResult(new AdbResult(0, string.Empty, string.Empty));
     }
 }
 ```
@@ -783,9 +783,9 @@ internal sealed class FakeAdbClient : IAdbCommandSink
 dotnet test tools/rosettadds-perf-runner.Tests/rosettadds-perf-runner.Tests.csproj --filter "FullyQualifiedName~AdbClientTests" --nologo
 ```
 
-期待: 4 件 compile error (`AdbClient` / `IAdbCommandSink` 未定義) で FAIL。
+期待: 4 件 compile error (`AdbClient` / `IAdbCommandSink` / `AdbResult` 未定義) で FAIL。
 
-- [ ] **Step 9.4: AdbClient 実装**
+- [ ] **Step 9.4: AdbClient 実装 (`AdbResult` 戻り値版)**
 
 `tools/rosettadds-perf-runner/AdbClient.cs` を新規作成:
 
@@ -798,9 +798,11 @@ using System.Threading.Tasks;
 
 namespace ROSettaDDS.PerfRunner;
 
+internal readonly record struct AdbResult(int ExitCode, string Stdout, string Stderr);
+
 internal interface IAdbCommandSink
 {
-    Task<int> RunAsync(string command, CancellationToken ct);
+    Task<AdbResult> RunAsync(string command, CancellationToken ct);
 }
 
 internal sealed class AdbClient : IAdbCommandSink
@@ -814,16 +816,24 @@ internal sealed class AdbClient : IAdbCommandSink
         _serial = serial;
     }
 
-    public Task<int> RunAsync(string command, CancellationToken ct)
+    public Task<AdbResult> RunAsync(string command, CancellationToken ct)
         => _sink.RunAsync(command, ct);
 
-    public Task InstallApkAsync(string apkPath, CancellationToken ct)
-        => RunAsync($"adb -s {_serial} install -r {apkPath}", ct);
+    public async Task<AdbResult> InstallApkAsync(string apkPath, CancellationToken ct)
+    {
+        var r = await RunAsync($"adb -s {_serial} install -r {apkPath}", ct);
+        if (r.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"adb install failed (exit={r.ExitCode}): {r.Stderr.Trim()}");
+        }
+        return r;
+    }
 
-    public Task ForceStopAsync(string packageId, CancellationToken ct)
+    public Task<AdbResult> ForceStopAsync(string packageId, CancellationToken ct)
         => RunAsync($"adb -s {_serial} shell am force-stop {packageId}", ct);
 
-    public Task StartActivityAsync(
+    public Task<AdbResult> StartActivityAsync(
         string packageId,
         string activityComponent,
         IReadOnlyList<string> playerArgs,
@@ -836,29 +846,13 @@ internal sealed class AdbClient : IAdbCommandSink
             ct);
     }
 
-    public Task PullFileAsync(string remotePath, string localPath, CancellationToken ct)
+    public Task<AdbResult> PullFileAsync(string remotePath, string localPath, CancellationToken ct)
         => RunAsync($"adb -s {_serial} pull {remotePath} {localPath}", ct);
-
-    public Task<string> RunWithStdoutAsync(string command, CancellationToken ct)
-    {
-        // 実 subprocess 用の薄いラッパ。FakeAdbClient は未実装なのでテスト時は使わない。
-        var psi = new ProcessStartInfo("/bin/sh", "-c " + Escape(command))
-        {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-        };
-        var p = Process.Start(psi)!;
-        string stdout = p.StandardOutput.ReadToEnd();
-        p.WaitForExit();
-        return Task.FromResult(stdout);
-    }
-
-    private static string Escape(string s) => "'" + s.Replace("'", "'\\''") + "'";
 }
 
 internal sealed class RealAdbCommandSink : IAdbCommandSink
 {
-    public Task<int> RunAsync(string command, CancellationToken ct)
+    public async Task<AdbResult> RunAsync(string command, CancellationToken ct)
     {
         var psi = new ProcessStartInfo("/bin/sh", "-c " + Escape(command))
         {
@@ -866,9 +860,11 @@ internal sealed class RealAdbCommandSink : IAdbCommandSink
             RedirectStandardError = true,
             UseShellExecute = false,
         };
-        var p = Process.Start(psi)!;
-        p.WaitForExit();
-        return Task.FromResult(p.ExitCode);
+        using var p = Process.Start(psi)!;
+        string stdout = await p.StandardOutput.ReadToEndAsync(ct);
+        string stderr = await p.StandardError.ReadToEndAsync(ct);
+        await p.WaitForExitAsync(ct);
+        return new AdbResult(p.ExitCode, stdout, stderr);
     }
 
     private static string Escape(string s) => "'" + s.Replace("'", "'\\''") + "'";
@@ -1020,11 +1016,12 @@ public class AndroidAdbDriverTests : IDisposable
 }
 ```
 
-> 上記テストが要求する Fake の機能 (`ExitCodeOverride` / `StderrOverride` / `ScriptedExitCodes` / `FileProvider`) は Step 10.2 で `FakeAdbClient` を新規作成して提供する。
+> 上記テストが要求する Fake の機能 (`ExitCodeOverride` / `StderrOverride` / `ScriptedExitCodes` / `FileProvider`) は Step 10.2 で Task 9 で作成した `FakeAdbClient` に追加する。
+> なお `AdbClient` 本体 (`IAdbCommandSink` / `AdbResult` / `AdbClient` / `RealAdbCommandSink`) は Task 9 で実装済みのため Task 10 では再定義しない。
 
-- [ ] **Step 10.2: FakeAdbClient を `AdbResult` 対応版で作成**
+- [ ] **Step 10.2: `FakeAdbClient` に test hook を追加**
 
-`tools/rosettadds-perf-runner.Tests/Fakes/FakeAdbClient.cs` を新規作成:
+Task 9 の `FakeAdbClient` を、AndroidAdbDriver テストが必要とする `ExitCodeOverride` / `StderrOverride` / `ScriptedExitCodes` / `FileProvider` を備えた版に拡張する。`tools/rosettadds-perf-runner.Tests/Fakes/FakeAdbClient.cs` を以下に置換:
 
 ```csharp
 using System;
@@ -1065,91 +1062,9 @@ internal sealed class FakeAdbClient : IAdbCommandSink
 }
 ```
 
-- [ ] **Step 10.3: AdbClient 実装 (`AdbResult` 戻り値版)**
+- [ ] **Step 10.3: スキップ (AdbClient は Task 9 で実装済み)**
 
-`tools/rosettadds-perf-runner/AdbClient.cs` を新規作成:
-
-```csharp
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Threading;
-using System.Threading.Tasks;
-
-namespace ROSettaDDS.PerfRunner;
-
-internal readonly record struct AdbResult(int ExitCode, string Stdout, string Stderr);
-
-internal interface IAdbCommandSink
-{
-    Task<AdbResult> RunAsync(string command, CancellationToken ct);
-}
-
-internal sealed class AdbClient : IAdbCommandSink
-{
-    private readonly IAdbCommandSink _sink;
-    private readonly string _serial;
-
-    public AdbClient(IAdbCommandSink sink, string serial)
-    {
-        _sink = sink;
-        _serial = serial;
-    }
-
-    public Task<AdbResult> RunAsync(string command, CancellationToken ct)
-        => _sink.RunAsync(command, ct);
-
-    public async Task<AdbResult> InstallApkAsync(string apkPath, CancellationToken ct)
-    {
-        var r = await RunAsync($"adb -s {_serial} install -r {apkPath}", ct);
-        if (r.ExitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"adb install failed (exit={r.ExitCode}): {r.Stderr.Trim()}");
-        }
-        return r;
-    }
-
-    public Task<AdbResult> ForceStopAsync(string packageId, CancellationToken ct)
-        => RunAsync($"adb -s {_serial} shell am force-stop {packageId}", ct);
-
-    public Task<AdbResult> StartActivityAsync(
-        string packageId,
-        string activityComponent,
-        IReadOnlyList<string> playerArgs,
-        CancellationToken ct)
-    {
-        string joined = string.Join(" ", playerArgs);
-        return RunAsync(
-            $"adb -s {_serial} shell am start -W -n {packageId}/{activityComponent} " +
-            $"--es args \"{joined}\"",
-            ct);
-    }
-
-    public Task<AdbResult> PullFileAsync(string remotePath, string localPath, CancellationToken ct)
-        => RunAsync($"adb -s {_serial} pull {remotePath} {localPath}", ct);
-}
-
-internal sealed class RealAdbCommandSink : IAdbCommandSink
-{
-    public async Task<AdbResult> RunAsync(string command, CancellationToken ct)
-    {
-        var psi = new ProcessStartInfo("/bin/sh", "-c " + Escape(command))
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        using var p = Process.Start(psi)!;
-        string stdout = await p.StandardOutput.ReadToEndAsync(ct);
-        string stderr = await p.StandardError.ReadToEndAsync(ct);
-        await p.WaitForExitAsync(ct);
-        return new AdbResult(p.ExitCode, stdout, stderr);
-    }
-
-    private static string Escape(string s) => "'" + s.Replace("'", "'\\''") + "'";
-}
-```
+`tools/rosettadds-perf-runner/AdbClient.cs` は Task 9 で実装済みのため、本 Task では再定義しない。Step 10.2 で拡張した `FakeAdbClient` が本 Task のテストで使えることを `dotnet build` で確認する。
 
 - [ ] **Step 10.4: テスト失敗確認 (compile error)**
 
