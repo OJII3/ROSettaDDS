@@ -92,7 +92,7 @@ internal sealed class RunnerOptions
         output.WriteLine();
         output.WriteLine("Options:");
         output.WriteLine("  --backend <il2cpp|mono>                  Default: il2cpp");
-        output.WriteLine("  --build-target <StandaloneLinux64|StandaloneOSX>");
+        output.WriteLine("  --build-target <StandaloneLinux64|StandaloneOSX|Android>");
         output.WriteLine("  --scenario <name|all>                    Default: all");
         output.WriteLine("  --helper <path>                          Default: tools/ros2-perf-helper install output");
         output.WriteLine("  --player-build <path>                    Existing Player build path for --skip-build");
