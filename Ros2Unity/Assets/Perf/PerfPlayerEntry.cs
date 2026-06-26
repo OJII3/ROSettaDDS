@@ -83,7 +83,7 @@ namespace ROSettaDDS.UnityPerfHarness
             PerfMetricsWriter metrics,
             PerfProfilerRecorders recorders)
         {
-            using (var participant = CreateParticipant(args.DomainId, "player_pub"))
+            using (var participant = CreateParticipant(args, "player_pub"))
             using (var publisher = participant.CreatePublisher<StringMessage>(
                        args.Topic,
                        StringMessageSerializer.Instance,
@@ -125,7 +125,7 @@ namespace ROSettaDDS.UnityPerfHarness
         {
             int received = 0;
             Stopwatch stopwatch = null;
-            using (var participant = CreateParticipant(args.DomainId, "player_sub"))
+            using (var participant = CreateParticipant(args, "player_sub"))
             using (var subscription = participant.CreateSubscription<StringMessage>(
                        args.Topic,
                        StringMessageSerializer.Instance,
@@ -232,13 +232,15 @@ namespace ROSettaDDS.UnityPerfHarness
             fields[prefix + "_udp_queue_count"] = diagnostics.QueueCount;
         }
 
-        private static DomainParticipant CreateParticipant(int domainId, string entityName)
+        private static DomainParticipant CreateParticipant(
+            PerfPlayerArguments args,
+            string entityName)
             => new DomainParticipant(new DomainParticipantOptions
             {
-                DomainId = domainId,
+                DomainId = args.DomainId,
                 ParticipantId = 0,
                 EntityName = "rosettadds_perf_" + entityName,
-                LocalhostOnly = true,
+                LocalhostOnly = args.LocalhostOnly,
                 SpdpInterval = TimeSpan.FromMilliseconds(100),
                 SedpInterval = TimeSpan.FromMilliseconds(100),
                 UserWriterHeartbeatPeriod = TimeSpan.FromMilliseconds(100),
