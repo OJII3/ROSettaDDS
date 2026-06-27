@@ -68,7 +68,7 @@ public class AndroidAdbDriverTests : IDisposable
         _fake.Calls[0].Should().StartWith("adb -s ABC install -r /tmp/x.apk");
         _fake.Calls[1].Should().Be("adb -s ABC shell am force-stop com.ojii3.rosettadds.perf");
         _fake.Calls[2].Should().StartWith("adb -s ABC shell 'am start -W -n com.ojii3.rosettadds.perf/com.unity3d.player.GameActivity");
-        _fake.Calls[2].Should().Contain("--es args");
+        _fake.Calls[2].Should().Contain("--es unity");
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public class AndroidAdbDriverTests : IDisposable
         _fake.Calls.Should().ContainSingle()
             .Which.Should().Be(
                 "adb -s ABC shell 'am start -W -n com.example.nonexistent/com.example.MainActivity " +
-                "--es args \"--rosettadds-perf --rosettadds-topic /t\"'");
+                "--es unity \"--rosettadds-perf --rosettadds-topic /t\"'");
     }
 
     [Fact]

@@ -45,7 +45,7 @@ public class AdbClientTests
         fake.Calls.Should().ContainSingle();
         string call = fake.Calls[0];
         call.Should().StartWith("adb -s ABC shell 'am start -W -n com.ojii3.rosettadds.perf/com.unity3d.player.GameActivity");
-        call.Should().Contain("--es args \"--rosettadds-topic /t --rosettadds-domain-id 42\"");
+        call.Should().Contain("--es unity \"--rosettadds-topic /t --rosettadds-domain-id 42\"");
     }
 
     [Fact]
