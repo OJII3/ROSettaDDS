@@ -77,7 +77,7 @@ public class RunnerOptionsTests
     public void AndroidActivity_既定値は_Unity6_の_GameActivity()
     {
         var options = RunnerOptions.Parse(Array.Empty<string>());
-        options.AndroidActivity.Should().Be("com.unity3d.player.GameActivity");
+        options.AndroidActivity.Should().Be("com.unity3d.player.UnityPlayerGameActivity");
     }
 
     [Fact]

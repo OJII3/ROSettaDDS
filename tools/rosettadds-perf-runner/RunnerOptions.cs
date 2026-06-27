@@ -18,7 +18,7 @@ internal sealed class RunnerOptions
     internal string Adb { get; private set; } = "adb";
     internal string? AndroidDevice { get; private set; }
     internal string AndroidPackage { get; private set; } = "com.ojii3.rosettadds.perf";
-    internal string AndroidActivity { get; private set; } = "com.unity3d.player.GameActivity";
+    internal string AndroidActivity { get; private set; } = "com.unity3d.player.UnityPlayerGameActivity";
 
     internal static RunnerOptions Parse(string[] args)
     {
@@ -120,7 +120,7 @@ internal sealed class RunnerOptions
         output.WriteLine("  --adb <path>                               Default: adb (PATH 解決)");
         output.WriteLine("  --android-device <serial>                  Required for --build-target Android (auto-detect 未実装)。");
         output.WriteLine("  --android-package <id>                     Default: com.ojii3.rosettadds.perf");
-        output.WriteLine("  --android-activity <component>             Default: com.unity3d.player.GameActivity");
+        output.WriteLine("  --android-activity <component>             Default: com.unity3d.player.UnityPlayerGameActivity");
     }
 
     private static string RequireValue(string[] args, ref int index, string name)
