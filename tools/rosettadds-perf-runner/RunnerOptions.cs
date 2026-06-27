@@ -19,6 +19,8 @@ internal sealed class RunnerOptions
     internal string? AndroidDevice { get; private set; }
     internal string AndroidPackage { get; private set; } = "com.ojii3.rosettadds.perf";
     internal string AndroidActivity { get; private set; } = "com.unity3d.player.GameActivity";
+    internal string? StaticPeer { get; private set; }
+    internal string HostIp { get; private set; } = "127.0.0.1";
 
     internal static RunnerOptions Parse(string[] args)
     {
@@ -78,6 +80,12 @@ internal sealed class RunnerOptions
                 case "--android-activity":
                     options.AndroidActivity = RequireValue(args, ref i, arg);
                     break;
+                case "--rosettadds-static-peer":
+                    options.StaticPeer = RequireValue(args, ref i, arg);
+                    break;
+                case "--rosettadds-host-ip":
+                    options.HostIp = RequireValue(args, ref i, arg);
+                    break;
                 default:
                     throw new ArgumentException("unknown argument: " + arg);
             }
@@ -121,6 +129,8 @@ internal sealed class RunnerOptions
         output.WriteLine("  --android-device <serial>                  Required for --build-target Android (auto-detect 未実装)。");
         output.WriteLine("  --android-package <id>                     Default: com.ojii3.rosettadds.perf");
         output.WriteLine("  --android-activity <component>             Default: com.unity3d.player.GameActivity");
+        output.WriteLine("  --rosettadds-static-peer <ip>               Static peer IP for unicast discovery (ROS_STATIC_PEERS)");
+        output.WriteLine("  --rosettadds-host-ip <ip>                   Host IP address for Android unicast discovery (default: 127.0.0.1)");
     }
 
     private static string RequireValue(string[] args, ref int index, string name)

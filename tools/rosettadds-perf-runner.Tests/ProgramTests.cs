@@ -77,6 +77,20 @@ public class ProgramTests
     }
 
     [Fact]
+    public void BuildHelperEnv_StaticPeer_指定時も_ROS_LOCALHOST_ONLY_は_base_on_target()
+    {
+        var options = RunnerOptions.Parse(new[]
+        {
+            "--build-target", "Android",
+            "--rosettadds-static-peer", "192.168.8.221"
+        });
+        var env = new Dictionary<string, string?>();
+        Program.BuildHelperEnv(options, domainId: 42, env);
+        env["ROS_LOCALHOST_ONLY"].Should().Be("0");
+        env.Should().NotContainKey("ROS_STATIC_PEERS");
+    }
+
+    [Fact]
     public void Android_build_target_の_player_artifact_dir_が_PersistentDir_に_反映される()
     {
         var options = RunnerOptions.Parse(new[] { "--build-target", "Android", "--android-device", "FAKE123" });
