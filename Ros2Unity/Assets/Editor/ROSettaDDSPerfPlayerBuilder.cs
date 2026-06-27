@@ -45,6 +45,9 @@ namespace ROSettaDDS.EditorTools
                 PlayerSettings.GetScriptingBackend(namedTarget);
             string originalApplicationIdentifier =
                 PlayerSettings.GetApplicationIdentifier(namedTarget);
+            AndroidArchitecture originalArchitecture = target == BuildTarget.Android
+                ? PlayerSettings.Android.targetArchitectures
+                : AndroidArchitecture.ARM64;
             Dictionary<string, string> preservedFiles = SnapshotProjectFiles();
 
             try
@@ -54,6 +57,8 @@ namespace ROSettaDDS.EditorTools
                 {
                     PlayerSettings.SetApplicationIdentifier(
                         namedTarget, "com.ojii3.rosettadds.perf");
+                    PlayerSettings.Android.targetArchitectures =
+                        AndroidArchitecture.ARM64;
                 }
 
                 string directory = Path.GetDirectoryName(buildPath);
@@ -81,6 +86,7 @@ namespace ROSettaDDS.EditorTools
                 if (target == BuildTarget.Android)
                 {
                     PlayerSettings.SetApplicationIdentifier(namedTarget, originalApplicationIdentifier);
+                    PlayerSettings.Android.targetArchitectures = originalArchitecture;
                 }
                 RestoreProjectFiles(preservedFiles);
             }
