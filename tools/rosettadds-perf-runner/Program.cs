@@ -319,7 +319,14 @@ static async Task<ScenarioManifest> RunScenarioAndroid(
         TimeSpan.FromMinutes(2), CancellationToken.None).ConfigureAwait(false);
 
     await playerDriver.CopyFileFromAsync("metrics.ndjson", metricsFile, CancellationToken.None).ConfigureAwait(false);
-    await playerDriver.CopyFileFromAsync("player.profiler.raw", profilerFile, CancellationToken.None).ConfigureAwait(false);
+    try
+    {
+        await playerDriver.CopyFileFromAsync("player.profiler.raw", profilerFile, CancellationToken.None).ConfigureAwait(false);
+    }
+    catch (IOException ex)
+    {
+        Console.Error.WriteLine($"[warn] profiler.raw pull failed (Unity profiler output missing): {ex.Message}");
+    }
 
     return manifest;
 }
