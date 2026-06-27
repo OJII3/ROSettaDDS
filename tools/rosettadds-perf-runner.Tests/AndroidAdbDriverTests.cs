@@ -108,4 +108,16 @@ public class AndroidAdbDriverTests : IDisposable
         var act = () => _driver.WaitForSentinelAsync("ready", TimeSpan.FromMilliseconds(200), CancellationToken.None);
         await act.Should().ThrowAsync<IOException>();
     }
+
+    [Fact]
+    public async Task CleanStaleSentinelsAsync_は_各_sentinel_に対して_adb_shell_rm_f_を呼ぶ()
+    {
+        await _driver.CleanStaleSentinelsAsync(
+            new[] { "ready", "done", "metrics.ndjson" }, CancellationToken.None);
+
+        _fake.Calls.Should().HaveCount(3);
+        _fake.Calls[0].Should().Be("adb -s ABC shell rm -f /sdcard/Android/data/com.ojii3.rosettadds.perf/files/rosettadds-perf/ready");
+        _fake.Calls[1].Should().Be("adb -s ABC shell rm -f /sdcard/Android/data/com.ojii3.rosettadds.perf/files/rosettadds-perf/done");
+        _fake.Calls[2].Should().Be("adb -s ABC shell rm -f /sdcard/Android/data/com.ojii3.rosettadds.perf/files/rosettadds-perf/metrics.ndjson");
+    }
 }

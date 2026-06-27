@@ -44,6 +44,11 @@ internal sealed class DesktopProcessDriver : IProcessDriver
         return Task.CompletedTask;
     }
 
+    public Task CleanStaleSentinelsAsync(IReadOnlyList<string> names, CancellationToken ct)
+    {
+        return Task.CompletedTask;
+    }
+
     public void Dispose()
     {
         if (_disposed) return;

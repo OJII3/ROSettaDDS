@@ -9,4 +9,5 @@ internal interface IProcessDriver : IDisposable
     Stream OpenLogAsync(LogKind kind, CancellationToken ct);
     Task CopyFileFromAsync(string remoteName, string localPath, CancellationToken ct);
     Task PushFileAsync(string localPath, string remoteName, CancellationToken ct);
+    Task CleanStaleSentinelsAsync(IReadOnlyList<string> names, CancellationToken ct);
 }

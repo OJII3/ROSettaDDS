@@ -18,6 +18,8 @@ internal sealed class AdbClient : IAdbCommandSink
     private readonly IAdbCommandSink _sink;
     private readonly string _serial;
 
+    public string Serial => _serial;
+
     public AdbClient(IAdbCommandSink sink, string serial)
     {
         _sink = sink;

@@ -14,6 +14,7 @@ internal sealed class FakeProcessDriver : IProcessDriver
     public List<TimeSpan> WaitForExitCalls { get; } = new();
     public List<(string Remote, string Local)> CopyFileCalls { get; } = new();
     public List<(string Local, string Remote)> PushFileCalls { get; } = new();
+    public List<IReadOnlyList<string>> CleanStaleSentinelsCalls { get; } = new();
     public int KillCalls { get; private set; }
 
     public Func<LaunchSpec, CancellationToken, Task>? StartImpl { get; set; }
@@ -23,6 +24,7 @@ internal sealed class FakeProcessDriver : IProcessDriver
     public Func<LogKind, CancellationToken, Stream>? OpenLogImpl { get; set; }
     public Func<string, string, CancellationToken, Task>? CopyFileImpl { get; set; }
     public Func<string, string, CancellationToken, Task>? PushFileImpl { get; set; }
+    public Func<IReadOnlyList<string>, CancellationToken, Task>? CleanStaleSentinelsImpl { get; set; }
 
     public Task StartAsync(LaunchSpec spec, CancellationToken ct)
     {
@@ -61,6 +63,12 @@ internal sealed class FakeProcessDriver : IProcessDriver
     {
         PushFileCalls.Add((localPath, remoteName));
         return PushFileImpl?.Invoke(localPath, remoteName, ct) ?? Task.CompletedTask;
+    }
+
+    public Task CleanStaleSentinelsAsync(IReadOnlyList<string> names, CancellationToken ct)
+    {
+        CleanStaleSentinelsCalls.Add(names);
+        return CleanStaleSentinelsImpl?.Invoke(names, ct) ?? Task.CompletedTask;
     }
 
     public void Dispose() { }

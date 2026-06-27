@@ -163,6 +163,13 @@ static async Task<ScenarioManifest> RunScenario(
             metricsFile, profilerFile, helperStdout, helperStderr);
     }
 
+    // desktop: scenarioDir 配下の stale sentinel を削除
+    foreach (string name in Program.StaleSentinelNames)
+    {
+        string path = Path.Combine(scenarioDir, name);
+        if (File.Exists(path)) File.Delete(path);
+    }
+
     if (scenario.Direction == PerfDirection.UnityToRos2)
     {
         using ProcessCapture player = StartPlayer(playerExecutable, scenario, domainId, topic, options, readyFile, doneFile, releaseFile, metricsFile, profilerFile, playerLog, scenarioDir);
@@ -266,6 +273,9 @@ static async Task<ScenarioManifest> RunScenarioAndroid(
 
     using IProcessDriver playerDriver = ProgramHelpers.CreatePlayerDriver(
         options, scenarioDir, apkFile: playerExecutable);
+
+    await playerDriver.CleanStaleSentinelsAsync(
+        Program.StaleSentinelNames, CancellationToken.None).ConfigureAwait(false);
 
     await playerDriver.StartAsync(launchSpec, CancellationToken.None).ConfigureAwait(false);
 
@@ -483,17 +493,22 @@ static void EnsureUloopSuccess(string stdoutPath)
     }
 }
 
-internal static partial class Program
-{
-    internal static void BuildHelperEnv(RunnerOptions options, int domainId, IDictionary<string, string?> env)
-        => ProgramHelpers.BuildHelperEnv(options, domainId, env);
+    internal static partial class Program
+    {
+        internal static readonly string[] StaleSentinelNames = new[]
+        {
+            "ready", "done", "release", "metrics.ndjson", "player.profiler.raw"
+        };
 
-    internal static IProcessDriver CreatePlayerDriver(RunnerOptions options, string artifactDir, string? apkFile)
-        => ProgramHelpers.CreatePlayerDriver(options, artifactDir, apkFile);
+        internal static void BuildHelperEnv(RunnerOptions options, int domainId, IDictionary<string, string?> env)
+            => ProgramHelpers.BuildHelperEnv(options, domainId, env);
 
-    internal static IProcessDriver CreateHelperDriver(RunnerOptions options)
-        => ProgramHelpers.CreateHelperDriver(options);
-}
+        internal static IProcessDriver CreatePlayerDriver(RunnerOptions options, string artifactDir, string? apkFile)
+            => ProgramHelpers.CreatePlayerDriver(options, artifactDir, apkFile);
+
+        internal static IProcessDriver CreateHelperDriver(RunnerOptions options)
+            => ProgramHelpers.CreateHelperDriver(options);
+    }
 
 namespace ROSettaDDS.PerfRunner
 {

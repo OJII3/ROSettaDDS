@@ -102,6 +102,16 @@ internal sealed class AndroidAdbDriver : IProcessDriver
         }
     }
 
+    public async Task CleanStaleSentinelsAsync(IReadOnlyList<string> names, CancellationToken ct)
+    {
+        foreach (string name in names)
+        {
+            string remote = _devicePersistentDir + "/" + name;
+            await _adb.RunAsync(
+                $"adb -s {_adb.Serial} shell rm -f {remote}", ct);
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
