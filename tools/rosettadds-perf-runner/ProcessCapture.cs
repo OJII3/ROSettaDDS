@@ -72,6 +72,21 @@ internal sealed class ProcessCapture : IDisposable
         return capture;
     }
 
+    internal void Kill()
+    {
+        try
+        {
+            if (!_process.HasExited)
+            {
+                _process.Kill(entireProcessTree: true);
+                _process.WaitForExit(2000);
+            }
+        }
+        catch
+        {
+        }
+    }
+
     internal async Task<int> WaitForExitAsync(TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
@@ -128,20 +143,5 @@ internal sealed class ProcessCapture : IDisposable
         _stdoutWriter.Dispose();
         _stderrWriter.Dispose();
         _process.Dispose();
-    }
-
-    private void Kill()
-    {
-        try
-        {
-            if (!_process.HasExited)
-            {
-                _process.Kill(entireProcessTree: true);
-                _process.WaitForExit(2000);
-            }
-        }
-        catch
-        {
-        }
     }
 }

@@ -155,11 +155,26 @@ static async Task<ScenarioManifest> RunScenario(
         HelperStderrPath = helperStderr,
     };
 
+    if (options.BuildTarget == "Android")
+    {
+        return await RunScenarioAndroid(
+            helper, playerExecutable, scenario, options, domainId, manifest,
+            scenarioDir, topic, readyFile, doneFile, releaseFile,
+            metricsFile, profilerFile, helperStdout, helperStderr);
+    }
+
+    // desktop: scenarioDir 配下の stale sentinel を削除
+    foreach (string name in Program.StaleSentinelNames)
+    {
+        string path = Path.Combine(scenarioDir, name);
+        if (File.Exists(path)) File.Delete(path);
+    }
+
     if (scenario.Direction == PerfDirection.UnityToRos2)
     {
         using ProcessCapture player = StartPlayer(playerExecutable, scenario, domainId, topic, options, readyFile, doneFile, releaseFile, metricsFile, profilerFile, playerLog, scenarioDir);
         await WaitForFile(readyFile, TimeSpan.FromSeconds(20), "Player ready sentinel", player).ConfigureAwait(false);
-        using ProcessCapture helperProcess = StartHelper(helper, scenario, domainId, topic, "sub", helperStdout, helperStderr, measureStart: false);
+        using ProcessCapture helperProcess = StartHelper(helper, scenario, domainId, topic, "sub", helperStdout, helperStderr, measureStart: false, options);
         await helperProcess.WaitForEventAsync("ready", TimeSpan.FromSeconds(20)).ConfigureAwait(false);
         manifest.HelperExitCode = await helperProcess.WaitForExitAsync(TimeSpan.FromMinutes(1)).ConfigureAwait(false);
         File.WriteAllText(releaseFile, "release");
@@ -169,13 +184,148 @@ static async Task<ScenarioManifest> RunScenario(
     {
         using ProcessCapture player = StartPlayer(playerExecutable, scenario, domainId, topic, options, readyFile, doneFile, null, metricsFile, profilerFile, playerLog, scenarioDir);
         await WaitForFile(readyFile, TimeSpan.FromSeconds(20), "Player ready sentinel", player).ConfigureAwait(false);
-        using ProcessCapture helperProcess = StartHelper(helper, scenario, domainId, topic, "pub", helperStdout, helperStderr, measureStart: true);
+        using ProcessCapture helperProcess = StartHelper(helper, scenario, domainId, topic, "pub", helperStdout, helperStderr, measureStart: true, options);
         await helperProcess.WaitForEventAsync("ready", TimeSpan.FromSeconds(20)).ConfigureAwait(false);
         await helperProcess.WaitForEventAsync("armed", TimeSpan.FromSeconds(20)).ConfigureAwait(false);
         helperProcess.StandardInput.WriteLine("go");
         helperProcess.StandardInput.Flush();
         manifest.HelperExitCode = await helperProcess.WaitForExitAsync(TimeSpan.FromMinutes(1)).ConfigureAwait(false);
         manifest.PlayerExitCode = await player.WaitForExitAsync(TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+    }
+
+    return manifest;
+}
+
+static async Task<ScenarioManifest> RunScenarioAndroid(
+    string helper,
+    string playerExecutable,
+    PerfScenario scenario,
+    RunnerOptions options,
+    int domainId,
+    ScenarioManifest manifest,
+    string scenarioDir,
+    string topic,
+    string readyFile,
+    string doneFile,
+    string releaseFile,
+    string metricsFile,
+    string profilerFile,
+    string helperStdout,
+    string helperStderr)
+{
+    string devicePersistentDir =
+        $"/sdcard/Android/data/{options.AndroidPackage}/files/rosettadds-perf";
+
+    var extraArgs = new List<string>
+    {
+        "-batchmode",
+        "-nographics",
+        "-logFile", devicePersistentDir + "/player.log",
+        "-profiler-enable",
+        "-profiler-log-file", devicePersistentDir + "/player.profiler.raw",
+        "-profiler-capture-frame-count", options.CaptureFrames.ToString(),
+        "-profiler-maxusedmemory", options.ProfilerMemory.ToString(),
+        "--rosettadds-perf",
+        "--rosettadds-scenario", scenario.Name,
+        "--rosettadds-direction", scenario.DirectionArgument,
+        "--rosettadds-domain-id", domainId.ToString(),
+        "--rosettadds-topic", topic,
+        "--rosettadds-qos", scenario.Qos,
+        "--rosettadds-payload-bytes", scenario.PayloadBytes.ToString(),
+        "--rosettadds-messages", scenario.Messages.ToString(),
+        "--rosettadds-ready-file", devicePersistentDir + "/ready",
+        "--rosettadds-done-file", devicePersistentDir + "/done",
+        "--rosettadds-metrics-file", devicePersistentDir + "/metrics.ndjson",
+    };
+    if (scenario.Direction == PerfDirection.UnityToRos2)
+    {
+        extraArgs.Add("--rosettadds-release-file");
+        extraArgs.Add(devicePersistentDir + "/release");
+    }
+    extraArgs.Add("--rosettadds-profiler-mode");
+    extraArgs.Add(options.ProfilerMode);
+    // Android Player は LAN 上の helper と discovery する必要があるため、
+    // LocalhostOnly=false を明示的に渡す (LaunchSpec.LocalhostOnly も false)。
+    extraArgs.Add("--rosettadds-localhost-only");
+    extraArgs.Add("false");
+
+    var launchSpec = new LaunchSpec(
+        Kind: "player",
+        ScenarioName: scenario.Name,
+        Direction: scenario.DirectionArgument,
+        DomainId: domainId,
+        Topic: topic,
+        Qos: scenario.Qos,
+        PayloadBytes: scenario.PayloadBytes,
+        Messages: scenario.Messages,
+        LocalhostOnly: false,
+        ReadyFile: devicePersistentDir + "/ready",
+        DoneFile: devicePersistentDir + "/done",
+        ReleaseFile: scenario.Direction == PerfDirection.UnityToRos2 ? devicePersistentDir + "/release" : null,
+        MetricsFile: devicePersistentDir + "/metrics.ndjson",
+        PlayerExecutable: playerExecutable,
+        ApkFile: playerExecutable,
+        DevicePersistentDir: devicePersistentDir,
+        HelperMeasureStart: 0,
+        HelperMode: "",
+        HelperTopic: topic,
+        ExtraArgs: extraArgs);
+
+    using IProcessDriver playerDriver = ProgramHelpers.CreatePlayerDriver(
+        options, scenarioDir, apkFile: playerExecutable);
+
+    await playerDriver.CleanStaleSentinelsAsync(
+        Program.StaleSentinelNames, CancellationToken.None).ConfigureAwait(false);
+
+    await playerDriver.StartAsync(launchSpec, CancellationToken.None).ConfigureAwait(false);
+
+    bool ready = await playerDriver.WaitForSentinelAsync(
+        "ready", TimeSpan.FromSeconds(20), CancellationToken.None).ConfigureAwait(false);
+    if (!ready)
+    {
+        throw new TimeoutException("Android player did not become ready within timeout");
+    }
+
+    string helperMode = scenario.Direction == PerfDirection.UnityToRos2 ? "sub" : "pub";
+    bool measureStart = scenario.Direction != PerfDirection.UnityToRos2;
+
+    using ProcessCapture helperProcess = ProcessCapture.Start(
+        helper,
+        PerfRunnerProcessArgs.Helper(scenario, topic, helperMode, measureStart),
+        helperStdout,
+        helperStderr,
+        env => ProgramHelpers.BuildHelperEnv(options, domainId, env));
+
+    await helperProcess.WaitForEventAsync("ready", TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+
+    if (scenario.Direction != PerfDirection.UnityToRos2)
+    {
+        await helperProcess.WaitForEventAsync("armed", TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+        helperProcess.StandardInput.WriteLine("go");
+        helperProcess.StandardInput.Flush();
+    }
+
+    manifest.HelperExitCode = await helperProcess.WaitForExitAsync(
+        TimeSpan.FromMinutes(1)).ConfigureAwait(false);
+
+    if (scenario.Direction == PerfDirection.UnityToRos2)
+    {
+        string localRelease = Path.Combine(scenarioDir, "player.release");
+        File.WriteAllText(localRelease, "release");
+        await playerDriver.PushFileAsync(localRelease, devicePersistentDir + "/release", CancellationToken.None).ConfigureAwait(false);
+    }
+
+    manifest.PlayerExitCode = await playerDriver.WaitForExitAsync(
+        TimeSpan.FromMinutes(2), CancellationToken.None).ConfigureAwait(false);
+
+    await playerDriver.CopyFileFromAsync("metrics.ndjson", metricsFile, CancellationToken.None).ConfigureAwait(false);
+    try
+    {
+        await playerDriver.CopyFileFromAsync("player.profiler.raw", profilerFile, CancellationToken.None).ConfigureAwait(false);
+    }
+    catch (IOException ex)
+    {
+        Console.Error.WriteLine($"[warn] profiler.raw pull failed (Unity profiler output missing): {ex.Message}");
     }
 
     return manifest;
@@ -189,7 +339,8 @@ static ProcessCapture StartHelper(
     string mode,
     string stdoutPath,
     string stderrPath,
-    bool measureStart)
+    bool measureStart,
+    RunnerOptions options)
 {
     IReadOnlyList<string> args = PerfRunnerProcessArgs.Helper(scenario, topic, mode, measureStart);
 
@@ -198,12 +349,7 @@ static ProcessCapture StartHelper(
         args,
         stdoutPath,
         stderrPath,
-        env =>
-        {
-            env["ROS_LOCALHOST_ONLY"] = "1";
-            env["RMW_IMPLEMENTATION"] = "rmw_fastrtps_cpp";
-            env["ROS_DOMAIN_ID"] = domainId.ToString();
-        });
+        env => ProgramHelpers.BuildHelperEnv(options, domainId, env));
 }
 
 static ProcessCapture StartPlayer(
@@ -351,5 +497,63 @@ static void EnsureUloopSuccess(string stdoutPath)
             ? diagElement.GetString() ?? ""
             : "";
         throw new InvalidOperationException("uloop Player build failed: " + error + " " + diagnostics);
+    }
+}
+
+    internal static partial class Program
+    {
+        internal static readonly string[] StaleSentinelNames = new[]
+        {
+            "ready", "done", "release", "metrics.ndjson", "player.profiler.raw"
+        };
+
+        internal static void BuildHelperEnv(RunnerOptions options, int domainId, IDictionary<string, string?> env)
+            => ProgramHelpers.BuildHelperEnv(options, domainId, env);
+
+        internal static IProcessDriver CreatePlayerDriver(RunnerOptions options, string artifactDir, string? apkFile)
+            => ProgramHelpers.CreatePlayerDriver(options, artifactDir, apkFile);
+
+        internal static IProcessDriver CreateHelperDriver(RunnerOptions options)
+            => ProgramHelpers.CreateHelperDriver(options);
+    }
+
+namespace ROSettaDDS.PerfRunner
+{
+    internal static class ProgramHelpers
+    {
+        internal static void BuildHelperEnv(RunnerOptions options, int domainId, IDictionary<string, string?> env)
+        {
+            env["ROS_LOCALHOST_ONLY"] = options.BuildTarget == "Android" ? "0" : "1";
+            env["RMW_IMPLEMENTATION"] = "rmw_fastrtps_cpp";
+            env["ROS_DOMAIN_ID"] = domainId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        internal static IProcessDriver CreatePlayerDriver(
+            RunnerOptions options,
+            string artifactDir,
+            string? apkFile)
+        {
+            if (options.BuildTarget == "Android")
+            {
+                string deviceSerial = options.AndroidDevice
+                    ?? throw new System.InvalidOperationException(
+                        "--android-device is required (no auto-detect implemented yet)");
+                var adb = new AdbClient(new RealAdbCommandSink(options.Adb), deviceSerial);
+                string devicePersistentDir =
+                    $"/sdcard/Android/data/{options.AndroidPackage}/files/rosettadds-perf";
+                return new AndroidAdbDriver(
+                    adb: adb,
+                    packageId: options.AndroidPackage,
+                    activityComponent: options.AndroidActivity,
+                    devicePersistentDir: devicePersistentDir,
+                    localArtifactDir: artifactDir);
+            }
+            return new DesktopProcessDriver();
+        }
+
+        internal static IProcessDriver CreateHelperDriver(RunnerOptions options)
+        {
+            return new DesktopProcessDriver();
+        }
     }
 }
