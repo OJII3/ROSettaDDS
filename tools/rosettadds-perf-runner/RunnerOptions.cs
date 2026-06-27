@@ -118,7 +118,7 @@ internal sealed class RunnerOptions
         output.WriteLine("  --profiler-mode <lean|full>              Default: lean");
         output.WriteLine("  --skip-build                             Reuse --player-build instead of building");
         output.WriteLine("  --adb <path>                               Default: adb (PATH 解決)");
-        output.WriteLine("  --android-device <serial>                  Default: adb devices -l の単独エントリ。複数時はエラー。");
+        output.WriteLine("  --android-device <serial>                  Required for --build-target Android (auto-detect 未実装)。");
         output.WriteLine("  --android-package <id>                     Default: com.ojii3.rosettadds.perf");
         output.WriteLine("  --android-activity <component>             Default: com.unity3d.player.GameActivity");
     }

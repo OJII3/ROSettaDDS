@@ -7,12 +7,6 @@ namespace ROSettaDDS.PerfRunner.Tests;
 public class RunnerOptionsTests
 {
     [Fact]
-    public void 仮テスト()
-    {
-        true.Should().BeTrue();
-    }
-
-    [Fact]
     public void BuildTarget_既定値は_OS_依存()
     {
         var options = RunnerOptions.Parse(Array.Empty<string>());
