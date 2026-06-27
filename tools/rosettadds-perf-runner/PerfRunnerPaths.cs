@@ -11,6 +11,10 @@ internal static class PerfRunnerPaths
 
         string buildDir = Path.Combine(runDir, "build");
         Directory.CreateDirectory(buildDir);
+        if (options.BuildTarget == "Android")
+        {
+            return Path.Combine(buildDir, "ROSettaDDSPerfPlayer.apk");
+        }
         return options.BuildTarget == "StandaloneOSX"
             ? Path.Combine(buildDir, "ROSettaDDSPerfPlayer.app")
             : Path.Combine(buildDir, "ROSettaDDSPerfPlayer");
