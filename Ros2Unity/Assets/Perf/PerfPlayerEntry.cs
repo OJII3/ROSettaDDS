@@ -39,12 +39,6 @@ namespace ROSettaDDS.UnityPerfHarness
                     return;
                 }
 
-                if (!string.IsNullOrEmpty(parsed.StaticPeer))
-                {
-                    Environment.SetEnvironmentVariable(
-                        "ROS_STATIC_PEERS", $"{parsed.StaticPeer}:7411");
-                }
-
                 using (var metrics = new PerfMetricsWriter(parsed))
                 {
                     try

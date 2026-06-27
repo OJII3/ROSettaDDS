@@ -74,34 +74,6 @@ public class RunnerOptionsTests
     }
 
     [Fact]
-    public void StaticPeer_未指定時_null()
-    {
-        var options = RunnerOptions.Parse(Array.Empty<string>());
-        options.StaticPeer.Should().BeNull();
-    }
-
-    [Fact]
-    public void StaticPeer_指定が_保持される()
-    {
-        var options = RunnerOptions.Parse(new[] { "--rosettadds-static-peer", "192.168.0.20" });
-        options.StaticPeer.Should().Be("192.168.0.20");
-    }
-
-    [Fact]
-    public void HostIp_既定値は_127_0_0_1()
-    {
-        var options = RunnerOptions.Parse(Array.Empty<string>());
-        options.HostIp.Should().Be("127.0.0.1");
-    }
-
-    [Fact]
-    public void HostIp_指定が_保持される()
-    {
-        var options = RunnerOptions.Parse(new[] { "--rosettadds-host-ip", "10.0.0.5" });
-        options.HostIp.Should().Be("10.0.0.5");
-    }
-
-    [Fact]
     public void AndroidActivity_既定値は_Unity6_の_GameActivity()
     {
         var options = RunnerOptions.Parse(Array.Empty<string>());

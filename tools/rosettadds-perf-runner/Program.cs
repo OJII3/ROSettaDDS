@@ -248,11 +248,6 @@ static async Task<ScenarioManifest> RunScenarioAndroid(
     // LocalhostOnly=false を明示的に渡す (LaunchSpec.LocalhostOnly も false)。
     extraArgs.Add("--rosettadds-localhost-only");
     extraArgs.Add("false");
-    if (!string.IsNullOrEmpty(options.StaticPeer))
-    {
-        extraArgs.Add("--rosettadds-static-peer");
-        extraArgs.Add(options.StaticPeer);
-    }
 
     var launchSpec = new LaunchSpec(
         Kind: "player",
@@ -299,14 +294,7 @@ static async Task<ScenarioManifest> RunScenarioAndroid(
         PerfRunnerProcessArgs.Helper(scenario, topic, helperMode, measureStart),
         helperStdout,
         helperStderr,
-        env =>
-        {
-            ProgramHelpers.BuildHelperEnv(options, domainId, env);
-            if (!string.IsNullOrEmpty(options.StaticPeer))
-            {
-                env["ROS_STATIC_PEERS"] = $"{options.StaticPeer}:7411";
-            }
-        });
+        env => ProgramHelpers.BuildHelperEnv(options, domainId, env));
 
     await helperProcess.WaitForEventAsync("ready", TimeSpan.FromSeconds(20)).ConfigureAwait(false);
 
@@ -354,14 +342,7 @@ static ProcessCapture StartHelper(
         args,
         stdoutPath,
         stderrPath,
-        env =>
-        {
-            ProgramHelpers.BuildHelperEnv(options, domainId, env);
-            if (!string.IsNullOrEmpty(options.StaticPeer))
-            {
-                env["ROS_STATIC_PEERS"] = $"{options.StaticPeer}:7411";
-            }
-        });
+        env => ProgramHelpers.BuildHelperEnv(options, domainId, env));
 }
 
 static ProcessCapture StartPlayer(

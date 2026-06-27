@@ -42,9 +42,8 @@ namespace ROSettaDDS.UnityPerfHarness
         internal string DoneFile { get; private set; }
         internal string MetricsFile { get; private set; }
         internal string ReleaseFile { get; private set; }
-    internal bool LocalhostOnly { get; private set; } = true;
-    internal string? StaticPeer { get; private set; }
-    internal PerfProfilerMode ProfilerMode { get; private set; } = PerfProfilerMode.Lean;
+        internal bool LocalhostOnly { get; private set; } = true;
+        internal PerfProfilerMode ProfilerMode { get; private set; } = PerfProfilerMode.Lean;
 
         internal ReliabilityQos Reliability
             => Qos == PerfQos.BestEffort ? ReliabilityQos.BestEffort : ReliabilityQos.Reliable;
@@ -115,7 +114,6 @@ namespace ROSettaDDS.UnityPerfHarness
             if (!ReadRequired(values, "--rosettadds-done-file", out string doneFile, out error)) return false;
             if (!ReadRequired(values, "--rosettadds-metrics-file", out string metricsFile, out error)) return false;
             values.TryGetValue("--rosettadds-release-file", out string releaseFile);
-            values.TryGetValue("--rosettadds-static-peer", out string staticPeer);
 
             bool localhostOnly = true;
             if (values.TryGetValue("--rosettadds-localhost-only", out string lh))
@@ -144,7 +142,6 @@ namespace ROSettaDDS.UnityPerfHarness
             result.DoneFile = doneFile;
             result.MetricsFile = metricsFile;
             result.ReleaseFile = releaseFile;
-            result.StaticPeer = staticPeer;
             result.LocalhostOnly = localhostOnly;
             // ProfilerMode は optional。既定 Lean。
             if (values.TryGetValue("--rosettadds-profiler-mode", out string profilerModeRaw))
