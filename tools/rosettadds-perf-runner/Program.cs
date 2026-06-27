@@ -237,6 +237,10 @@ static async Task<ScenarioManifest> RunScenarioAndroid(
     }
     extraArgs.Add("--rosettadds-profiler-mode");
     extraArgs.Add(options.ProfilerMode);
+    // Android Player は LAN 上の helper と discovery する必要があるため、
+    // LocalhostOnly=false を明示的に渡す (LaunchSpec.LocalhostOnly も false)。
+    extraArgs.Add("--rosettadds-localhost-only");
+    extraArgs.Add("false");
 
     var launchSpec = new LaunchSpec(
         Kind: "player",
