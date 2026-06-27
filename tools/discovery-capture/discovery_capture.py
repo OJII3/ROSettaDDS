@@ -1,4 +1,15 @@
 import argparse
+from dataclasses import dataclass
+
+
+@dataclass
+class CapturePaths:
+    host_pcap: str
+    android_pcap: str
+    host_log: str
+    android_log: str
+    clock_pre_host: str
+    clock_pre_android: str
 
 
 def parse_args(argv=None):
@@ -15,6 +26,18 @@ def parse_args(argv=None):
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--udp-portrange", default="7400-12500")
     return parser.parse_args(argv)
+
+
+def build_paths(args, root: str) -> CapturePaths:
+    tag = "reliable" if "reliable" in args.scenario else "best-effort"
+    return CapturePaths(
+        host_pcap=f"{root}/host-{tag}.pcap",
+        android_pcap=f"{root}/android-{tag}.pcap",
+        host_log=f"{root}/host-tshark.log",
+        android_log=f"{root}/android-tcpdump.log",
+        clock_pre_host=f"{root}/host-clock-pre.txt",
+        clock_pre_android=f"{root}/android-clock-pre.txt",
+    )
 
 
 if __name__ == "__main__":

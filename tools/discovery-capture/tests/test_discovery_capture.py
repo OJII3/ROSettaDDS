@@ -1,5 +1,5 @@
 import pytest
-from discovery_capture import parse_args
+from discovery_capture import parse_args, build_paths, CapturePaths
 
 
 def test_parse_args_reliable_scenario():
@@ -34,3 +34,32 @@ def test_parse_args_missing_android_device():
             "--scenario", "unity-to-ros2-reliable-32",
             "--run-id", "20260627-180000",
         ])
+
+
+def test_build_paths_reliable():
+    args = parse_args([
+        "--host-interface", "wlan0",
+        "--android-device", "5HF6OVWCDECMJZ59",
+        "--scenario", "unity-to-ros2-reliable-32",
+        "--run-id", "20260627-180000",
+    ])
+    paths = build_paths(args, root="/srv/run")
+    assert isinstance(paths, CapturePaths)
+    assert paths.host_pcap == "/srv/run/host-reliable.pcap"
+    assert paths.android_pcap == "/srv/run/android-reliable.pcap"
+    assert paths.host_log == "/srv/run/host-tshark.log"
+    assert paths.android_log == "/srv/run/android-tcpdump.log"
+    assert paths.clock_pre_host == "/srv/run/host-clock-pre.txt"
+    assert paths.clock_pre_android == "/srv/run/android-clock-pre.txt"
+
+
+def test_build_paths_best_effort():
+    args = parse_args([
+        "--host-interface", "wlan0",
+        "--android-device", "5HF6OVWCDECMJZ59",
+        "--scenario", "unity-to-ros2-best-effort-8192",
+        "--run-id", "20260627-180000",
+    ])
+    paths = build_paths(args, root="/srv/run")
+    assert paths.host_pcap == "/srv/run/host-best-effort.pcap"
+    assert paths.android_pcap == "/srv/run/android-best-effort.pcap"
