@@ -3,4 +3,6 @@
 *.pcapng
 *.tsv
 *.log
+!host-tshark*.log
+!android-tcpdump*.log
 !README.md
