@@ -59,8 +59,8 @@ internal sealed class AdbClient : IAdbCommandSink
     {
         string joined = string.Join(" ", playerArgs);
         var r = await RunAsync(
-            $"adb -s {_serial} shell am start -W -n {packageId}/{activityComponent} " +
-            $"--es args \"{joined}\"",
+            $"adb -s {_serial} shell 'am start -W -n {packageId}/{activityComponent} " +
+            $"--es args \"{joined}\"'",
             ct);
         if (r.ExitCode != 0)
         {

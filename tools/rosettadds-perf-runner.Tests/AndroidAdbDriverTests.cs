@@ -67,7 +67,7 @@ public class AndroidAdbDriverTests : IDisposable
         _fake.Calls.Should().HaveCount(3);
         _fake.Calls[0].Should().StartWith("adb -s ABC install -r /tmp/x.apk");
         _fake.Calls[1].Should().Be("adb -s ABC shell am force-stop com.ojii3.rosettadds.perf");
-        _fake.Calls[2].Should().StartWith("adb -s ABC shell am start -W -n com.ojii3.rosettadds.perf/com.unity3d.player.GameActivity");
+        _fake.Calls[2].Should().StartWith("adb -s ABC shell 'am start -W -n com.ojii3.rosettadds.perf/com.unity3d.player.GameActivity");
         _fake.Calls[2].Should().Contain("--es args");
     }
 
@@ -133,6 +133,22 @@ public class AndroidAdbDriverTests : IDisposable
         var act = () => _driver.WaitForExitAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None);
         await act.Should().ThrowAsync<TimeoutException>();
         _fake.Calls.Should().Contain(c => c.Contains("am force-stop"));
+    }
+
+    [Fact]
+    public async Task StartActivity_は_outer_single_quote_で_device_sh_に_渡す()
+    {
+        _fake.ExitCodeOverride = 1;
+        var act = () => _client.StartActivityAsync(
+            "com.example.nonexistent",
+            "com.example.MainActivity",
+            new[] { "--rosettadds-perf", "--rosettadds-topic", "/t" },
+            CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        _fake.Calls.Should().ContainSingle()
+            .Which.Should().Be(
+                "adb -s ABC shell 'am start -W -n com.example.nonexistent/com.example.MainActivity " +
+                "--es args \"--rosettadds-perf --rosettadds-topic /t\"'");
     }
 
     [Fact]
