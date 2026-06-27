@@ -1,0 +1,6 @@
+# pcap と巨大一時ファイルは git 管理外
+*.pcap
+*.pcapng
+*.tsv
+*.log
+!README.md
