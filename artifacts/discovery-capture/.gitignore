@@ -6,3 +6,9 @@
 !host-tshark*.log
 !android-tcpdump*.log
 !README.md
+# perf-runner build 出力と PID ファイル
+build/
+*.pid
+clock-*-pre.txt
+!host-clock-pre.txt
+android-clock-pre.txt
