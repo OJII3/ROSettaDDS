@@ -65,9 +65,23 @@ internal sealed class AndroidAdbDriver : IProcessDriver
         return false;
     }
 
-    public Task<int> WaitForExitAsync(TimeSpan timeout, CancellationToken ct)
+    public async Task<int> WaitForExitAsync(TimeSpan timeout, CancellationToken ct)
     {
-        return Task.FromResult(0);
+        var deadline = Stopwatch.StartNew();
+        while (deadline.Elapsed < timeout)
+        {
+            ct.ThrowIfCancellationRequested();
+            var r = await _adb.RunAsync(
+                $"adb -s {_adb.Serial} shell pidof {_packageId}", ct);
+            if (r.ExitCode != 0)
+            {
+                return 0;
+            }
+            await Task.Delay(200, ct);
+        }
+        Kill();
+        throw new TimeoutException(
+            $"Android player '{_packageId}' did not exit within {timeout}.");
     }
 
     public void Kill()

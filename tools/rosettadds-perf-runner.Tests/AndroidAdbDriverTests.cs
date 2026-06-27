@@ -110,6 +110,32 @@ public class AndroidAdbDriverTests : IDisposable
     }
 
     [Fact]
+    public async Task WaitForExitAsync_pidof_が_空_を返したら_0_を返す()
+    {
+        _fake.ScriptedExitCodes = new Queue<int>(new[] { 1 });
+        int code = await _driver.WaitForExitAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
+        code.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task WaitForExitAsync_pidof_が_空_になる_まで_polling_継続()
+    {
+        _fake.ScriptedExitCodes = new Queue<int>(new[] { 0, 0, 1 });
+        int code = await _driver.WaitForExitAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
+        code.Should().Be(0);
+        _fake.Calls.Count(c => c.Contains("pidof")).Should().BeGreaterOrEqualTo(3);
+    }
+
+    [Fact]
+    public async Task WaitForExitAsync_タイムアウト時_Kill_して_TimeoutException()
+    {
+        _fake.ScriptedExitCodes = new Queue<int>(Enumerable.Repeat(0, 100));
+        var act = () => _driver.WaitForExitAsync(TimeSpan.FromMilliseconds(300), CancellationToken.None);
+        await act.Should().ThrowAsync<TimeoutException>();
+        _fake.Calls.Should().Contain(c => c.Contains("am force-stop"));
+    }
+
+    [Fact]
     public async Task CleanStaleSentinelsAsync_は_各_sentinel_に対して_adb_shell_rm_f_を呼ぶ()
     {
         await _driver.CleanStaleSentinelsAsync(
