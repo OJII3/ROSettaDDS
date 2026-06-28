@@ -36,22 +36,80 @@ static async Task<int> MainAsync(string[] args)
         var manifest = new ArtifactManifest(runId, options);
         int domainBase = 20;
         bool failed = false;
+
+        IDeviceStabilizer stabilizer = options.BuildTarget == "Android"
+            ? new AndroidDeviceStabilizer(
+                new AdbClient(new RealAdbCommandSink(options.Adb), options.AndroidDevice
+                    ?? throw new InvalidOperationException("--android-device is required for --stabilize-device on Android")),
+                hostForPing: "192.168.0.20")
+            : new DesktopDeviceStabilizer();
+
+        if (options.StabilizeDevice && options.BuildTarget != "Android")
+        {
+            Console.Error.WriteLine($"[warn] --stabilize-device is Android-only, ignored for {options.BuildTarget}");
+        }
+
         for (int i = 0; i < scenarios.Count; i++)
         {
-            ScenarioManifest scenarioManifest = await RunScenario(
-                root,
-                helper,
-                playerExecutable,
-                runDir,
-                scenarios[i],
-                options,
-                domainBase + i).ConfigureAwait(false);
-            manifest.Scenarios.Add(scenarioManifest);
-            manifest.Save(Path.Combine(runDir, "manifest.json"));
-            if (scenarioManifest.PlayerExitCode != 0 || scenarioManifest.HelperExitCode != 0)
+            PerfScenario scenario = scenarios[i];
+
+            var scenarioRunDirs = new List<string>(options.Repeat);
+            for (int r = 0; r < options.Repeat; r++)
             {
-                failed = true;
+                scenarioRunDirs.Add(Path.Combine(runDir, scenario.Name, $"repeat-{r:D2}"));
             }
+
+            ScenarioManifest scenarioManifest = new ScenarioManifest { Name = scenario.Name };
+            scenarioManifest.RepeatCount = options.Repeat;
+
+            for (int r = 0; r < options.Repeat; r++)
+            {
+                if (options.StabilizeDevice && options.BuildTarget == "Android")
+                {
+                    try
+                    {
+                        await stabilizer.StabilizeAsync(TimeSpan.FromSeconds(30), CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[warn] device stabilization failed (run {r}): {ex.Message}");
+                    }
+                }
+
+                ScenarioManifest runManifest = await RunScenario(
+                    root,
+                    helper,
+                    playerExecutable,
+                    scenarioRunDirs[r],
+                    scenario,
+                    options,
+                    domainBase + i).ConfigureAwait(false);
+
+                runManifest.Name = scenario.Name;
+                runManifest.RepeatCount = options.Repeat;
+                scenarioManifest = runManifest;
+
+                if (scenarioManifest.PlayerExitCode != 0 || scenarioManifest.HelperExitCode != 0)
+                {
+                    failed = true;
+                }
+            }
+            manifest.Scenarios.Add(scenarioManifest);
+
+            if (options.Repeat > 1)
+            {
+                AggregateMetrics? aggregate = RunAggregator.Aggregate(scenarioRunDirs, options.Aggregate);
+                if (aggregate != null)
+                {
+                    string aggregatePath = Path.Combine(runDir, scenario.Name, "aggregate.json");
+                    RunAggregator.Save(aggregatePath, aggregate);
+                    scenarioManifest.AggregatePath = aggregatePath;
+                    scenarioManifest.Aggregate = aggregate;
+                }
+            }
+
+            manifest.Save(Path.Combine(runDir, "manifest.json"));
         }
 
         manifest.Save(Path.Combine(runDir, "manifest.json"));
@@ -132,7 +190,7 @@ static async Task<ScenarioManifest> RunScenario(
     RunnerOptions options,
     int domainId)
 {
-    string scenarioDir = Path.Combine(runDir, scenario.Name);
+    string scenarioDir = runDir;
     Directory.CreateDirectory(scenarioDir);
     string topic = "/rosettadds_perf_" + scenario.Name.Replace('-', '_');
     string readyFile = Path.Combine(scenarioDir, "player.ready");
