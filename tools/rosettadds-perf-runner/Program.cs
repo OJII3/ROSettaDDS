@@ -59,8 +59,13 @@ static async Task<int> MainAsync(string[] args)
                 scenarioRunDirs.Add(Path.Combine(runDir, scenario.Name, $"repeat-{r:D2}"));
             }
 
-            ScenarioManifest scenarioManifest = new ScenarioManifest { Name = scenario.Name };
-            scenarioManifest.RepeatCount = options.Repeat;
+            int scenarioIndex = manifest.Scenarios.Count;
+            ScenarioManifest scenarioManifest = new ScenarioManifest
+            {
+                Name = scenario.Name,
+                RepeatCount = options.Repeat,
+            };
+            manifest.Scenarios.Add(scenarioManifest);
 
             for (int r = 0; r < options.Repeat; r++)
             {
@@ -71,7 +76,8 @@ static async Task<int> MainAsync(string[] args)
                         await stabilizer.StabilizeAsync(TimeSpan.FromSeconds(30), CancellationToken.None)
                             .ConfigureAwait(false);
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is IOException || ex is TimeoutException
+                                               || ex is InvalidOperationException)
                     {
                         Console.Error.WriteLine($"[warn] device stabilization failed (run {r}): {ex.Message}");
                     }
@@ -88,31 +94,29 @@ static async Task<int> MainAsync(string[] args)
 
                 runManifest.Name = scenario.Name;
                 runManifest.RepeatCount = options.Repeat;
+                manifest.Scenarios[scenarioIndex] = runManifest;
                 scenarioManifest = runManifest;
 
-                if (scenarioManifest.PlayerExitCode != 0 || scenarioManifest.HelperExitCode != 0)
+                if (runManifest.PlayerExitCode != 0 || runManifest.HelperExitCode != 0)
                 {
                     failed = true;
                 }
-            }
-            manifest.Scenarios.Add(scenarioManifest);
 
-            if (options.Repeat > 1)
-            {
-                AggregateMetrics? aggregate = RunAggregator.Aggregate(scenarioRunDirs, options.Aggregate);
-                if (aggregate != null)
+                if (options.Repeat > 1 && r == options.Repeat - 1)
                 {
-                    string aggregatePath = Path.Combine(runDir, scenario.Name, "aggregate.json");
-                    RunAggregator.Save(aggregatePath, aggregate);
-                    scenarioManifest.AggregatePath = aggregatePath;
-                    scenarioManifest.Aggregate = aggregate;
+                    AggregateMetrics? aggregate = RunAggregator.Aggregate(scenarioRunDirs, options.Aggregate);
+                    if (aggregate != null)
+                    {
+                        string aggregatePath = Path.Combine(runDir, scenario.Name, "aggregate.json");
+                        RunAggregator.Save(aggregatePath, aggregate);
+                        manifest.Scenarios[scenarioIndex].AggregatePath = aggregatePath;
+                        manifest.Scenarios[scenarioIndex].Aggregate = aggregate;
+                    }
                 }
+
+                manifest.Save(Path.Combine(runDir, "manifest.json"));
             }
-
-            manifest.Save(Path.Combine(runDir, "manifest.json"));
         }
-
-        manifest.Save(Path.Combine(runDir, "manifest.json"));
         Console.WriteLine("Artifacts: " + runDir);
         return failed ? 1 : 0;
     }

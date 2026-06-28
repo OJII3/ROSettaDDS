@@ -5,10 +5,6 @@ using Xunit;
 
 namespace ROSettaDDS.PerfRunner.Tests;
 
-public class ProgramMultiRunTests
-{
-}
-
 public class ProgramTests
 {
     [Fact]
