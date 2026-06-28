@@ -86,4 +86,69 @@ public class RunnerOptionsTests
         var options = RunnerOptions.Parse(new[] { "--android-activity", "com.example.MainActivity" });
         options.AndroidActivity.Should().Be("com.example.MainActivity");
     }
+
+    [Fact]
+    public void StabilizeDevice_既定値は_false()
+    {
+        var options = RunnerOptions.Parse(Array.Empty<string>());
+        options.StabilizeDevice.Should().BeFalse();
+    }
+
+    [Fact]
+    public void StabilizeDevice_指定が_保持される()
+    {
+        var options = RunnerOptions.Parse(new[] { "--stabilize-device" });
+        options.StabilizeDevice.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Repeat_既定値は_1()
+    {
+        var options = RunnerOptions.Parse(Array.Empty<string>());
+        options.Repeat.Should().Be(1);
+    }
+
+    [Fact]
+    public void Repeat_5_が_保持される()
+    {
+        var options = RunnerOptions.Parse(new[] { "--repeat", "5" });
+        options.Repeat.Should().Be(5);
+    }
+
+    [Fact]
+    public void Repeat_0_は_例外()
+    {
+        var act = () => RunnerOptions.Parse(new[] { "--repeat", "0" });
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*--repeat*positive integer*");
+    }
+
+    [Fact]
+    public void Repeat_負値は_例外()
+    {
+        var act = () => RunnerOptions.Parse(new[] { "--repeat", "-1" });
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Aggregate_既定値は_median()
+    {
+        var options = RunnerOptions.Parse(Array.Empty<string>());
+        options.Aggregate.Should().Be(AggregateKind.Median);
+    }
+
+    [Fact]
+    public void Aggregate_median_を_受理する()
+    {
+        var options = RunnerOptions.Parse(new[] { "--aggregate", "median" });
+        options.Aggregate.Should().Be(AggregateKind.Median);
+    }
+
+    [Fact]
+    public void Aggregate_未知値は_例外()
+    {
+        var act = () => RunnerOptions.Parse(new[] { "--aggregate", "stddev" });
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*--aggregate*median*");
+    }
 }
