@@ -92,4 +92,27 @@ public class MetricsParserTests
         var result = MetricsParser.ParseMeasureDone("/nonexistent/path/metrics.ndjson");
         result.Should().BeNull();
     }
+
+    [Fact]
+    public void ParseMeasureDone_は_予期しない_shape_の_JSON_を_スキップする()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "metrics-parser-test-shape.ndjson");
+        File.WriteAllText(path,
+            "[]\n" +
+            "123\n" +
+            "{\"event\":123}\n" +
+            "{\"event\":\"measure_done\",\"received\":10.5}\n" +
+            "{\"event\":\"measure_done\",\"messages_per_second\":42.0}\n");
+        try
+        {
+            var result = MetricsParser.ParseMeasureDone(path);
+            result.Should().NotBeNull();
+            result!.MessagesPerSecond.Should().Be(42.0);
+            result.Received.Should().Be(0);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
 }

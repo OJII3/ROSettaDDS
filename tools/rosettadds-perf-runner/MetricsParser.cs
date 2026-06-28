@@ -23,14 +23,16 @@ internal static class MetricsParser
         if (!File.Exists(path)) return null;
 
         MeasureDoneMetrics? latest = null;
-        foreach (string line in File.ReadAllLines(path))
+        foreach (string line in File.ReadLines(path))
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
             try
             {
                 using JsonDocument doc = JsonDocument.Parse(line);
                 JsonElement root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) continue;
                 if (!root.TryGetProperty("event", out JsonElement ev)) continue;
+                if (ev.ValueKind != JsonValueKind.String) continue;
                 if (ev.GetString() != "measure_done") continue;
                 latest = new MeasureDoneMetrics
                 {
@@ -54,18 +56,22 @@ internal static class MetricsParser
 
     private static double ReadDouble(JsonElement root, string name)
     {
-        if (root.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.Number)
+        if (root.TryGetProperty(name, out JsonElement v)
+            && v.ValueKind == JsonValueKind.Number
+            && v.TryGetDouble(out double d))
         {
-            return v.GetDouble();
+            return d;
         }
         return 0.0;
     }
 
     private static long ReadLong(JsonElement root, string name)
     {
-        if (root.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.Number)
+        if (root.TryGetProperty(name, out JsonElement v)
+            && v.ValueKind == JsonValueKind.Number
+            && v.TryGetInt64(out long n))
         {
-            return v.GetInt64();
+            return n;
         }
         return 0;
     }
