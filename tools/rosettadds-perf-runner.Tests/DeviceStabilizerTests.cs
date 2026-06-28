@@ -45,6 +45,7 @@ public class DeviceStabilizerTests
         var fake = new FakeAdbClient
         {
             ScriptedExitCodes = new Queue<int>(new[] { 0, 0, 0, 1 }),
+            ExitCodeOverride = 1,
             StderrOverride = "ping: network unreachable",
         };
         var client = new AdbClient(fake, serial: "DEV");
