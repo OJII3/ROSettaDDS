@@ -17,28 +17,23 @@ namespace ROSettaDDS.Dds;
 /// </summary>
 public sealed class DomainParticipant : IDisposable
 {
-    private static readonly TimeSpan MaxLeaseExpiryCheckPeriod = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan MinLeaseExpiryCheckPeriod = TimeSpan.FromMilliseconds(50);
-
     private readonly DomainParticipantOptions _options;
     private readonly ParticipantTransportSet _transports;
     private readonly ParticipantRtpsReceiver _receiver;
     private readonly DiscoveryDb _discoveryDb;
+    private readonly LeaseExpiryMonitor _leaseExpiryMonitor;
     private readonly SpdpBuiltinParticipantReader _spdpReader;
     private readonly SpdpBuiltinParticipantWriter _spdpWriter;
     private readonly SedpEndpointWriter _sedpPublicationsWriter;
     private readonly SedpEndpointReader _sedpPublicationsReader;
     private readonly SedpEndpointWriter _sedpSubscriptionsWriter;
     private readonly SedpEndpointReader _sedpSubscriptionsReader;
-    private readonly TimeSpan _leaseExpiryCheckPeriod;
     private readonly UserEntityIdAllocator _userEntityIds = new();
     private readonly UserEndpointManager _userEndpoints;
 
     private bool _started;
     private bool _disposed;
     private bool _unregisteringLocalEndpoints;
-    private CancellationTokenSource? _leaseExpiryCts;
-    private Task? _leaseExpiryLoop;
 
     public DomainParticipantOptions Options => _options;
     public GuidPrefix GuidPrefix { get; }
@@ -61,7 +56,6 @@ public sealed class DomainParticipant : IDisposable
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
         _options = options;
-        _leaseExpiryCheckPeriod = ComputeLeaseExpiryCheckPeriod(_options);
 
         GuidPrefix = GuidPrefix.CreateForCurrentProcess(_options.VendorId);
         Guid = new Guid(GuidPrefix, BuiltinEntityIds.Participant);
@@ -70,6 +64,7 @@ public sealed class DomainParticipant : IDisposable
         _receiver = new ParticipantRtpsReceiver(GuidPrefix, _options.Logger);
 
         _discoveryDb = new DiscoveryDb(_options.DiscoveryLimits);
+        _leaseExpiryMonitor = new LeaseExpiryMonitor(_discoveryDb, _options, _options.Logger);
         _userEndpoints = new UserEndpointManager(_discoveryDb, _receiver, _options.Logger);
 
         _spdpReader = new SpdpBuiltinParticipantReader(
@@ -237,7 +232,7 @@ public sealed class DomainParticipant : IDisposable
         _sedpPublicationsWriter.Start();
         _sedpSubscriptionsWriter.Start();
         _userEndpoints.StartWriters();
-        StartLeaseExpiryLoop();
+        _leaseExpiryMonitor.Start();
         _started = true;
     }
 
@@ -248,7 +243,7 @@ public sealed class DomainParticipant : IDisposable
         {
             return;
         }
-        StopLeaseExpiryLoop();
+        _leaseExpiryMonitor.Stop();
         _userEndpoints.StopWriters();
         _sedpPublicationsWriter.Stop();
         _sedpSubscriptionsWriter.Stop();
@@ -256,58 +251,6 @@ public sealed class DomainParticipant : IDisposable
         _spdpWriter.Stop();
         _transports.Stop();
         _started = false;
-    }
-
-    private void StartLeaseExpiryLoop()
-    {
-        if (_leaseExpiryCts is not null)
-        {
-            return;
-        }
-        _leaseExpiryCts = new CancellationTokenSource();
-        var token = _leaseExpiryCts.Token;
-        _leaseExpiryLoop = Task.Run(() => LeaseExpiryLoopAsync(token), token);
-    }
-
-    private void StopLeaseExpiryLoop()
-    {
-        if (_leaseExpiryCts is null)
-        {
-            return;
-        }
-
-        _leaseExpiryCts.Cancel();
-        try
-        {
-            _leaseExpiryLoop?.Wait(TimeSpan.FromSeconds(1));
-        }
-        catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException))
-        {
-        }
-        catch (Exception ex)
-        {
-            _options.Logger.Warn("DomainParticipant lease expiry loop did not exit cleanly", ex);
-        }
-        _leaseExpiryCts.Dispose();
-        _leaseExpiryCts = null;
-        _leaseExpiryLoop = null;
-    }
-
-    private async Task LeaseExpiryLoopAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(_leaseExpiryCheckPeriod, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-
-            _discoveryDb.ExpireOldParticipants(DateTime.UtcNow);
-        }
     }
 
     /// <summary>現在の自 Participant の <see cref="ParticipantData"/> を生成する (SPDP 送信時に使われる)。</summary>
@@ -573,6 +516,7 @@ public sealed class DomainParticipant : IDisposable
         _sedpSubscriptionsReader.Dispose();
         _spdpWriter.Dispose();
         _spdpReader.Dispose();
+        _leaseExpiryMonitor.Dispose();
         _receiver.Dispose();
         _transports.Dispose();
     }
@@ -647,7 +591,7 @@ public sealed class DomainParticipant : IDisposable
         Func<CancellationToken, ValueTask> operation,
         string failureMessage)
     {
-        var token = _leaseExpiryCts?.Token ?? CancellationToken.None;
+        var token = _leaseExpiryMonitor.CancellationToken;
         try
         {
             await operation(token).ConfigureAwait(false);
@@ -682,28 +626,4 @@ public sealed class DomainParticipant : IDisposable
         return field?.GetRawConstantValue() as string ?? "";
     }
 
-    private static TimeSpan ComputeLeaseExpiryCheckPeriod(DomainParticipantOptions options)
-    {
-        var period = MinPositive(MaxLeaseExpiryCheckPeriod, options.SpdpInterval);
-        var leaseDuration = options.LeaseDuration.ToTimeSpan();
-        if (leaseDuration > TimeSpan.Zero)
-        {
-            var leaseQuarter = TimeSpan.FromTicks(Math.Max(1L, leaseDuration.Ticks / 4L));
-            period = MinPositive(period, leaseQuarter);
-        }
-        return period < MinLeaseExpiryCheckPeriod ? MinLeaseExpiryCheckPeriod : period;
-    }
-
-    private static TimeSpan MinPositive(TimeSpan left, TimeSpan right)
-    {
-        if (left <= TimeSpan.Zero)
-        {
-            return right;
-        }
-        if (right <= TimeSpan.Zero)
-        {
-            return left;
-        }
-        return left <= right ? left : right;
-    }
 }
