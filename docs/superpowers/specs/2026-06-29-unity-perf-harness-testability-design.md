@@ -103,7 +103,7 @@ internal static class PerfDiagnosticsBuilder
 
 `RunRos2ToUnity` 側で `participant.UserUnicastTransport as UdpTransport` などのキャスト (`PerfPlayerEntry.cs:220`) を行い、上記 struct に詰めてから `PerfDiagnosticsBuilder.BuildReceive` に渡す。builder は live 型を一切知らない。
 
-`AddReceiveDiagnostics` の 11 個の `subscription_*` / `rtps_*` フィールド名と 10 個の `*_udp_*` / `*_transport_diagnostics_available` フィールド名は不変。
+`AddReceiveDiagnostics` の 10 個の `subscription_*` / `rtps_*` フィールド名と、`AddTransportDiagnostics` の transport あたり 6 個 (計 12 個) の `*_udp_*` / `*_transport_diagnostics_available` フィールド名は不変。
 
 ### 4. interface の抽出
 
@@ -193,6 +193,16 @@ internal static async Task RunRos2ToUnity(
 
 既存 `PerfHarnessRegressionTests.cs` (63 行、`ProfilerCounterAccumulator` + `AsyncReceiveWaiter` の回帰テスト) は据え置き。
 
+#### 7.1 テストケース内訳
+
+| テストファイル | ケース数 | カバー範囲 |
+|---|---:|---|
+| `PerfJsonTests` | 16 | Escape 8 種 (null / 空 / 通常 / 4 種 escape 文字 / nested backslash) + WriteString 1 + WriteNumber 2 (int / long) + WriteBoolean 2 (true / false) + WriteValue 3 (null / string / double) |
+| `MeasureDoneBuilderTests` | 8 | BuildPublish 5 (通常 / `elapsed=0` / profiler フィールド保持 / 巨大 count / ゼロ count) + BuildSubscribe 3 (通常 / diagnostics マージ / 空 diagnostics) |
+| `PerfDiagnosticsBuilderTests` | 5 | 全 available / 片方 false / subscription 数値反映 / キー完全一致 / 順序保持 |
+| `PerfRunFlowTests` | 4 | UnityToRos2 happy path / Ros2ToUnity happy path / Ros2ToUnity timeout 経路 / error 経路 |
+| **合計** | **33** | |
+
 ### 8. ファイル一覧 (新規 / 変更)
 
 **新規:**
@@ -262,7 +272,7 @@ internal static async Task RunRos2ToUnity(
 
 - [ ] `dotnet test tools/rosettadds-perf-runner.Tests/` が緑
 - [ ] `dotnet test tests/rosettadds.Tests/` が緑
-- [ ] Unity EditMode で `ROSettaDDS.UnityVerification.Tests` の既存 + 新規テストが緑 (`PerfJsonTests` 6 ケース / `MeasureDoneBuilderTests` 4 ケース / `PerfDiagnosticsBuilderTests` 4 ケース / `PerfRunFlowTests` 4 ケース 程度を想定)
+- [ ] Unity EditMode で `ROSettaDDS.UnityVerification.Tests` の既存 + 新規テストが緑 (合計 33 ケース。詳細は 7.1 参照)
 - [ ] 既存 perf run (`dotnet run --project tools/rosettadds-perf-runner -- --skip-build --player-build <existing> --scenario all`) で出力 NDJSON の構造が現行と完全一致 (event 名・フィールド名・値・順序)
 - [ ] baseline NDJSON との diff で 0 差分 (timing jitter 除く)
 - [ ] 公開 API への破壊的変更なし
