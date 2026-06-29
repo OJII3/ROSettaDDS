@@ -17,28 +17,25 @@ namespace ROSettaDDS.Dds;
 /// </summary>
 public sealed class DomainParticipant : IDisposable
 {
-    private static readonly TimeSpan MaxLeaseExpiryCheckPeriod = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan MinLeaseExpiryCheckPeriod = TimeSpan.FromMilliseconds(50);
-
     private readonly DomainParticipantOptions _options;
     private readonly ParticipantTransportSet _transports;
     private readonly ParticipantRtpsReceiver _receiver;
     private readonly DiscoveryDb _discoveryDb;
+    private readonly LeaseExpiryMonitor _leaseExpiryMonitor;
     private readonly SpdpBuiltinParticipantReader _spdpReader;
     private readonly SpdpBuiltinParticipantWriter _spdpWriter;
     private readonly SedpEndpointWriter _sedpPublicationsWriter;
     private readonly SedpEndpointReader _sedpPublicationsReader;
     private readonly SedpEndpointWriter _sedpSubscriptionsWriter;
     private readonly SedpEndpointReader _sedpSubscriptionsReader;
-    private readonly TimeSpan _leaseExpiryCheckPeriod;
+    private readonly SedpEndpointAdvertiser _sedpAdvertiser;
     private readonly UserEntityIdAllocator _userEntityIds = new();
+    private readonly ParticipantEndpointFactory _endpointFactory;
     private readonly UserEndpointManager _userEndpoints;
 
     private bool _started;
     private bool _disposed;
     private bool _unregisteringLocalEndpoints;
-    private CancellationTokenSource? _leaseExpiryCts;
-    private Task? _leaseExpiryLoop;
 
     public DomainParticipantOptions Options => _options;
     public GuidPrefix GuidPrefix { get; }
@@ -61,7 +58,6 @@ public sealed class DomainParticipant : IDisposable
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
         _options = options;
-        _leaseExpiryCheckPeriod = ComputeLeaseExpiryCheckPeriod(_options);
 
         GuidPrefix = GuidPrefix.CreateForCurrentProcess(_options.VendorId);
         Guid = new Guid(GuidPrefix, BuiltinEntityIds.Participant);
@@ -70,7 +66,14 @@ public sealed class DomainParticipant : IDisposable
         _receiver = new ParticipantRtpsReceiver(GuidPrefix, _options.Logger);
 
         _discoveryDb = new DiscoveryDb(_options.DiscoveryLimits);
+        _leaseExpiryMonitor = new LeaseExpiryMonitor(_discoveryDb, _options, _options.Logger);
         _userEndpoints = new UserEndpointManager(_discoveryDb, _receiver, _options.Logger);
+        _endpointFactory = new ParticipantEndpointFactory(
+            _options,
+            _transports,
+            GuidPrefix,
+            Guid,
+            _userEntityIds);
 
         _spdpReader = new SpdpBuiltinParticipantReader(
             _transports.MetatrafficMulticast, _discoveryDb, GuidPrefix, _options.Logger, limits: _options.DiscoveryLimits);
@@ -130,6 +133,11 @@ public sealed class DomainParticipant : IDisposable
             producedEndpointKind: EndpointKind.Reader,
             logger: _options.Logger,
             limits: _options.DiscoveryLimits);
+
+        _sedpAdvertiser = new SedpEndpointAdvertiser(
+            _options.Logger,
+            () => _leaseExpiryMonitor.CancellationToken,
+            () => _disposed);
 
         // SPDP で remote participant を発見/更新したら SEDP endpoint を auto-match
         _discoveryDb.ParticipantDiscovered += OnRemoteParticipantDiscovered;
@@ -237,7 +245,7 @@ public sealed class DomainParticipant : IDisposable
         _sedpPublicationsWriter.Start();
         _sedpSubscriptionsWriter.Start();
         _userEndpoints.StartWriters();
-        StartLeaseExpiryLoop();
+        _leaseExpiryMonitor.Start();
         _started = true;
     }
 
@@ -248,7 +256,7 @@ public sealed class DomainParticipant : IDisposable
         {
             return;
         }
-        StopLeaseExpiryLoop();
+        _leaseExpiryMonitor.Stop();
         _userEndpoints.StopWriters();
         _sedpPublicationsWriter.Stop();
         _sedpSubscriptionsWriter.Stop();
@@ -256,58 +264,6 @@ public sealed class DomainParticipant : IDisposable
         _spdpWriter.Stop();
         _transports.Stop();
         _started = false;
-    }
-
-    private void StartLeaseExpiryLoop()
-    {
-        if (_leaseExpiryCts is not null)
-        {
-            return;
-        }
-        _leaseExpiryCts = new CancellationTokenSource();
-        var token = _leaseExpiryCts.Token;
-        _leaseExpiryLoop = Task.Run(() => LeaseExpiryLoopAsync(token), token);
-    }
-
-    private void StopLeaseExpiryLoop()
-    {
-        if (_leaseExpiryCts is null)
-        {
-            return;
-        }
-
-        _leaseExpiryCts.Cancel();
-        try
-        {
-            _leaseExpiryLoop?.Wait(TimeSpan.FromSeconds(1));
-        }
-        catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException))
-        {
-        }
-        catch (Exception ex)
-        {
-            _options.Logger.Warn("DomainParticipant lease expiry loop did not exit cleanly", ex);
-        }
-        _leaseExpiryCts.Dispose();
-        _leaseExpiryCts = null;
-        _leaseExpiryLoop = null;
-    }
-
-    private async Task LeaseExpiryLoopAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(_leaseExpiryCheckPeriod, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-
-            _discoveryDb.ExpireOldParticipants(DateTime.UtcNow);
-        }
     }
 
     /// <summary>現在の自 Participant の <see cref="ParticipantData"/> を生成する (SPDP 送信時に使われる)。</summary>
@@ -354,7 +310,7 @@ public sealed class DomainParticipant : IDisposable
         if (serializer is null) throw new ArgumentNullException(nameof(serializer));
         return CreateWriterInternal(
             TopicNameMangler.MangleTopic(topicName), serializer, reliability, durability,
-            ResolveDdsTypeName<T>(typeName), topicName);
+            typeName, topicName);
     }
 
     private Publisher<T> CreateWriterInternal<T>(
@@ -362,39 +318,14 @@ public sealed class DomainParticipant : IDisposable
         ICdrSerializer<T> serializer,
         ReliabilityQos reliability,
         DurabilityQos durability,
-        string ddsTypeName,
+        string? typeName,
         string userTopicName)
     {
-        var writerEntityId = _userEntityIds.AllocateWriter();
-        var writerGuid = new Guid(GuidPrefix, writerEntityId);
-        var history = new Rtps.HistoryCache.WriterHistoryCache(writerGuid, maxSamples: _options.UserWriterHistoryDepth);
-        var writer = new StatefulWriter(
-            sendTransport: _transports.UserUnicast,
-            multicastDestination: _transports.UserMulticastDestination,
-            version: _options.ProtocolVersion,
-            vendorId: _options.VendorId,
-            localPrefix: GuidPrefix,
-            writerEntityId: writerEntityId,
-            heartbeatPeriod: _options.UserWriterHeartbeatPeriod,
-            history: history,
-            logger: _options.Logger,
-            resendHistoryOnMatch: durability.Kind == DurabilityKind.TransientLocal);
-
-        // SEDP 用に登録 (即時 publish)
-        var endpointData = new DiscoveredEndpointData
-        {
-            Kind = EndpointKind.Writer,
-            EndpointGuid = writerGuid,
-            ParticipantGuid = Guid,
-            TopicName = ddsTopic,
-            TypeName = ddsTypeName,
-            Reliability = reliability,
-            Durability = durability,
-        };
-        endpointData.UnicastLocators.AddRange(_transports.DefaultUnicastLocators);
-        endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
+        var endpoint = _endpointFactory.CreateWriter(ddsTopic, serializer, reliability, durability, typeName);
+        var writer = endpoint.Writer;
+        var endpointData = endpoint.EndpointData;
         _userEndpoints.RegisterWriter(endpointData, writer);
-        _ = RunSedpOperationAsync(
+        _ = _sedpAdvertiser.RunAsync(
             token => _sedpPublicationsWriter.AddEndpointAsync(endpointData, token),
             "DomainParticipant failed to advertise local writer endpoint");
 
@@ -420,7 +351,7 @@ public sealed class DomainParticipant : IDisposable
             descriptor.RequestSerializer,
             ReliabilityQos.Reliable,
             DurabilityQos.Volatile,
-            descriptor.RequestDdsTypeName,
+            typeName: descriptor.RequestDdsTypeName,
             userTopicName: serviceName);
 
         var replyReader = CreateReliableReplyReaderInternal(
@@ -453,34 +384,10 @@ public sealed class DomainParticipant : IDisposable
         // BestEffort は StatelessReader 経路へ接続する。
         var effectiveReliability = reliability ?? ReliabilityQos.Reliable;
         var ddsTopic = TopicNameMangler.MangleTopic(topicName);
-        var ddsTypeName = ResolveDdsTypeName<T>(typeName);
-        var readerEntityId = _userEntityIds.AllocateReader();
-        var endpointGuid = new Guid(GuidPrefix, readerEntityId);
-        IUserReader reader = effectiveReliability.Kind == ReliabilityKind.Reliable
-            ? new ReliableUserReader(
-                replyTransport: _transports.UserUnicast,
-                version: _options.ProtocolVersion,
-                vendorId: _options.VendorId,
-                localPrefix: GuidPrefix,
-                readerEntityId: readerEntityId,
-                ackNackFallbackDestination: _transports.UserMulticastDestination,
-                logger: _options.Logger,
-                dataFragOptions: _options.DataFragReassembly)
-            : new BestEffortUserReader(GuidPrefix, readerEntityId, _options.Logger, _options.DataFragReassembly);
-
-        // SEDP 用に登録 (即時 publish)
-        var endpointData = new DiscoveredEndpointData
-        {
-            Kind = EndpointKind.Reader,
-            EndpointGuid = endpointGuid,
-            ParticipantGuid = Guid,
-            TopicName = ddsTopic,
-            TypeName = ddsTypeName,
-            Reliability = effectiveReliability,
-            Durability = DurabilityQos.Volatile,
-        };
-        endpointData.UnicastLocators.AddRange(_transports.DefaultUnicastLocators);
-        endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
+        var endpoint = _endpointFactory.CreateReader(ddsTopic, serializer, effectiveReliability, typeName);
+        var reader = endpoint.Reader;
+        var endpointGuid = endpoint.EndpointGuid;
+        var endpointData = endpoint.EndpointData;
 
         // Subscription を先に生成して PayloadReceived を購読してから reader を receiver へ登録する。
         // 逆順だと、登録直後に届く writer の (TransientLocal) 履歴再送を取りこぼす競合がある。
@@ -496,7 +403,7 @@ public sealed class DomainParticipant : IDisposable
             cdrReadLimits: _options.CdrReadLimits);
 
         _userEndpoints.RegisterReader(endpointData, reader);
-        _ = RunSedpOperationAsync(
+        _ = _sedpAdvertiser.RunAsync(
             token => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token),
             "DomainParticipant failed to advertise local reader endpoint");
 
@@ -526,33 +433,12 @@ public sealed class DomainParticipant : IDisposable
     private ReliableUserReader CreateReliableReplyReaderInternal(string ddsTopic, string ddsTypeName)
     {
         ThrowIfDisposed();
-        var readerEntityId = _userEntityIds.AllocateReader();
-        var endpointGuid = new Guid(GuidPrefix, readerEntityId);
-        var reader = new ReliableUserReader(
-            replyTransport: _transports.UserUnicast,
-            version: _options.ProtocolVersion,
-            vendorId: _options.VendorId,
-            localPrefix: GuidPrefix,
-            readerEntityId: readerEntityId,
-            ackNackFallbackDestination: _transports.UserMulticastDestination,
-            logger: _options.Logger,
-            dataFragOptions: _options.DataFragReassembly);
-
-        var endpointData = new DiscoveredEndpointData
-        {
-            Kind = EndpointKind.Reader,
-            EndpointGuid = endpointGuid,
-            ParticipantGuid = Guid,
-            TopicName = ddsTopic,
-            TypeName = ddsTypeName,
-            Reliability = ReliabilityQos.Reliable,
-            Durability = DurabilityQos.Volatile,
-        };
-        endpointData.UnicastLocators.AddRange(_transports.DefaultUnicastLocators);
-        endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
+        var endpoint = _endpointFactory.CreateReliableReplyReader(ddsTopic, ddsTypeName);
+        var reader = endpoint.Reader;
+        var endpointData = endpoint.EndpointData;
 
         _userEndpoints.RegisterReader(endpointData, reader);
-        _ = RunSedpOperationAsync(
+        _ = _sedpAdvertiser.RunAsync(
             token => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token),
             "DomainParticipant failed to advertise local service reply reader endpoint");
         return reader;
@@ -573,6 +459,7 @@ public sealed class DomainParticipant : IDisposable
         _sedpSubscriptionsReader.Dispose();
         _spdpWriter.Dispose();
         _spdpReader.Dispose();
+        _leaseExpiryMonitor.Dispose();
         _receiver.Dispose();
         _transports.Dispose();
     }
@@ -610,7 +497,7 @@ public sealed class DomainParticipant : IDisposable
         var result = _userEndpoints.UnregisterWriter(endpointGuid, writerToRemove);
         if (result.ShouldAdvertise)
         {
-            WaitForSedpUnregister(_sedpPublicationsWriter.UnregisterEndpointAsync(result.Endpoint!));
+            _sedpAdvertiser.WaitForUnregister(_sedpPublicationsWriter.UnregisterEndpointAsync(result.Endpoint!));
         }
     }
 
@@ -619,48 +506,7 @@ public sealed class DomainParticipant : IDisposable
         var result = _userEndpoints.UnregisterReader(endpointGuid, readerToRemove);
         if (result.ShouldAdvertise)
         {
-            WaitForSedpUnregister(_sedpSubscriptionsWriter.UnregisterEndpointAsync(result.Endpoint!));
-        }
-    }
-
-    private void WaitForSedpUnregister(ValueTask unregisterTask)
-    {
-        try
-        {
-            var task = unregisterTask.AsTask();
-            if (!task.Wait(TimeSpan.FromMilliseconds(500)))
-            {
-                _options.Logger.Warn("DomainParticipant timed out while sending SEDP unregister");
-            }
-        }
-        catch (AggregateException ex)
-        {
-            _options.Logger.Warn("DomainParticipant failed to send SEDP unregister", ex);
-        }
-        catch (Exception ex)
-        {
-            _options.Logger.Warn("DomainParticipant failed to send SEDP unregister", ex);
-        }
-    }
-
-    private async Task RunSedpOperationAsync(
-        Func<CancellationToken, ValueTask> operation,
-        string failureMessage)
-    {
-        var token = _leaseExpiryCts?.Token ?? CancellationToken.None;
-        try
-        {
-            await operation(token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-        }
-        catch (ObjectDisposedException) when (_disposed || token.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            _options.Logger.Warn(failureMessage, ex);
+            _sedpAdvertiser.WaitForUnregister(_sedpSubscriptionsWriter.UnregisterEndpointAsync(result.Endpoint!));
         }
     }
 
@@ -669,41 +515,4 @@ public sealed class DomainParticipant : IDisposable
         if (_disposed) throw new ObjectDisposedException(GetType().Name);
     }
 
-    private static string ResolveDdsTypeName<T>(string? explicitTypeName)
-    {
-        if (!string.IsNullOrEmpty(explicitTypeName))
-        {
-            return explicitTypeName;
-        }
-
-        var field = typeof(T).GetField(
-            "DdsTypeName",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        return field?.GetRawConstantValue() as string ?? "";
-    }
-
-    private static TimeSpan ComputeLeaseExpiryCheckPeriod(DomainParticipantOptions options)
-    {
-        var period = MinPositive(MaxLeaseExpiryCheckPeriod, options.SpdpInterval);
-        var leaseDuration = options.LeaseDuration.ToTimeSpan();
-        if (leaseDuration > TimeSpan.Zero)
-        {
-            var leaseQuarter = TimeSpan.FromTicks(Math.Max(1L, leaseDuration.Ticks / 4L));
-            period = MinPositive(period, leaseQuarter);
-        }
-        return period < MinLeaseExpiryCheckPeriod ? MinLeaseExpiryCheckPeriod : period;
-    }
-
-    private static TimeSpan MinPositive(TimeSpan left, TimeSpan right)
-    {
-        if (left <= TimeSpan.Zero)
-        {
-            return right;
-        }
-        if (right <= TimeSpan.Zero)
-        {
-            return left;
-        }
-        return left <= right ? left : right;
-    }
 }
