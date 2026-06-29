@@ -103,5 +103,63 @@ namespace ROSettaDDS.UnityVerification.Tests
             Assert.AreEqual(0L, fields["serialized_bytes"]);
             Assert.AreEqual(0L, fields["sent"]);
         }
+
+        [Test]
+        public void BuildSubscribe_emits_expected_fields()
+        {
+            var profiler = new Dictionary<string, object>
+            {
+                { "main_thread_time_ns_available", true },
+                { "main_thread_time_ns_last", 999L },
+            };
+            var fields = MeasureDoneBuilder.BuildSubscribe(
+                TimeSpan.FromSeconds(2),
+                received: 500,
+                serializedBytesPerMessage: 256,
+                profilerFields: profiler,
+                diagnostics: new Dictionary<string, object>());
+
+            Assert.AreEqual(500L, fields["received"]);
+            Assert.AreEqual(2000.0d, fields["elapsed_ms"]);
+            Assert.AreEqual(256L, fields["serialized_bytes_per_message"]);
+            Assert.AreEqual(128000L, fields["serialized_bytes"]);
+            Assert.AreEqual(250.0d, fields["messages_per_second"]);
+            Assert.AreEqual(true, fields["main_thread_time_ns_available"]);
+            Assert.AreEqual(999L, fields["main_thread_time_ns_last"]);
+        }
+
+        [Test]
+        public void BuildSubscribe_merges_diagnostics_fields()
+        {
+            var diagnostics = new Dictionary<string, object>
+            {
+                { "subscription_messages_deserialized", 100L },
+                { "rtps_data_submessages_received", 50L },
+            };
+            var fields = MeasureDoneBuilder.BuildSubscribe(
+                TimeSpan.FromSeconds(1),
+                received: 100,
+                serializedBytesPerMessage: 64,
+                profilerFields: new Dictionary<string, object>(),
+                diagnostics: diagnostics);
+
+            Assert.AreEqual(100L, fields["subscription_messages_deserialized"]);
+            Assert.AreEqual(50L, fields["rtps_data_submessages_received"]);
+        }
+
+        [Test]
+        public void BuildSubscribe_empty_diagnostics_adds_no_extra_keys()
+        {
+            var fields = MeasureDoneBuilder.BuildSubscribe(
+                TimeSpan.FromSeconds(1),
+                received: 10,
+                serializedBytesPerMessage: 32,
+                profilerFields: new Dictionary<string, object>(),
+                diagnostics: new Dictionary<string, object>());
+
+            // 期待されるキー: elapsed_ms, received, serialized_bytes_per_message,
+            // serialized_bytes, messages_per_second (5 個)
+            Assert.AreEqual(5, fields.Count);
+        }
     }
 }
