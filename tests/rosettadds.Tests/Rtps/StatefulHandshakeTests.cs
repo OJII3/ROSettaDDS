@@ -170,13 +170,14 @@ public class StatefulHandshakeTests
                 await writer.WriteAsync(new byte[] { (byte)i });
             }
 
-            // HB→ACKNACK が回るまで polling。高負荷 CI で固定 delay が
-            // サイクル完了前に尽きることがあるため、condition を待つ形にする。
+            // HB→ACKNACK が回るまで polling。高負荷 CI で 2s だと ThreadPool
+            // 飢餓により reader→writer の ack サイクルが回しきれないことがある
+            // ため、余裕を持って 10s まで待つ。
             var proxy = writer.GetReaderProxy(new Guid(s.ReaderPrefix, s.ReaderEntityId))!;
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
             while (DateTime.UtcNow < deadline && proxy.HighestAcked.Value < 3L)
             {
-                await Task.Delay(20);
+                await Task.Delay(50);
             }
 
             proxy.HighestAcked.Value.Should().Be(3L);
