@@ -76,12 +76,16 @@ public class MatchWaiterTests
             minCount: 1,
             timeout: TimeSpan.FromSeconds(5),
             cancellationToken: cts.Token);
-        var cancelTask = Task.Run(async () =>
+        // Task.Run + Task.Delay は高負荷 CI で ThreadPool にスケジュールされず
+        // 2 秒以上遅延するケースがあるため、専用 Thread で発火する。
+        var cancelThread = new Thread(() =>
         {
-            await Task.Delay(50);
+            Thread.Sleep(50);
             cts.Cancel();
-        });
+        })
+        { IsBackground = true, Name = "MatchWaiterTest-Cancel" };
+        cancelThread.Start();
         await Assert.ThrowsAsync<OperationCanceledException>(() => waitTask);
-        await cancelTask;
+        cancelThread.Join();
     }
 }
