@@ -2,6 +2,11 @@ using System.Runtime.InteropServices;
 
 namespace ROSettaDDS.PerfRunner;
 
+internal enum AggregateKind
+{
+    Median,
+}
+
 internal sealed class RunnerOptions
 {
     internal string Backend { get; private set; } = "il2cpp";
@@ -15,6 +20,9 @@ internal sealed class RunnerOptions
     internal string ProfilerMode { get; private set; } = "lean";
     internal bool SkipBuild { get; private set; }
     internal bool Help { get; private set; }
+    internal bool StabilizeDevice { get; private set; }
+    internal int Repeat { get; private set; } = 1;
+    internal AggregateKind Aggregate { get; private set; } = AggregateKind.Median;
     internal string Adb { get; private set; } = "adb";
     internal string? AndroidDevice { get; private set; }
     internal string AndroidPackage { get; private set; } = "com.ojii3.rosettadds.perf";
@@ -78,6 +86,22 @@ internal sealed class RunnerOptions
                 case "--android-activity":
                     options.AndroidActivity = RequireValue(args, ref i, arg);
                     break;
+                case "--stabilize-device":
+                    options.StabilizeDevice = true;
+                    break;
+                case "--repeat":
+                    options.Repeat = ParsePositiveInt(RequireValue(args, ref i, arg), arg);
+                    break;
+                case "--aggregate":
+                    {
+                        string value = RequireValue(args, ref i, arg);
+                        options.Aggregate = value switch
+                        {
+                            "median" => AggregateKind.Median,
+                            _ => throw new ArgumentException("--aggregate must be median"),
+                        };
+                    }
+                    break;
                 default:
                     throw new ArgumentException("unknown argument: " + arg);
             }
@@ -119,6 +143,9 @@ internal sealed class RunnerOptions
         output.WriteLine("  --skip-build                             Reuse --player-build instead of building");
         output.WriteLine("  --adb <path>                               Default: adb (PATH 解決)");
         output.WriteLine("  --android-device <serial>                  Required for --build-target Android (auto-detect 未実装)。");
+        output.WriteLine("  --stabilize-device                       計測前 Android device 状態を安定化 (WiFi 再接続 + wakelock + ping)");
+        output.WriteLine("  --repeat <count>                         各 scenario を N 回連続 run (default 1, median 集計対象)");
+        output.WriteLine("  --aggregate <median>                     multi-run 時の集計方法 (default median)");
         output.WriteLine("  --android-package <id>                     Default: com.ojii3.rosettadds.perf");
         output.WriteLine("  --android-activity <component>             Default: com.unity3d.player.UnityPlayerGameActivity");
     }

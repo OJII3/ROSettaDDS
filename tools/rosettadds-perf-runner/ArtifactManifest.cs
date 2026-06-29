@@ -37,4 +37,7 @@ internal sealed class ScenarioManifest
     public string HelperStderrPath { get; set; } = "";
     public int PlayerExitCode { get; set; }
     public int HelperExitCode { get; set; }
+    public int RepeatCount { get; set; } = 1;
+    public string? AggregatePath { get; set; }
+    public AggregateMetrics? Aggregate { get; set; }
 }
