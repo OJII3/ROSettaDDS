@@ -28,6 +28,7 @@ public sealed class DomainParticipant : IDisposable
     private readonly SedpEndpointReader _sedpPublicationsReader;
     private readonly SedpEndpointWriter _sedpSubscriptionsWriter;
     private readonly SedpEndpointReader _sedpSubscriptionsReader;
+    private readonly SedpEndpointAdvertiser _sedpAdvertiser;
     private readonly UserEntityIdAllocator _userEntityIds = new();
     private readonly UserEndpointManager _userEndpoints;
 
@@ -125,6 +126,11 @@ public sealed class DomainParticipant : IDisposable
             producedEndpointKind: EndpointKind.Reader,
             logger: _options.Logger,
             limits: _options.DiscoveryLimits);
+
+        _sedpAdvertiser = new SedpEndpointAdvertiser(
+            _options.Logger,
+            () => _leaseExpiryMonitor.CancellationToken,
+            () => _disposed);
 
         // SPDP で remote participant を発見/更新したら SEDP endpoint を auto-match
         _discoveryDb.ParticipantDiscovered += OnRemoteParticipantDiscovered;
@@ -337,7 +343,7 @@ public sealed class DomainParticipant : IDisposable
         endpointData.UnicastLocators.AddRange(_transports.DefaultUnicastLocators);
         endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
         _userEndpoints.RegisterWriter(endpointData, writer);
-        _ = RunSedpOperationAsync(
+        _ = _sedpAdvertiser.RunAsync(
             token => _sedpPublicationsWriter.AddEndpointAsync(endpointData, token),
             "DomainParticipant failed to advertise local writer endpoint");
 
@@ -439,7 +445,7 @@ public sealed class DomainParticipant : IDisposable
             cdrReadLimits: _options.CdrReadLimits);
 
         _userEndpoints.RegisterReader(endpointData, reader);
-        _ = RunSedpOperationAsync(
+        _ = _sedpAdvertiser.RunAsync(
             token => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token),
             "DomainParticipant failed to advertise local reader endpoint");
 
@@ -495,7 +501,7 @@ public sealed class DomainParticipant : IDisposable
         endpointData.MulticastLocators.Add(_transports.UserMulticastDestination);
 
         _userEndpoints.RegisterReader(endpointData, reader);
-        _ = RunSedpOperationAsync(
+        _ = _sedpAdvertiser.RunAsync(
             token => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token),
             "DomainParticipant failed to advertise local service reply reader endpoint");
         return reader;
@@ -554,7 +560,7 @@ public sealed class DomainParticipant : IDisposable
         var result = _userEndpoints.UnregisterWriter(endpointGuid, writerToRemove);
         if (result.ShouldAdvertise)
         {
-            WaitForSedpUnregister(_sedpPublicationsWriter.UnregisterEndpointAsync(result.Endpoint!));
+            _sedpAdvertiser.WaitForUnregister(_sedpPublicationsWriter.UnregisterEndpointAsync(result.Endpoint!));
         }
     }
 
@@ -563,48 +569,7 @@ public sealed class DomainParticipant : IDisposable
         var result = _userEndpoints.UnregisterReader(endpointGuid, readerToRemove);
         if (result.ShouldAdvertise)
         {
-            WaitForSedpUnregister(_sedpSubscriptionsWriter.UnregisterEndpointAsync(result.Endpoint!));
-        }
-    }
-
-    private void WaitForSedpUnregister(ValueTask unregisterTask)
-    {
-        try
-        {
-            var task = unregisterTask.AsTask();
-            if (!task.Wait(TimeSpan.FromMilliseconds(500)))
-            {
-                _options.Logger.Warn("DomainParticipant timed out while sending SEDP unregister");
-            }
-        }
-        catch (AggregateException ex)
-        {
-            _options.Logger.Warn("DomainParticipant failed to send SEDP unregister", ex);
-        }
-        catch (Exception ex)
-        {
-            _options.Logger.Warn("DomainParticipant failed to send SEDP unregister", ex);
-        }
-    }
-
-    private async Task RunSedpOperationAsync(
-        Func<CancellationToken, ValueTask> operation,
-        string failureMessage)
-    {
-        var token = _leaseExpiryMonitor.CancellationToken;
-        try
-        {
-            await operation(token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-        }
-        catch (ObjectDisposedException) when (_disposed || token.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            _options.Logger.Warn(failureMessage, ex);
+            _sedpAdvertiser.WaitForUnregister(_sedpSubscriptionsWriter.UnregisterEndpointAsync(result.Endpoint!));
         }
     }
 
