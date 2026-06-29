@@ -4,7 +4,7 @@ using Unity.Profiling;
 
 namespace ROSettaDDS.UnityPerfHarness
 {
-    internal sealed class PerfProfilerRecorders : IDisposable
+    internal sealed class PerfProfilerRecorders : IPerfProfilerSampler
     {
         private readonly List<RecorderEntry> _recorders = new List<RecorderEntry>();
         private readonly ProfilerCounterAccumulator _gcAllocatedAccumulator = new ProfilerCounterAccumulator();
@@ -41,7 +41,7 @@ namespace ROSettaDDS.UnityPerfHarness
             return result;
         }
 
-        internal Dictionary<string, object> Snapshot()
+        public IDictionary<string, object> Snapshot()
         {
             Collect();
 
@@ -64,7 +64,7 @@ namespace ROSettaDDS.UnityPerfHarness
             return result;
         }
 
-        internal void Collect()
+        public void Collect()
         {
             for (int i = 0; i < _recorders.Count; i++)
             {

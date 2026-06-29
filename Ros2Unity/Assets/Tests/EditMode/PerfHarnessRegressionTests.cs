@@ -59,5 +59,24 @@ namespace ROSettaDDS.UnityVerification.Tests
             Assert.IsFalse(completed);
             Assert.GreaterOrEqual(delayCalls, 1);
         }
+
+        [Test]
+        public void StopwatchPerfClock_measures_elapsed_time()
+        {
+            var clock = new StopwatchPerfClock();
+            var sw = clock.Start();
+            System.Threading.Thread.Sleep(10);
+            Assert.GreaterOrEqual(sw.Elapsed.TotalMilliseconds, 5.0d);
+            sw.Stop();
+        }
+
+        [Test]
+        public void StopwatchWrapper_Stop_does_not_throw()
+        {
+            var clock = new StopwatchPerfClock();
+            var sw = clock.Start();
+            sw.Stop();
+            sw.Stop(); // 2 回呼んでも例外なし
+        }
     }
 }
