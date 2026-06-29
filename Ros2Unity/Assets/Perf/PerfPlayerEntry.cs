@@ -158,30 +158,37 @@ namespace ROSettaDDS.UnityPerfHarness
                 sink.Event("matched");
                 sink.Event("measure_start");
 
-                bool completed = await AsyncReceiveWaiter.WaitUntilAsync(
-                    () => Volatile.Read(ref received) >= args.Messages,
-                    TimeSpan.FromSeconds(30),
-                    async delay =>
-                    {
-                        sampler.Collect();
-                        await Task.Delay(delay);
-                    });
-                if (!completed)
+                try
                 {
-                    sink.Event("receive_diagnostics", BuildReceiveDiagnostics(participant, subscription));
-                    throw new TimeoutException(
-                        "Timed out waiting for ROS 2 messages: received " +
-                        Volatile.Read(ref received) + "/" + args.Messages + ".");
-                }
-                sw?.Stop();
+                    bool completed = await AsyncReceiveWaiter.WaitUntilAsync(
+                        () => Volatile.Read(ref received) >= args.Messages,
+                        TimeSpan.FromSeconds(30),
+                        async delay =>
+                        {
+                            sampler.Collect();
+                            await Task.Delay(delay);
+                        });
+                    if (!completed)
+                    {
+                        sink.Event("receive_diagnostics", BuildReceiveDiagnostics(participant, subscription));
+                        throw new TimeoutException(
+                            "Timed out waiting for ROS 2 messages: received " +
+                            Volatile.Read(ref received) + "/" + args.Messages + ".");
+                    }
+                    sw?.Stop();
 
-                var message = CreatePayloadMessage(args.PayloadBytes);
-                int serializedBytes = CdrEncapsulation.Size + StringMessageSerializer.Instance.GetSerializedSize(message);
-                IDictionary<string, object> profilerFields = sampler.Snapshot();
-                IDictionary<string, object> diagnostics = CollectReceiveDiagnostics(participant, subscription);
-                IDictionary<string, object> fields = MeasureDoneBuilder.BuildSubscribe(
-                    sw?.Elapsed ?? TimeSpan.Zero, received, serializedBytes, profilerFields, diagnostics);
-                sink.Event("measure_done", fields);
+                    var message = CreatePayloadMessage(args.PayloadBytes);
+                    int serializedBytes = CdrEncapsulation.Size + StringMessageSerializer.Instance.GetSerializedSize(message);
+                    IDictionary<string, object> profilerFields = sampler.Snapshot();
+                    IDictionary<string, object> diagnostics = CollectReceiveDiagnostics(participant, subscription);
+                    IDictionary<string, object> fields = MeasureDoneBuilder.BuildSubscribe(
+                        sw?.Elapsed ?? TimeSpan.Zero, received, serializedBytes, profilerFields, diagnostics);
+                    sink.Event("measure_done", fields);
+                }
+                finally
+                {
+                    sw?.Dispose();
+                }
             }
         }
 
