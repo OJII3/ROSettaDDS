@@ -23,7 +23,7 @@ namespace ROSettaDDS.UnityPerfHarness
             _writer.AutoFlush = true;
         }
 
-        internal void Event(string name, IDictionary<string, object> fields = null)
+        public void Event(string name, IDictionary<string, object> fields = null)
         {
             var builder = new StringBuilder();
             builder.Append('{');
@@ -46,7 +46,7 @@ namespace ROSettaDDS.UnityPerfHarness
             Debug.Log(line);
         }
 
-        internal void WriteSentinel(string path, string content)
+        public void WriteSentinel(string path, string content)
         {
             string directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(directory))

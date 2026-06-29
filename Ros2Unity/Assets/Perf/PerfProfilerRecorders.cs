@@ -41,7 +41,7 @@ namespace ROSettaDDS.UnityPerfHarness
             return result;
         }
 
-        internal Dictionary<string, object> Snapshot()
+        public IDictionary<string, object> Snapshot()
         {
             Collect();
 
@@ -64,7 +64,7 @@ namespace ROSettaDDS.UnityPerfHarness
             return result;
         }
 
-        internal void Collect()
+        public void Collect()
         {
             for (int i = 0; i < _recorders.Count; i++)
             {

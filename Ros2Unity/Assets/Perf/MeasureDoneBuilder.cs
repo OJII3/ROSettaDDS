@@ -9,7 +9,7 @@ namespace ROSettaDDS.UnityPerfHarness
             TimeSpan elapsed,
             int sent,
             int serializedBytesPerMessage,
-            IReadOnlyDictionary<string, object> profilerFields)
+            IDictionary<string, object> profilerFields)
         {
             var fields = new Dictionary<string, object>(profilerFields);
             fields["elapsed_ms"] = elapsed.TotalMilliseconds;
@@ -24,8 +24,8 @@ namespace ROSettaDDS.UnityPerfHarness
             TimeSpan elapsed,
             int received,
             int serializedBytesPerMessage,
-            IReadOnlyDictionary<string, object> profilerFields,
-            IReadOnlyDictionary<string, object> diagnostics)
+            IDictionary<string, object> profilerFields,
+            IDictionary<string, object> diagnostics)
         {
             var fields = new Dictionary<string, object>(profilerFields);
             fields["elapsed_ms"] = elapsed.TotalMilliseconds;
