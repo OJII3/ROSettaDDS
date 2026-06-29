@@ -4,7 +4,7 @@ using Unity.Profiling;
 
 namespace ROSettaDDS.UnityPerfHarness
 {
-    internal sealed class PerfProfilerRecorders : IDisposable
+    internal sealed class PerfProfilerRecorders : IPerfProfilerSampler
     {
         private readonly List<RecorderEntry> _recorders = new List<RecorderEntry>();
         private readonly ProfilerCounterAccumulator _gcAllocatedAccumulator = new ProfilerCounterAccumulator();
