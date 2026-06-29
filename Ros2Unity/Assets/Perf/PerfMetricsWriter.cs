@@ -1,13 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Text;
 using UnityEngine;
 
 namespace ROSettaDDS.UnityPerfHarness
 {
-    internal sealed class PerfMetricsWriter : IDisposable
+    internal sealed class PerfMetricsWriter : IPerfMetricsSink
     {
         private readonly PerfPlayerArguments _args;
         private readonly StreamWriter _writer;
@@ -28,17 +27,17 @@ namespace ROSettaDDS.UnityPerfHarness
         {
             var builder = new StringBuilder();
             builder.Append('{');
-            AppendString(builder, "event", name, first: true);
-            AppendString(builder, "scenario", _args.Scenario);
-            AppendString(builder, "direction", _args.DirectionName);
-            AppendString(builder, "qos", _args.QosName);
-            AppendNumber(builder, "payload_bytes", _args.PayloadBytes);
-            AppendNumber(builder, "messages", _args.Messages);
+            PerfJson.WriteString(builder, "event", name, first: true);
+            PerfJson.WriteString(builder, "scenario", _args.Scenario, first: false);
+            PerfJson.WriteString(builder, "direction", _args.DirectionName, first: false);
+            PerfJson.WriteString(builder, "qos", _args.QosName, first: false);
+            PerfJson.WriteNumber(builder, "payload_bytes", _args.PayloadBytes, first: false);
+            PerfJson.WriteNumber(builder, "messages", _args.Messages, first: false);
             if (fields != null)
             {
                 foreach (var pair in fields)
                 {
-                    AppendValue(builder, pair.Key, pair.Value);
+                    PerfJson.WriteValue(builder, pair.Key, pair.Value, first: false);
                 }
             }
             builder.Append('}');
@@ -60,55 +59,6 @@ namespace ROSettaDDS.UnityPerfHarness
         public void Dispose()
         {
             _writer.Dispose();
-        }
-
-        private static void AppendValue(StringBuilder builder, string key, object value)
-        {
-            if (value == null)
-            {
-                AppendRaw(builder, key, "null");
-            }
-            else if (value is string text)
-            {
-                AppendString(builder, key, text);
-            }
-            else if (value is bool flag)
-            {
-                AppendRaw(builder, key, flag ? "true" : "false");
-            }
-            else if (value is int || value is long || value is float || value is double)
-            {
-                AppendRaw(builder, key, Convert.ToString(value, CultureInfo.InvariantCulture));
-            }
-            else
-            {
-                AppendString(builder, key, value.ToString());
-            }
-        }
-
-        private static void AppendString(StringBuilder builder, string key, string value, bool first = false)
-        {
-            if (!first) builder.Append(',');
-            builder.Append('"').Append(Escape(key)).Append("\":\"").Append(Escape(value)).Append('"');
-        }
-
-        private static void AppendNumber(StringBuilder builder, string key, long value)
-        {
-            AppendRaw(builder, key, value.ToString(CultureInfo.InvariantCulture));
-        }
-
-        private static void AppendRaw(StringBuilder builder, string key, string value)
-        {
-            builder.Append(',').Append('"').Append(Escape(key)).Append("\":").Append(value);
-        }
-
-        private static string Escape(string value)
-        {
-            if (value == null)
-            {
-                return string.Empty;
-            }
-            return value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
         }
     }
 }
