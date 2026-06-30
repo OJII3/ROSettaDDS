@@ -13,9 +13,7 @@ internal static class EndpointMatcher
         {
             return MatchDecision.NotCompatible;
         }
-        return MatchDecision.Compatible(
-            ResolveRemoteUnicastLocator(remote, Array.Empty<RemoteParticipant>()),
-            remote.Data.Reliability.Kind);
+        return MatchDecision.Compatible(null, remote.Data.Reliability.Kind);
     }
 
     public static MatchDecision EvaluateLocalRemote(LocalReader local, RemoteEndpoint remote)
@@ -25,9 +23,7 @@ internal static class EndpointMatcher
         {
             return MatchDecision.NotCompatible;
         }
-        return MatchDecision.Compatible(
-            ResolveRemoteUnicastLocator(remote, Array.Empty<RemoteParticipant>()),
-            null);
+        return MatchDecision.Compatible(null, null);
     }
 
     public static MatchDecision EvaluateLocalLocal(LocalReader reader, LocalWriter writer)

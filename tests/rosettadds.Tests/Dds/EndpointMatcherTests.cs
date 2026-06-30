@@ -213,7 +213,6 @@ public class EndpointMatcherTests
         var remote = MakeRemoteReader("rt/chatter", "TypeA", unicast: remoteLoc);
         var result = EndpointMatcher.EvaluateLocalRemote(local, remote);
         result.IsCompatible.Should().BeTrue();
-        result.UnicastLocator.Should().Be(remoteLoc);
         result.ReliabilityKind.Should().Be(ReliabilityKind.BestEffort);
     }
 
@@ -249,7 +248,6 @@ public class EndpointMatcherTests
         var d = EndpointMatcher.EvaluateLocalRemote(local, remote);
 
         d.IsCompatible.Should().BeTrue();
-        d.UnicastLocator.Should().Be(locator);
         d.ReliabilityKind.Should().BeNull();
     }
 
@@ -287,7 +285,6 @@ public class EndpointMatcherTests
         local.EndpointData.Reliability = ReliabilityQos.Reliable;
         var result = EndpointMatcher.EvaluateLocalRemote(local, remote);
         result.IsCompatible.Should().BeTrue();
-        result.UnicastLocator.Should().Be(remoteLoc);
         result.ReliabilityKind.Should().Be(ReliabilityKind.BestEffort);
     }
 
