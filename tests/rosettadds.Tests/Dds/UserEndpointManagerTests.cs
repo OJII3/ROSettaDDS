@@ -17,7 +17,7 @@ public class UserEndpointManagerTests
     {
         var prefix = GuidPrefix.Create(VendorId.ROSettaDDS, 1, 2, 3);
         var manager = new UserEndpointManager(
-            new DiscoveryDb(), new ParticipantRtpsReceiver(prefix), NullLogger.Instance);
+            new DiscoveryDb(), new ParticipantRtpsReceiverAdapter(new ParticipantRtpsReceiver(prefix)), NullLogger.Instance);
         var endpoint = new DiscoveredEndpointData
         {
             Kind = EndpointKind.Reader,
@@ -37,7 +37,7 @@ public class UserEndpointManagerTests
     {
         var prefix = GuidPrefix.Create(VendorId.ROSettaDDS, 1, 2, 3);
         var manager = new UserEndpointManager(
-            new DiscoveryDb(), new ParticipantRtpsReceiver(prefix), NullLogger.Instance);
+            new DiscoveryDb(), new ParticipantRtpsReceiverAdapter(new ParticipantRtpsReceiver(prefix)), NullLogger.Instance);
         var endpoint = new DiscoveredEndpointData
         {
             Kind = EndpointKind.Reader,

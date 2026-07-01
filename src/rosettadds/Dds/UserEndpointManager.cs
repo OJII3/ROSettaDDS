@@ -9,23 +9,14 @@ using Guid = ROSettaDDS.Common.Guid;
 
 namespace ROSettaDDS.Dds;
 
-/// <summary>
-/// local user endpoint の登録状態、マッチング、<see cref="ParticipantRtpsReceiver"/> への
-/// ルーティング登録を管理する。
-/// </summary>
 internal sealed class UserEndpointManager
 {
-    private readonly object _lock = new();
     private readonly DiscoveryDb _discoveryDb;
-    private readonly ParticipantRtpsReceiver _receiver;
+    private readonly IEndpointReceiver _receiver;
     private readonly ILogger _logger;
-    private readonly List<DiscoveredEndpointData> _writers = new();
-    private readonly List<DiscoveredEndpointData> _readers = new();
-    private readonly Dictionary<string, List<LocalWriter>> _writersByTopic = new();
-    private readonly Dictionary<string, List<LocalReader>> _readersByTopic = new();
-    private StatefulWriter[] _writerSnapshot = Array.Empty<StatefulWriter>();
+    private readonly EndpointRegistry _registry = new();
 
-    public UserEndpointManager(DiscoveryDb discoveryDb, ParticipantRtpsReceiver receiver, ILogger logger)
+    public UserEndpointManager(DiscoveryDb discoveryDb, IEndpointReceiver receiver, ILogger logger)
     {
         _discoveryDb = discoveryDb ?? throw new ArgumentNullException(nameof(discoveryDb));
         _receiver = receiver ?? throw new ArgumentNullException(nameof(receiver));
@@ -37,28 +28,41 @@ internal sealed class UserEndpointManager
         ValidateEndpoint(endpointData, EndpointKind.Writer);
         if (writer is null) throw new ArgumentNullException(nameof(writer));
 
-        var localWriter = new LocalWriter(endpointData, writer);
-        LocalReader[] localReaders;
-        lock (_lock)
-        {
-            _writers.Add(endpointData);
-            AddByTopic(_writersByTopic, endpointData.TopicName, localWriter);
-            RefreshWriterSnapshotLocked();
-            localReaders = SnapshotForTopic(_readersByTopic, endpointData.TopicName);
-        }
-
-        // ACKNACK を受け取るため receiver に登録
+        _registry.AddLocalWriter(endpointData, writer);
         _receiver.RegisterWriter(writer.WriterEntityId, writer);
 
-        foreach (var localReader in localReaders)
+        var localWriter = new LocalWriter(endpointData, writer);
+        foreach (var localReader in _registry.GetLocalReadersForTopic(endpointData.TopicName))
         {
-            Match(localReader, localWriter);
+            var d = EndpointMatcher.EvaluateLocalLocal(localReader, localWriter);
+            if (d.IsCompatible)
+            {
+                localReader.Reader.MatchWriter(localWriter.EndpointData.EndpointGuid, d.UnicastLocator);
+                localWriter.Writer.MatchReader(localReader.EndpointData.EndpointGuid, d.SecondaryLocator, d.ReliabilityKind ?? ReliabilityKind.Reliable);
+                _logger.Debug($"DomainParticipant: matched local reader with local writer on topic={localReader.EndpointData.TopicName} writer={localWriter.EndpointData.EndpointGuid}");
+            }
+            else
+            {
+                localReader.Reader.UnmatchWriter(localWriter.EndpointData.EndpointGuid);
+                localWriter.Writer.UnmatchReader(localReader.EndpointData.EndpointGuid);
+            }
         }
+
         foreach (var remoteReader in _discoveryDb.ReaderSnapshot())
         {
             if (remoteReader.TopicName == endpointData.TopicName)
             {
-                Match(localWriter, remoteReader);
+                var d = EndpointMatcher.EvaluateLocalRemote(localWriter, remoteReader);
+                if (d.IsCompatible)
+                {
+                    var loc = d.UnicastLocator ?? EndpointMatcher.ResolveRemoteUnicastLocator(remoteReader, _discoveryDb.Snapshot());
+                    localWriter.Writer.MatchReader(remoteReader.Data.EndpointGuid, loc, d.ReliabilityKind ?? ReliabilityKind.Reliable);
+                    _logger.Debug($"DomainParticipant: matched local writer with remote reader on topic={remoteReader.TopicName} reader={remoteReader.Data.EndpointGuid}");
+                }
+                else
+                {
+                    localWriter.Writer.UnmatchReader(remoteReader.Data.EndpointGuid);
+                }
             }
         }
     }
@@ -68,27 +72,41 @@ internal sealed class UserEndpointManager
         ValidateEndpoint(endpointData, EndpointKind.Reader);
         if (reader is null) throw new ArgumentNullException(nameof(reader));
 
-        var localReader = new LocalReader(endpointData, reader);
-        LocalWriter[] localWriters;
-        lock (_lock)
-        {
-            _readers.Add(endpointData);
-            AddByTopic(_readersByTopic, endpointData.TopicName, localReader);
-            localWriters = SnapshotForTopic(_writersByTopic, endpointData.TopicName);
-        }
-
-        // DATA/DATA_FRAG/HEARTBEAT/GAP を受け取るため receiver に登録
+        _registry.AddLocalReader(endpointData, reader);
         _receiver.RegisterReader(reader.ReaderEntityId, reader.Handler);
 
-        foreach (var localWriter in localWriters)
+        var localReader = new LocalReader(endpointData, reader);
+        foreach (var localWriter in _registry.GetLocalWritersForTopic(endpointData.TopicName))
         {
-            Match(localReader, localWriter);
+            var d = EndpointMatcher.EvaluateLocalLocal(localReader, localWriter);
+            if (d.IsCompatible)
+            {
+                localReader.Reader.MatchWriter(localWriter.EndpointData.EndpointGuid, d.UnicastLocator);
+                localWriter.Writer.MatchReader(localReader.EndpointData.EndpointGuid, d.SecondaryLocator, d.ReliabilityKind ?? ReliabilityKind.Reliable);
+                _logger.Debug($"DomainParticipant: matched local reader with local writer on topic={localReader.EndpointData.TopicName} writer={localWriter.EndpointData.EndpointGuid}");
+            }
+            else
+            {
+                localReader.Reader.UnmatchWriter(localWriter.EndpointData.EndpointGuid);
+                localWriter.Writer.UnmatchReader(localReader.EndpointData.EndpointGuid);
+            }
         }
+
         foreach (var remoteWriter in _discoveryDb.WriterSnapshot())
         {
             if (remoteWriter.TopicName == endpointData.TopicName)
             {
-                Match(localReader, remoteWriter);
+                var d = EndpointMatcher.EvaluateLocalRemote(localReader, remoteWriter);
+                if (d.IsCompatible)
+                {
+                    var loc = d.UnicastLocator ?? EndpointMatcher.ResolveRemoteUnicastLocator(remoteWriter, _discoveryDb.Snapshot());
+                    localReader.Reader.MatchWriter(remoteWriter.Data.EndpointGuid, loc);
+                    _logger.Debug($"DomainParticipant: matched local reader with remote writer on topic={remoteWriter.TopicName} writer={remoteWriter.Data.EndpointGuid}");
+                }
+                else
+                {
+                    localReader.Reader.UnmatchWriter(remoteWriter.Data.EndpointGuid);
+                }
             }
         }
     }
@@ -97,104 +115,89 @@ internal sealed class UserEndpointManager
     {
         if (writer is null) throw new ArgumentNullException(nameof(writer));
 
-        DiscoveredEndpointData? endpoint;
-        bool shouldAdvertise;
-        LocalReader[] localReaders;
-        lock (_lock)
+        var removed = _registry.RemoveLocalWriter(endpointGuid, writer);
+        if (removed.Endpoint is null)
         {
-            endpoint = RemoveEndpoint(_writers, endpointGuid);
-            if (endpoint is null)
-            {
-                return UnregisterResult.NotFound;
-            }
-            shouldAdvertise = RemoveByReference(_writersByTopic, endpoint.TopicName, writer, static item => item.Writer)
-                && !ContainsGuid(_writersByTopic, endpoint.TopicName, endpointGuid, static item => item.EndpointData);
-            RefreshWriterSnapshotLocked();
-            localReaders = SnapshotForTopic(_readersByTopic, endpoint.TopicName);
+            return UnregisterResult.NotFound;
         }
 
         _receiver.UnregisterWriter(writer.WriterEntityId);
 
-        foreach (var localReader in localReaders)
+        foreach (var localReader in removed.LocalReaders)
         {
             localReader.Reader.UnmatchWriter(endpointGuid);
         }
-        return new UnregisterResult(endpoint, shouldAdvertise);
+
+        var shouldAdvertise = _registry.ShouldAdvertiseForTopic(removed.Endpoint.TopicName, endpointGuid);
+        return new UnregisterResult(removed.Endpoint, shouldAdvertise);
     }
 
     public UnregisterResult UnregisterReader(Guid endpointGuid, IUserReader reader)
     {
         if (reader is null) throw new ArgumentNullException(nameof(reader));
 
-        DiscoveredEndpointData? endpoint;
-        bool shouldAdvertise;
-        LocalWriter[] localWriters;
-        lock (_lock)
+        var removed = _registry.RemoveLocalReader(endpointGuid, reader);
+        if (removed.Endpoint is null)
         {
-            endpoint = RemoveEndpoint(_readers, endpointGuid);
-            if (endpoint is null)
-            {
-                return UnregisterResult.NotFound;
-            }
-            shouldAdvertise = RemoveByReference(_readersByTopic, endpoint.TopicName, reader, static item => item.Reader)
-                && !ContainsGuid(_readersByTopic, endpoint.TopicName, endpointGuid, static item => item.EndpointData);
-            localWriters = SnapshotForTopic(_writersByTopic, endpoint.TopicName);
+            return UnregisterResult.NotFound;
         }
 
         _receiver.UnregisterReader(reader.ReaderEntityId);
 
-        foreach (var localWriter in localWriters)
+        foreach (var localWriter in removed.LocalWriters)
         {
             localWriter.Writer.UnmatchReader(endpointGuid);
         }
-        return new UnregisterResult(endpoint, shouldAdvertise);
+
+        var shouldAdvertise = _registry.ShouldAdvertiseForTopic(removed.Endpoint.TopicName, endpointGuid);
+        return new UnregisterResult(removed.Endpoint, shouldAdvertise);
     }
 
-    public EndpointSnapshot Snapshot()
-    {
-        lock (_lock)
-        {
-            return new EndpointSnapshot(
-                _writersByTopic.Values.SelectMany(static items => items).Select(static item => item.Writer).ToArray(),
-                _readersByTopic.Values.SelectMany(static items => items).Select(static item => item.Reader).ToArray());
-        }
-    }
+    public EndpointSnapshot Snapshot() => _registry.Snapshot();
 
-    public void StartWriters()
-    {
-        foreach (var writer in Volatile.Read(ref _writerSnapshot))
-        {
-            writer.Start();
-        }
-    }
+    public void StartWriters() => _registry.StartWriters();
 
-    public void StopWriters()
-    {
-        foreach (var writer in Volatile.Read(ref _writerSnapshot))
-        {
-            writer.Stop();
-        }
-    }
+    public void StopWriters() => _registry.StopWriters();
 
     public void RemoteReaderChanged(RemoteEndpoint remoteReader)
     {
-        foreach (var writer in GetWriters(remoteReader.TopicName))
+        foreach (var writer in _registry.GetLocalWritersForTopic(remoteReader.TopicName))
         {
-            Match(writer, remoteReader);
+            var d = EndpointMatcher.EvaluateLocalRemote(writer, remoteReader);
+            if (d.IsCompatible)
+            {
+                var loc = d.UnicastLocator ?? EndpointMatcher.ResolveRemoteUnicastLocator(remoteReader, _discoveryDb.Snapshot());
+                writer.Writer.MatchReader(remoteReader.Data.EndpointGuid, loc, d.ReliabilityKind ?? ReliabilityKind.Reliable);
+                _logger.Debug($"DomainParticipant: matched local writer with remote reader on topic={remoteReader.TopicName} reader={remoteReader.Data.EndpointGuid}");
+            }
+            else
+            {
+                writer.Writer.UnmatchReader(remoteReader.Data.EndpointGuid);
+            }
         }
     }
 
     public void RemoteWriterChanged(RemoteEndpoint remoteWriter)
     {
-        foreach (var reader in GetReaders(remoteWriter.TopicName))
+        foreach (var reader in _registry.GetLocalReadersForTopic(remoteWriter.TopicName))
         {
-            Match(reader, remoteWriter);
+            var d = EndpointMatcher.EvaluateLocalRemote(reader, remoteWriter);
+            if (d.IsCompatible)
+            {
+                var loc = d.UnicastLocator ?? EndpointMatcher.ResolveRemoteUnicastLocator(remoteWriter, _discoveryDb.Snapshot());
+                reader.Reader.MatchWriter(remoteWriter.Data.EndpointGuid, loc);
+                _logger.Debug($"DomainParticipant: matched local reader with remote writer on topic={remoteWriter.TopicName} writer={remoteWriter.Data.EndpointGuid}");
+            }
+            else
+            {
+                reader.Reader.UnmatchWriter(remoteWriter.Data.EndpointGuid);
+            }
         }
     }
 
     public void RemoteReaderLost(RemoteEndpoint remoteReader)
     {
-        foreach (var writer in GetWriters(remoteReader.TopicName))
+        foreach (var writer in _registry.GetLocalWritersForTopic(remoteReader.TopicName))
         {
             writer.Writer.UnmatchReader(remoteReader.Data.EndpointGuid);
         }
@@ -202,110 +205,15 @@ internal sealed class UserEndpointManager
 
     public void RemoteWriterLost(RemoteEndpoint remoteWriter)
     {
-        foreach (var reader in GetReaders(remoteWriter.TopicName))
+        foreach (var reader in _registry.GetLocalReadersForTopic(remoteWriter.TopicName))
         {
             reader.Reader.UnmatchWriter(remoteWriter.Data.EndpointGuid);
         }
     }
 
-    private void Match(LocalWriter local, RemoteEndpoint remoteReader)
+    public readonly record struct UnregisterResult(DiscoveredEndpointData? Endpoint, bool ShouldAdvertise)
     {
-        if (!TypeMatches(local.EndpointData.TypeName, remoteReader.TypeName)
-            || !QosCompatibility.IsCompatible(local.EndpointData, remoteReader.Data))
-        {
-            local.Writer.UnmatchReader(remoteReader.Data.EndpointGuid);
-            return;
-        }
-
-        local.Writer.MatchReader(
-            remoteReader.Data.EndpointGuid,
-            ResolveRemoteReaderUnicastLocator(remoteReader),
-            remoteReader.Data.Reliability.Kind);
-        _logger.Debug($"DomainParticipant: matched local writer with remote reader on topic={remoteReader.TopicName} reader={remoteReader.Data.EndpointGuid}");
-    }
-
-    private void Match(LocalReader local, RemoteEndpoint remoteWriter)
-    {
-        if (!TypeMatches(local.EndpointData.TypeName, remoteWriter.TypeName)
-            || !QosCompatibility.IsCompatible(remoteWriter.Data, local.EndpointData))
-        {
-            local.Reader.UnmatchWriter(remoteWriter.Data.EndpointGuid);
-            return;
-        }
-
-        local.Reader.MatchWriter(
-            remoteWriter.Data.EndpointGuid,
-            ResolveRemoteWriterUnicastLocator(remoteWriter));
-        _logger.Debug($"DomainParticipant: matched local reader with remote writer on topic={remoteWriter.TopicName} writer={remoteWriter.Data.EndpointGuid}");
-    }
-
-    private void Match(LocalReader reader, LocalWriter writer)
-    {
-        if (!TypeMatches(reader.EndpointData.TypeName, writer.EndpointData.TypeName)
-            || !QosCompatibility.IsCompatible(writer.EndpointData, reader.EndpointData))
-        {
-            reader.Reader.UnmatchWriter(writer.EndpointData.EndpointGuid);
-            writer.Writer.UnmatchReader(reader.EndpointData.EndpointGuid);
-            return;
-        }
-
-        // local reader が Reliable なら ACKNACK を local writer の unicast locator へ返す
-        reader.Reader.MatchWriter(
-            writer.EndpointData.EndpointGuid,
-            FirstUdpLocator(writer.EndpointData.UnicastLocators));
-        writer.Writer.MatchReader(
-            reader.EndpointData.EndpointGuid,
-            FirstUdpLocator(reader.EndpointData.UnicastLocators),
-            reader.EndpointData.Reliability.Kind);
-        _logger.Debug($"DomainParticipant: matched local reader with local writer on topic={reader.EndpointData.TopicName} writer={writer.EndpointData.EndpointGuid}");
-    }
-
-    private Locator? ResolveRemoteReaderUnicastLocator(RemoteEndpoint remoteReader)
-        => ResolveRemoteEndpointUnicastLocator(remoteReader);
-
-    private Locator? ResolveRemoteWriterUnicastLocator(RemoteEndpoint remoteWriter)
-        => ResolveRemoteEndpointUnicastLocator(remoteWriter);
-
-    private Locator? ResolveRemoteEndpointUnicastLocator(RemoteEndpoint remoteEndpoint)
-    {
-        var locator = FirstUdpLocator(remoteEndpoint.Data.UnicastLocators);
-        if (locator is not null)
-        {
-            return locator;
-        }
-
-        foreach (var participant in _discoveryDb.Snapshot())
-        {
-            if (participant.GuidPrefix.Equals(remoteEndpoint.Data.EndpointGuid.Prefix))
-            {
-                return FirstUdpLocator(participant.Data.DefaultUnicastLocators);
-            }
-        }
-        return null;
-    }
-
-    private LocalWriter[] GetWriters(string topicName)
-    {
-        lock (_lock)
-        {
-            return SnapshotForTopic(_writersByTopic, topicName);
-        }
-    }
-
-    private LocalReader[] GetReaders(string topicName)
-    {
-        lock (_lock)
-        {
-            return SnapshotForTopic(_readersByTopic, topicName);
-        }
-    }
-
-    private void RefreshWriterSnapshotLocked()
-    {
-        _writerSnapshot = _writersByTopic.Values
-            .SelectMany(static items => items)
-            .Select(static item => item.Writer)
-            .ToArray();
+        public static UnregisterResult NotFound => new(null, false);
     }
 
     private static void ValidateEndpoint(DiscoveredEndpointData endpoint, EndpointKind expectedKind)
@@ -319,93 +227,5 @@ internal sealed class UserEndpointManager
         {
             throw new ArgumentException("Endpoint topic name cannot be null or empty.", nameof(endpoint));
         }
-    }
-
-    private static void AddByTopic<T>(Dictionary<string, List<T>> itemsByTopic, string topicName, T item)
-    {
-        if (!itemsByTopic.TryGetValue(topicName, out var items))
-        {
-            items = new List<T>();
-            itemsByTopic[topicName] = items;
-        }
-        items.Add(item);
-    }
-
-    private static T[] SnapshotForTopic<T>(Dictionary<string, List<T>> itemsByTopic, string topicName)
-        => itemsByTopic.TryGetValue(topicName, out var items) ? items.ToArray() : Array.Empty<T>();
-
-    private static DiscoveredEndpointData? RemoveEndpoint(List<DiscoveredEndpointData> endpoints, Guid endpointGuid)
-    {
-        for (int i = 0; i < endpoints.Count; i++)
-        {
-            if (endpoints[i].EndpointGuid.Equals(endpointGuid))
-            {
-                var endpoint = endpoints[i];
-                endpoints.RemoveAt(i);
-                return endpoint;
-            }
-        }
-        return null;
-    }
-
-    private static bool RemoveByReference<TItem, TValue>(
-        Dictionary<string, List<TItem>> itemsByTopic,
-        string topicName,
-        TValue value,
-        Func<TItem, TValue> selector)
-        where TValue : class
-    {
-        if (!itemsByTopic.TryGetValue(topicName, out var items))
-        {
-            return false;
-        }
-        for (int i = 0; i < items.Count; i++)
-        {
-            if (ReferenceEquals(selector(items[i]), value))
-            {
-                items.RemoveAt(i);
-                if (items.Count == 0)
-                {
-                    itemsByTopic.Remove(topicName);
-                }
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static bool ContainsGuid<T>(
-        Dictionary<string, List<T>> itemsByTopic,
-        string topicName,
-        Guid endpointGuid,
-        Func<T, DiscoveredEndpointData> selector)
-        => itemsByTopic.TryGetValue(topicName, out var items)
-        && items.Any(item => selector(item).EndpointGuid.Equals(endpointGuid));
-
-    private static bool TypeMatches(string localTypeName, string remoteTypeName)
-        => !string.IsNullOrEmpty(localTypeName)
-        && !string.IsNullOrEmpty(remoteTypeName)
-        && string.Equals(localTypeName, remoteTypeName, StringComparison.Ordinal);
-
-    private static Locator? FirstUdpLocator(IEnumerable<Locator> locators)
-    {
-        foreach (var locator in locators)
-        {
-            if (locator.Kind is LocatorKind.UdpV4 or LocatorKind.UdpV6)
-            {
-                return locator;
-            }
-        }
-        return null;
-    }
-
-    private sealed record LocalReader(DiscoveredEndpointData EndpointData, IUserReader Reader);
-    private sealed record LocalWriter(DiscoveredEndpointData EndpointData, StatefulWriter Writer);
-
-    public readonly record struct EndpointSnapshot(StatefulWriter[] Writers, IUserReader[] Readers);
-
-    public readonly record struct UnregisterResult(DiscoveredEndpointData? Endpoint, bool ShouldAdvertise)
-    {
-        public static UnregisterResult NotFound => new(null, false);
     }
 }
