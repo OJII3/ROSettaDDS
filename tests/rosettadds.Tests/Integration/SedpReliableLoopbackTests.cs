@@ -476,10 +476,15 @@ public class SedpReliableLoopbackTests
 
     private static SedpEndpointWriter? GetSedpPublicationsWriter(DomainParticipant p)
     {
-        // private field にアクセスするため reflection
-        var field = typeof(DomainParticipant).GetField("_sedpPublicationsWriter",
+        // DomainParticipant は Context に委譲している。
+        // リフレクションで DomainParticipant._context → Context._sedpPublicationsWriter を取得する。
+        var ctxField = typeof(DomainParticipant).GetField("_context",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        return field?.GetValue(p) as SedpEndpointWriter;
+        var ctx = ctxField?.GetValue(p);
+        if (ctx == null) return null;
+        var writerField = ctx.GetType().GetField("_sedpPublicationsWriter",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        return writerField?.GetValue(ctx) as SedpEndpointWriter;
     }
 
     private static StatefulWriter? GetUserWriter<T>(Publisher<T> publisher)
