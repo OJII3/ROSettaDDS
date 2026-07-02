@@ -2,6 +2,7 @@ using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Rcl;
+using ROSettaDDS.Rtps;
 using Guid = ROSettaDDS.Common.Guid;
 using Xunit;
 
@@ -34,5 +35,34 @@ public class ContextTests
     public void null_options_を渡すと_ArgumentNullException()
     {
         Assert.Throws<ArgumentNullException>(() => new Context(null!));
+    }
+
+    [Fact]
+    public void コンストラクタ完了時に_transport_4_種と_DiscoveryDb_が利用可能な状態になる()
+    {
+        using var ctx = new Context(new ContextOptions
+        {
+            LocalhostOnly = true,
+            Logger = NullLogger.Instance,
+        });
+
+        // Start 前は transport を内部で作っているが、外から見える形にしていないので
+        // ResolvedParticipantId / DiscoveryDb が NotImplementedException にならないことだけ確認。
+        Assert.NotEqual(0, ctx.ResolvedParticipantId);  // transport probe が走るので 0 以外
+        Assert.NotNull(ctx.DiscoveryDb);
+    }
+
+    [Fact]
+    public void UserMulticast_と_UserUnicast_と_Destination_が_context_から取得できる()
+    {
+        using var ctx = new Context(new ContextOptions
+        {
+            LocalhostOnly = true,
+            Logger = NullLogger.Instance,
+        });
+
+        Assert.NotNull(ctx.UserMulticastTransport);
+        Assert.NotNull(ctx.UserUnicastTransport);
+        Assert.NotEqual(Locator.Invalid, ctx.UserMulticastDestination);
     }
 }

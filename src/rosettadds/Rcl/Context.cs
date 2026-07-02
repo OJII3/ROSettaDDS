@@ -1,8 +1,12 @@
 using System.Net;
+using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Dds;
+using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Rtps;
+using ROSettaDDS.Rtps.Writer;
 using ROSettaDDS.Transport;
 using Guid = ROSettaDDS.Common.Guid;
 
@@ -15,6 +19,18 @@ namespace ROSettaDDS.Rcl;
 public sealed class Context : IDisposable
 {
     private readonly ContextOptions _options;
+    private readonly ParticipantTransportSet _transports;
+    private readonly ParticipantRtpsReceiver _receiver;
+    private readonly DiscoveryDb _discoveryDb;
+    private readonly LeaseExpiryMonitor _leaseExpiryMonitor;
+    private readonly SpdpBuiltinParticipantReader _spdpReader;
+    private readonly SpdpBuiltinParticipantWriter _spdpWriter;
+    private readonly SedpEndpointWriter _sedpPublicationsWriter;
+    private readonly SedpEndpointReader _sedpPublicationsReader;
+    private readonly SedpEndpointWriter _sedpSubscriptionsWriter;
+    private readonly SedpEndpointReader _sedpSubscriptionsReader;
+    private readonly SedpEndpointAdvertiser _sedpAdvertiser;
+
     private bool _started;
     private bool _disposed;
 
@@ -25,6 +41,81 @@ public sealed class Context : IDisposable
 
         GuidPrefix = GuidPrefix.CreateForCurrentProcess(_options.VendorId);
         Guid = new Guid(GuidPrefix, BuiltinEntityIds.Participant);
+
+        _transports = ParticipantTransportSet.Create(_options);
+        _receiver = new ParticipantRtpsReceiver(GuidPrefix, _options.Logger);
+
+        _discoveryDb = new DiscoveryDb(_options.DiscoveryLimits);
+        _leaseExpiryMonitor = new LeaseExpiryMonitor(_discoveryDb, _options, _options.Logger);
+
+        _spdpReader = new SpdpBuiltinParticipantReader(
+            _transports.MetatrafficMulticast, _discoveryDb, GuidPrefix, _options.Logger, limits: _options.DiscoveryLimits);
+
+        _spdpWriter = new SpdpBuiltinParticipantWriter(
+            transport: _transports.MetatrafficMulticast,
+            multicastDestination: _transports.MetatrafficMulticastDestination,
+            version: _options.ProtocolVersion,
+            vendorId: _options.VendorId,
+            localPrefix: GuidPrefix,
+            participantDataProvider: BuildParticipantData,
+            interval: _options.SpdpInterval,
+            logger: _options.Logger);
+
+        _sedpPublicationsWriter = new SedpEndpointWriter(
+            transport: _transports.MetatrafficMulticast,
+            multicastDestination: _transports.MetatrafficMulticastDestination,
+            version: _options.ProtocolVersion,
+            vendorId: _options.VendorId,
+            localPrefix: GuidPrefix,
+            writerEntityId: BuiltinEntityIds.SedpBuiltinPublicationsWriter,
+            heartbeatPeriod: _options.SedpInterval,
+            logger: _options.Logger);
+
+        _sedpPublicationsReader = new SedpEndpointReader(
+            replyTransport: _transports.MetatrafficUnicast,
+            discoveryDb: _discoveryDb,
+            version: _options.ProtocolVersion,
+            vendorId: _options.VendorId,
+            localPrefix: GuidPrefix,
+            readerEntityId: BuiltinEntityIds.SedpBuiltinPublicationsReader,
+            ackNackFallbackDestination: _transports.MetatrafficMulticastDestination,
+            producedEndpointKind: EndpointKind.Writer,
+            logger: _options.Logger,
+            limits: _options.DiscoveryLimits);
+
+        _sedpSubscriptionsWriter = new SedpEndpointWriter(
+            transport: _transports.MetatrafficMulticast,
+            multicastDestination: _transports.MetatrafficMulticastDestination,
+            version: _options.ProtocolVersion,
+            vendorId: _options.VendorId,
+            localPrefix: GuidPrefix,
+            writerEntityId: BuiltinEntityIds.SedpBuiltinSubscriptionsWriter,
+            heartbeatPeriod: _options.SedpInterval,
+            logger: _options.Logger);
+
+        _sedpSubscriptionsReader = new SedpEndpointReader(
+            replyTransport: _transports.MetatrafficUnicast,
+            discoveryDb: _discoveryDb,
+            version: _options.ProtocolVersion,
+            vendorId: _options.VendorId,
+            localPrefix: GuidPrefix,
+            readerEntityId: BuiltinEntityIds.SedpBuiltinSubscriptionsReader,
+            ackNackFallbackDestination: _transports.MetatrafficMulticastDestination,
+            producedEndpointKind: EndpointKind.Reader,
+            logger: _options.Logger,
+            limits: _options.DiscoveryLimits);
+
+        _sedpAdvertiser = new SedpEndpointAdvertiser(
+            _options.Logger,
+            () => _leaseExpiryMonitor.CancellationToken,
+            () => _disposed);
+
+        // builtin endpoint を単一 receiver のルーティング対象として登録する。
+        _receiver.RegisterReader(BuiltinEntityIds.SpdpBuiltinParticipantReader, _spdpReader);
+        _receiver.RegisterReader(BuiltinEntityIds.SedpBuiltinPublicationsReader, _sedpPublicationsReader.Stateful);
+        _receiver.RegisterReader(BuiltinEntityIds.SedpBuiltinSubscriptionsReader, _sedpSubscriptionsReader.Stateful);
+        _receiver.RegisterWriter(BuiltinEntityIds.SedpBuiltinPublicationsWriter, _sedpPublicationsWriter.Stateful);
+        _receiver.RegisterWriter(BuiltinEntityIds.SedpBuiltinSubscriptionsWriter, _sedpSubscriptionsWriter.Stateful);
     }
 
     public GuidPrefix GuidPrefix { get; }
@@ -32,11 +123,11 @@ public sealed class Context : IDisposable
     public ContextOptions Options => _options;
     public ILogger Logger => _options.Logger;
 
-    public int ResolvedParticipantId => throw new NotImplementedException();
-    public IRtpsTransport UserMulticastTransport => throw new NotImplementedException();
-    public IRtpsTransport UserUnicastTransport => throw new NotImplementedException();
-    public Locator UserMulticastDestination => throw new NotImplementedException();
-    public DiscoveryDb DiscoveryDb => throw new NotImplementedException();
+    public int ResolvedParticipantId => _transports.ResolvedParticipantId;
+    public IRtpsTransport UserMulticastTransport => _transports.UserMulticast;
+    public IRtpsTransport UserUnicastTransport => _transports.UserUnicast;
+    public Locator UserMulticastDestination => _transports.UserMulticastDestination;
+    public DiscoveryDb DiscoveryDb => _discoveryDb;
 
     public void Start() => throw new NotImplementedException();
     public void Stop() => throw new NotImplementedException();
@@ -44,5 +135,23 @@ public sealed class Context : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+    }
+
+    public ParticipantData BuildParticipantData()
+    {
+        var data = new ParticipantData
+        {
+            ProtocolVersion = _options.ProtocolVersion,
+            VendorId = _options.VendorId,
+            Guid = Guid,
+            BuiltinEndpoints = BuiltinEndpointSet.ROSettaDDSDefault,
+            LeaseDuration = _options.LeaseDuration,
+            EntityName = _options.EntityName,
+        };
+        data.MetatrafficMulticastLocators.Add(_transports.MetatrafficMulticastDestination);
+        data.MetatrafficUnicastLocators.AddRange(_transports.MetatrafficUnicastLocators);
+        data.DefaultUnicastLocators.AddRange(_transports.DefaultUnicastLocators);
+        data.DefaultMulticastLocators.Add(_transports.UserMulticastDestination);
+        return data;
     }
 }
