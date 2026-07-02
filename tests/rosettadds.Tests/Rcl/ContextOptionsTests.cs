@@ -41,4 +41,37 @@ public class ContextOptionsTests
         Assert.Same(CdrReadLimits.Default, opts.CdrReadLimits);
         Assert.Same(DiscoveryLimits.Default, opts.DiscoveryLimits);
     }
+
+    [Fact]
+    public void FromLegacy_は全プロパティを転送する()
+    {
+        var legacy = new ROSettaDDS.Dds.DomainParticipantOptions
+        {
+            DomainId = 42,
+            ParticipantId = 7,
+            AutoProbeParticipantId = false,
+            SpdpInterval = TimeSpan.FromSeconds(11),
+            SedpInterval = TimeSpan.FromSeconds(13),
+            LeaseDuration = Duration.FromSeconds(31),
+            UserWriterHeartbeatPeriod = TimeSpan.FromSeconds(2),
+            UserWriterHistoryDepth = 500,
+            LocalhostOnly = true,
+            EntityName = "legacy_name",
+            Logger = NullLogger.Instance,
+        };
+
+        var ctx = ContextOptions.FromLegacy(legacy);
+
+        Assert.Equal(42, ctx.DomainId);
+        Assert.Equal(7, ctx.ParticipantId);
+        Assert.False(ctx.AutoProbeParticipantId);
+        Assert.Equal(TimeSpan.FromSeconds(11), ctx.SpdpInterval);
+        Assert.Equal(TimeSpan.FromSeconds(13), ctx.SedpInterval);
+        Assert.Equal(Duration.FromSeconds(31), ctx.LeaseDuration);
+        Assert.Equal(TimeSpan.FromSeconds(2), ctx.UserWriterHeartbeatPeriod);
+        Assert.Equal(500, ctx.UserWriterHistoryDepth);
+        Assert.True(ctx.LocalhostOnly);
+        Assert.Equal("legacy_name", ctx.EntityName);
+        Assert.Same(NullLogger.Instance, ctx.Logger);
+    }
 }

@@ -38,4 +38,36 @@ public sealed class ContextOptions
     public IRtpsTransport? CustomUnicastTransport { get; init; }
     public IRtpsTransport? CustomUserMulticastTransport { get; init; }
     public IRtpsTransport? CustomUserUnicastTransport { get; init; }
+
+    /// <summary>既存 <see cref="ROSettaDDS.Dds.DomainParticipantOptions"/> からの内部変換。</summary>
+    internal static ContextOptions FromLegacy(ROSettaDDS.Dds.DomainParticipantOptions legacy)
+    {
+        if (legacy is null) throw new ArgumentNullException(nameof(legacy));
+        return new ContextOptions
+        {
+            DomainId = legacy.DomainId,
+            ParticipantId = legacy.ParticipantId,
+            AutoProbeParticipantId = legacy.AutoProbeParticipantId,
+            SpdpInterval = legacy.SpdpInterval,
+            SedpInterval = legacy.SedpInterval,
+            LeaseDuration = legacy.LeaseDuration,
+            UserWriterHeartbeatPeriod = legacy.UserWriterHeartbeatPeriod,
+            UserWriterHistoryDepth = legacy.UserWriterHistoryDepth,
+            MulticastInterface = legacy.MulticastInterface,
+            MulticastGroup = legacy.MulticastGroup,
+            LocalUnicastAddress = legacy.LocalUnicastAddress,
+            LocalhostOnly = legacy.LocalhostOnly,
+            EntityName = legacy.EntityName,
+            VendorId = legacy.VendorId,
+            ProtocolVersion = legacy.ProtocolVersion,
+            Logger = legacy.Logger,
+            DataFragReassembly = legacy.DataFragReassembly,
+            CdrReadLimits = legacy.CdrReadLimits,
+            DiscoveryLimits = legacy.DiscoveryLimits,
+            CustomMulticastTransport = legacy.CustomMulticastTransport,
+            CustomUnicastTransport = legacy.CustomUnicastTransport,
+            CustomUserMulticastTransport = legacy.CustomUserMulticastTransport,
+            CustomUserUnicastTransport = legacy.CustomUserUnicastTransport,
+        };
+    }
 }
