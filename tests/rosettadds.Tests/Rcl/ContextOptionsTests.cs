@@ -2,7 +2,9 @@ using System.Net;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Rcl;
-using ROSettaDDS.Rtps;
+using ROSettaDDS.Cdr;
+using ROSettaDDS.Discovery;
+using ROSettaDDS.Rtps.Reader;
 using ROSettaDDS.Transport;
 using Xunit;
 
@@ -11,7 +13,7 @@ namespace ROSettaDDS.Tests.Rcl;
 public class ContextOptionsTests
 {
     [Fact]
-    public void 既定値は_DomainParticipantOptions_と一致する()
+    public void すべてのプロパティに既定値が設定される()
     {
         var opts = new ContextOptions();
 
@@ -35,5 +37,8 @@ public class ContextOptionsTests
         Assert.Null(opts.CustomUnicastTransport);
         Assert.Null(opts.CustomUserMulticastTransport);
         Assert.Null(opts.CustomUserUnicastTransport);
+        Assert.Same(DataFragReassemblyOptions.Default, opts.DataFragReassembly);
+        Assert.Same(CdrReadLimits.Default, opts.CdrReadLimits);
+        Assert.Same(DiscoveryLimits.Default, opts.DiscoveryLimits);
     }
 }
