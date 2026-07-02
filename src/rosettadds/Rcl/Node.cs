@@ -12,6 +12,10 @@ using Guid = ROSettaDDS.Common.Guid;
 
 namespace ROSettaDDS.Rcl;
 
+/// <summary>
+/// ROS 2 の rcl_node_t (rclcpp::Node) 相当。<see cref="Context"/> を参照し、
+/// Publisher / Subscription / ServiceClient のみを生らす薄いラッパ。
+/// </summary>
 public sealed class Node : IDisposable
 {
     private readonly NodeOptions _options;
