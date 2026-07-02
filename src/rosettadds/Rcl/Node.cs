@@ -14,15 +14,15 @@ namespace ROSettaDDS.Rcl;
 
 /// <summary>
 /// ROS 2 の rcl_node_t (rclcpp::Node) 相当。<see cref="Context"/> を参照し、
-/// Publisher / Subscription / ServiceClient のみを生らす薄いラッパ。
+/// Publisher / Subscription / ServiceClient のみを生やす薄いラッパ。
 /// </summary>
 public sealed class Node : IDisposable
 {
     private readonly NodeOptions _options;
-    private readonly UserEntityIdAllocator _userEntityIds = new();
     private readonly ParticipantEndpointFactory _endpointFactory;
     private readonly UserEndpointManager _userEndpoints;
     private readonly SedpEndpointAdvertiser _sedpAdvertiser;
+    private readonly DiscoveryDb _discovery;
     private bool _disposed;
 
     public Node(Context context, string name, NodeOptions? options = null)
@@ -38,24 +38,24 @@ public sealed class Node : IDisposable
             context.Transports,
             context.GuidPrefix,
             context.Guid,
-            _userEntityIds);
+            context.UserEntityIds);
 
         _userEndpoints = new UserEndpointManager(
             context.DiscoveryDb,
             new ParticipantRtpsReceiverAdapter(context.Receiver),
-            context.Logger);
+            Logger);
 
         _sedpAdvertiser = new SedpEndpointAdvertiser(
-            context.Logger,
+            Logger,
             () => context.LeaseExpiryCancellationToken,
             () => _disposed);
 
-        var discovery = context.DiscoveryDb;
-        discovery.ReaderDiscovered += OnRemoteReaderDiscovered;
-        discovery.WriterDiscovered += OnRemoteWriterDiscovered;
-        discovery.EndpointUpdated += OnRemoteEndpointUpdated;
-        discovery.ReaderLost += OnRemoteReaderLost;
-        discovery.WriterLost += OnRemoteWriterLost;
+        _discovery = context.DiscoveryDb;
+        _discovery.ReaderDiscovered += OnRemoteReaderDiscovered;
+        _discovery.WriterDiscovered += OnRemoteWriterDiscovered;
+        _discovery.EndpointUpdated += OnRemoteEndpointUpdated;
+        _discovery.ReaderLost += OnRemoteReaderLost;
+        _discovery.WriterLost += OnRemoteWriterLost;
 
         context.RegisterNode(this);
     }
@@ -63,6 +63,7 @@ public sealed class Node : IDisposable
     public string Name { get; }
     public Context Context { get; }
     public NodeOptions Options => _options;
+    private ILogger Logger => _options.Logger ?? Context.Logger;
 
     public Publisher<T> CreatePublisher<T>(string topicName, ICdrSerializer<T> serializer, string? typeName = null)
         => CreatePublisher(topicName, serializer, ReliabilityQos.Reliable, DurabilityQos.Volatile, typeName);
@@ -110,7 +111,7 @@ public sealed class Node : IDisposable
             handler,
             UnregisterLocalReader,
             handlerContext,
-            Context.Logger,
+            Logger,
             cdrReadLimits: Context.Options.CdrReadLimits);
 
         _userEndpoints.RegisterReader(endpointData, reader);
@@ -155,7 +156,7 @@ public sealed class Node : IDisposable
             descriptor.ResponseDdsTypeName);
 
         return new ServiceClient<TRequest, TResponse>(
-            requestPublisher, replyReader, descriptor, Context.Logger, Context.Options.CdrReadLimits);
+            requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits);
     }
 
     private Publisher<T> CreateWriterInternal<T>(
@@ -197,6 +198,16 @@ public sealed class Node : IDisposable
         if (_disposed) return;
         _disposed = true;
         UnregisterAllLocalEndpoints();
+
+        if (_discovery is not null)
+        {
+            _discovery.ReaderDiscovered -= OnRemoteReaderDiscovered;
+            _discovery.WriterDiscovered -= OnRemoteWriterDiscovered;
+            _discovery.EndpointUpdated -= OnRemoteEndpointUpdated;
+            _discovery.ReaderLost -= OnRemoteReaderLost;
+            _discovery.WriterLost -= OnRemoteWriterLost;
+        }
+
         Context.UnregisterNode(this);
     }
 

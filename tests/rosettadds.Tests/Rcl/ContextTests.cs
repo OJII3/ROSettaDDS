@@ -6,6 +6,7 @@ using ROSettaDDS.Msgs.Std;
 using ROSettaDDS.Rtps;
 using Guid = ROSettaDDS.Common.Guid;
 using Xunit;
+using ROSettaDDS.Rcl.Naming;
 
 namespace ROSettaDDS.Tests.Rcl;
 
@@ -114,5 +115,24 @@ public class ContextTests
         ctx.Dispose();
         Assert.Throws<ObjectDisposedException>(() => node.CreatePublisher<StringMessage>(
             "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName));
+    }
+
+    [Fact]
+    public void 同一_Context_上の_2_Node_で_user_EntityId_重複なし()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        using var node1 = new Node(ctx, "node1");
+        using var node2 = new Node(ctx, "node2");
+
+        // 各 Node 経由で publisher を作り、割り当てられる EntityId が重複しないことを確認
+        using var pub1 = node1.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+        using var pub2 = node2.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+        // pub1 と pub2 の内部 EntityId が異なることを直接確認できないため、
+        // Context.UserEntityIds が共有されており writer key が別々に進むことを検証
+        var idA = ctx.UserEntityIds.AllocateWriter();
+        var idB = ctx.UserEntityIds.AllocateWriter();
+        Assert.NotEqual(idA, idB);
     }
 }

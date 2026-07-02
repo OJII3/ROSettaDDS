@@ -7,6 +7,7 @@ using ROSettaDDS.Dds;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Rtps;
+using ROSettaDDS.Rcl.Naming;
 using ROSettaDDS.Rtps.Writer;
 using ROSettaDDS.Transport;
 using Guid = ROSettaDDS.Common.Guid;
@@ -30,8 +31,7 @@ public sealed class Context : IDisposable
     private readonly SedpEndpointReader _sedpPublicationsReader;
     private readonly SedpEndpointWriter _sedpSubscriptionsWriter;
     private readonly SedpEndpointReader _sedpSubscriptionsReader;
-    private readonly SedpEndpointAdvertiser _sedpAdvertiser;
-
+    private readonly UserEntityIdAllocator _userEntityIds = new();
     private readonly List<Node> _nodes = new();
     private readonly object _nodesLock = new();
 
@@ -109,11 +109,6 @@ public sealed class Context : IDisposable
             logger: _options.Logger,
             limits: _options.DiscoveryLimits);
 
-        _sedpAdvertiser = new SedpEndpointAdvertiser(
-            _options.Logger,
-            () => _leaseExpiryMonitor.CancellationToken,
-            () => _disposed);
-
         // builtin endpoint を単一 receiver のルーティング対象として登録する。
         _receiver.RegisterReader(BuiltinEntityIds.SpdpBuiltinParticipantReader, _spdpReader);
         _receiver.RegisterReader(BuiltinEntityIds.SedpBuiltinPublicationsReader, _sedpPublicationsReader.Stateful);
@@ -143,6 +138,21 @@ public sealed class Context : IDisposable
     internal ParticipantTransportSet Transports => _transports;
     internal ParticipantRtpsReceiver Receiver => _receiver;
     internal CancellationToken LeaseExpiryCancellationToken => _leaseExpiryMonitor.CancellationToken;
+    internal UserEntityIdAllocator UserEntityIds => _userEntityIds;
+
+    // ----- SEDP 広告の Node 向け delegate -----
+
+    internal ValueTask AddPublicationAsync(DiscoveredEndpointData endpointData, CancellationToken token)
+        => _sedpPublicationsWriter.AddEndpointAsync(endpointData, token);
+
+    internal ValueTask AddSubscriptionAsync(DiscoveredEndpointData endpointData, CancellationToken token)
+        => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token);
+
+    internal ValueTask UnregisterPublicationAsync(DiscoveredEndpointData endpoint)
+        => _sedpPublicationsWriter.UnregisterEndpointAsync(endpoint);
+
+    internal ValueTask UnregisterSubscriptionAsync(DiscoveredEndpointData endpoint)
+        => _sedpSubscriptionsWriter.UnregisterEndpointAsync(endpoint);
 
     public void Start()
     {
@@ -257,7 +267,7 @@ public sealed class Context : IDisposable
         _options.Logger.Debug($"Context: unmatched SEDP endpoints for lost participant {participant.Guid}");
     }
 
-    public ParticipantData BuildParticipantData()
+    internal ParticipantData BuildParticipantData()
     {
         var data = new ParticipantData
         {
