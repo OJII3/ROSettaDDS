@@ -9,7 +9,8 @@ namespace ROSettaDDS.Transport;
 /// ローカル NIC の IPv4 アドレスを列挙するユーティリティ。
 ///
 /// Fast DDS / Cyclone DDS の rmw 層が全 NIC を自動列挙して unicast locator を広告するのと同様に、
-/// <see cref="Dds.DomainParticipantOptions.LocalUnicastAddress"/> 未指定時に
+/// <see cref="Dds.DomainParticipantOptions.LocalUnicastAddress"/> /
+/// <see cref="Rcl.ContextOptions.LocalUnicastAddress"/> 未指定時に
 /// 全インターフェースの locator を SPDP/SEDP へ広告するために使う。
 /// </summary>
 public static class LocalNetwork

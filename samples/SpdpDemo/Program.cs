@@ -9,7 +9,7 @@
 //
 // Wireshark で 239.255.0.1 / udp.port == 7400 をキャプチャすると送受信パケットを確認可能。
 using ROSettaDDS.Common.Logging;
-using ROSettaDDS.Dds;
+using ROSettaDDS.Rcl;
 
 int domainId = args.Length > 0 ? int.Parse(args[0]) : 0;
 int participantId = args.Length > 1 ? int.Parse(args[1]) : 1;
@@ -17,7 +17,7 @@ string entityName = args.Length > 2 ? args[2] : $"rosettadds_demo_{Environment.P
 
 var logger = new ConsoleLogger("SpdpDemo", LogLevel.Info);
 
-var options = new DomainParticipantOptions
+var options = new ContextOptions
 {
     DomainId = domainId,
     ParticipantId = participantId,
@@ -28,22 +28,22 @@ var options = new DomainParticipantOptions
     SpdpInterval = TimeSpan.FromSeconds(3),
 };
 
-using var participant = new DomainParticipant(options);
+using var context = new Context(options);
 
-participant.DiscoveryDb.ParticipantDiscovered += rp =>
+context.DiscoveryDb.ParticipantDiscovered += rp =>
     logger.Info($"++ DISCOVERED {rp.Data.EntityName ?? "<unnamed>"} guid={rp.Guid} unicast={string.Join(',', rp.Data.MetatrafficUnicastLocators)}");
 
-participant.DiscoveryDb.ParticipantUpdated += rp =>
+context.DiscoveryDb.ParticipantUpdated += rp =>
     logger.Trace($"~~ UPDATED    {rp.Data.EntityName ?? "<unnamed>"} guid={rp.Guid}");
 
-participant.DiscoveryDb.ParticipantLost += rp =>
+context.DiscoveryDb.ParticipantLost += rp =>
     logger.Info($"-- LOST       {rp.Data.EntityName ?? "<unnamed>"} guid={rp.Guid}");
 
 logger.Info($"Starting SPDP: domain={domainId} participant={participantId} name={entityName}");
-logger.Info($"Local Guid:    {participant.Guid}");
+logger.Info($"Local Guid:    {context.Guid}");
 logger.Info($"Multicast:     {options.MulticastGroup}:{ROSettaDDS.Transport.RtpsPorts.DiscoveryMulticast(domainId)}");
 
-participant.Start();
+context.Start();
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
@@ -60,4 +60,4 @@ try
 catch (OperationCanceledException) { }
 
 logger.Info("Stopping...");
-participant.Stop();
+context.Stop();
