@@ -96,7 +96,7 @@ GUID 空間も eProsima と分離される。
 Subscription は `ContextOptions.CdrReadLimits` を使って user data payload をデシリアライズする。
 既定値は `DataFragReassemblyOptions` の既定 sample size と同じ 16 MiB に合わせ、`uint8[]` / `ByteMultiArray`
 のような 1 byte 要素 sequence が既定の再構成上限まで読めるようにする。より小さい受信上限が必要な用途では
-`ContextOptions.CdrReadLimits` を明示して participant 単位で制限する。
+`ContextOptions.CdrReadLimits` を明示して Context 単位で制限する。
 
 ## 現時点で対応しないもの
 
