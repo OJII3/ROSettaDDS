@@ -66,7 +66,7 @@ public sealed class DomainParticipant : IDisposable
         _receiver = new ParticipantRtpsReceiver(GuidPrefix, _options.Logger);
 
         _discoveryDb = new DiscoveryDb(_options.DiscoveryLimits);
-        _leaseExpiryMonitor = new LeaseExpiryMonitor(_discoveryDb, _options, _options.Logger);
+        _leaseExpiryMonitor = new LeaseExpiryMonitor(_discoveryDb, Rcl.ContextOptions.FromLegacy(_options), _options.Logger);
         _userEndpoints = new UserEndpointManager(_discoveryDb, new ParticipantRtpsReceiverAdapter(_receiver), _options.Logger);
         _endpointFactory = new ParticipantEndpointFactory(
             Rcl.ContextOptions.FromLegacy(_options),

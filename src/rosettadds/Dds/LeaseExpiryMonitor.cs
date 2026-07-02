@@ -1,5 +1,6 @@
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Discovery;
+using ROSettaDDS.Rcl;
 
 namespace ROSettaDDS.Dds;
 
@@ -15,7 +16,7 @@ internal sealed class LeaseExpiryMonitor : IDisposable
     private Task? _loop;
     private bool _disposed;
 
-    public LeaseExpiryMonitor(DiscoveryDb discoveryDb, DomainParticipantOptions options, ILogger logger)
+    public LeaseExpiryMonitor(DiscoveryDb discoveryDb, ContextOptions options, ILogger logger)
     {
         _discoveryDb = discoveryDb ?? throw new ArgumentNullException(nameof(discoveryDb));
         if (options is null) throw new ArgumentNullException(nameof(options));
@@ -25,7 +26,7 @@ internal sealed class LeaseExpiryMonitor : IDisposable
 
     public CancellationToken CancellationToken => _cts?.Token ?? CancellationToken.None;
 
-    public static TimeSpan ComputeCheckPeriod(DomainParticipantOptions options)
+    public static TimeSpan ComputeCheckPeriod(ContextOptions options)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
 
