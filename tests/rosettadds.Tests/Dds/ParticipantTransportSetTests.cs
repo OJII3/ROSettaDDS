@@ -1,6 +1,7 @@
 using System.Net;
 using ROSettaDDS.Common;
 using ROSettaDDS.Dds;
+using ROSettaDDS.Rcl;
 using ROSettaDDS.Transport;
 
 namespace ROSettaDDS.Tests.Dds;
@@ -16,7 +17,7 @@ public class ParticipantTransportSetTests
         var userMulticast = new RecordingTransport("user-mc", 7401, calls);
         var userUnicast = new RecordingTransport("user-uc", 7411, calls);
 
-        using (var transports = ParticipantTransportSet.Create(new DomainParticipantOptions
+        using (var transports = ParticipantTransportSet.Create(new ContextOptions
         {
             CustomMulticastTransport = metatrafficMulticast,
             CustomUnicastTransport = metatrafficUnicast,
@@ -58,7 +59,7 @@ public class ParticipantTransportSetTests
     [Fact]
     public void 既定では全NICを列挙してloopbackを含むunicast_locatorを広告する()
     {
-        using var transports = ParticipantTransportSet.Create(new DomainParticipantOptions
+        using var transports = ParticipantTransportSet.Create(new ContextOptions
         {
             DomainId = 71,
         });
@@ -80,7 +81,7 @@ public class ParticipantTransportSetTests
     public void LocalUnicastAddress指定時はその単一アドレスのみ広告する()
     {
         var addr = IPAddress.Parse("127.0.0.5");
-        using var transports = ParticipantTransportSet.Create(new DomainParticipantOptions
+        using var transports = ParticipantTransportSet.Create(new ContextOptions
         {
             DomainId = 72,
             LocalUnicastAddress = addr,
@@ -95,7 +96,7 @@ public class ParticipantTransportSetTests
     [Fact]
     public void LocalhostOnly指定時はloopbackのみ広告する()
     {
-        using var transports = ParticipantTransportSet.Create(new DomainParticipantOptions
+        using var transports = ParticipantTransportSet.Create(new ContextOptions
         {
             DomainId = 73,
             LocalhostOnly = true,
@@ -109,7 +110,7 @@ public class ParticipantTransportSetTests
     public void Custom_unicast_transportのlocatorをそのまま広告する()
     {
         var calls = new List<string>();
-        using var transports = ParticipantTransportSet.Create(new DomainParticipantOptions
+        using var transports = ParticipantTransportSet.Create(new ContextOptions
         {
             CustomMulticastTransport = new RecordingTransport("meta-mc", 7400, calls),
             CustomUnicastTransport = new RecordingTransport("meta-uc", 7410, calls),
@@ -123,7 +124,7 @@ public class ParticipantTransportSetTests
             .Which.Port.Should().Be(7411);
     }
 
-    private static DomainParticipantOptions CreateOptions(List<string> calls)
+    private static ContextOptions CreateOptions(List<string> calls)
         => new()
         {
             CustomMulticastTransport = new RecordingTransport("meta-mc", 7400, calls),
