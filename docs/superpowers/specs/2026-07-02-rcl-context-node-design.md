@@ -97,8 +97,8 @@ public sealed class Context : IDisposable
 
 - 既存の `DomainParticipant` から Pub/Sub 関連 (`CreatePublisher` / `CreateSubscription` / `CreateServiceClient`) と `UserEntityIdAllocator` 周りを除いた部分を抽出する。
 - 実装の主体は既存 `DomainParticipant` コンストラクタのロジック (transport 4 種生成 / DiscoveryDb / SPDP / SEDP / LeaseExpiryMonitor / ParticipantRtpsReceiver / `ParticipantEndpointFactory` のうち Pub/Sub 非依存部分)。
-- `Start()` は transport 開始 + SPDP writer / SEDP writers / LeaseExpiryMonitor 開始 + 登録済み全 Node の `Start` まで。
-- `Stop()` はその逆順 (全 Node → SPDP / SEDP → lease → transport)。
+- `Start()` は transport 開始 + SPDP writer / SEDP writers / LeaseExpiryMonitor 開始まで。user endpoint writer は `Node.CreatePublisher` 内で `Publisher.Start()` により個別に Start されるため、`Context.Start` 側で取りまとめて呼ぶ必要はない。
+- `Stop()` は lease → SPDP / SEDP → transport の順。
 - `Dispose()` は `Stop()` 後に transport 解放・各 reader/writer 解放。
 - `UserEndpointManager` / `ParticipantEndpointFactory` 相当の user endpoint 集合は **Node 側** に持つ (詳細は [Node ↔ Context 境界](#node--context-境界) で後述)。Context は Node のリストだけを保持する。
 
