@@ -48,7 +48,8 @@ public class ContextTests
 
         // Start 前は transport を内部で作っているが、外から見える形にしていないので
         // ResolvedParticipantId / DiscoveryDb が NotImplementedException にならないことだけ確認。
-        Assert.NotEqual(0, ctx.ResolvedParticipantId);  // transport probe が走るので 0 以外
+        // auto-probe が ID 0 で成功することがあるため、値自体は 0 以上であれば良い。
+        Assert.True(ctx.ResolvedParticipantId >= 0);
         Assert.NotNull(ctx.DiscoveryDb);
     }
 
@@ -64,5 +65,43 @@ public class ContextTests
         Assert.NotNull(ctx.UserMulticastTransport);
         Assert.NotNull(ctx.UserUnicastTransport);
         Assert.NotEqual(Locator.Invalid, ctx.UserMulticastDestination);
+    }
+
+    [Fact]
+    public void Start_Stop_は_冪等()
+    {
+        using var ctx = new Context(new ContextOptions
+        {
+            LocalhostOnly = true,
+            Logger = NullLogger.Instance,
+        });
+        ctx.Start();
+        ctx.Start();  // 二度呼んでも例外なし
+        ctx.Stop();
+        ctx.Stop();   // 二度呼んでも例外なし
+    }
+
+    [Fact]
+    public void Dispose_後は_Start_が_ObjectDisposedException()
+    {
+        var ctx = new Context(new ContextOptions
+        {
+            LocalhostOnly = true,
+            Logger = NullLogger.Instance,
+        });
+        ctx.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => ctx.Start());
+    }
+
+    [Fact]
+    public void Dispose_後は_Stop_が_ObjectDisposedException()
+    {
+        var ctx = new Context(new ContextOptions
+        {
+            LocalhostOnly = true,
+            Logger = NullLogger.Instance,
+        });
+        ctx.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => ctx.Stop());
     }
 }

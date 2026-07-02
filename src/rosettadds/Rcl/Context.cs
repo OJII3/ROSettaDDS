@@ -129,12 +129,58 @@ public sealed class Context : IDisposable
     public Locator UserMulticastDestination => _transports.UserMulticastDestination;
     public DiscoveryDb DiscoveryDb => _discoveryDb;
 
-    public void Start() => throw new NotImplementedException();
-    public void Stop() => throw new NotImplementedException();
+    public void Start()
+    {
+        ThrowIfDisposed();
+        if (_started) return;
+        _transports.Start();
+
+        // participant 単位の単一 receiver が全 transport の受信を 1 経路に集約する。
+        _receiver.Subscribe(_transports.MetatrafficMulticast);
+        _receiver.Subscribe(_transports.MetatrafficUnicast);
+        _receiver.Subscribe(_transports.UserMulticast);
+        _receiver.Subscribe(_transports.UserUnicast);
+
+        _spdpWriter.Start();
+        _sedpPublicationsWriter.Start();
+        _sedpSubscriptionsWriter.Start();
+        _leaseExpiryMonitor.Start();
+        _started = true;
+    }
+
+    public void Stop()
+    {
+        ThrowIfDisposed();
+        if (!_started) return;
+        _leaseExpiryMonitor.Stop();
+        _sedpPublicationsWriter.Stop();
+        _sedpSubscriptionsWriter.Stop();
+        _receiver.UnsubscribeAll();
+        _spdpWriter.Stop();
+        _transports.Stop();
+        _started = false;
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
+        // Stop() は _disposed をチェックするので、先に Stop() してから _disposed = true にする。
+        Stop();
         _disposed = true;
+        _sedpPublicationsWriter.Dispose();
+        _sedpSubscriptionsWriter.Dispose();
+        _sedpPublicationsReader.Dispose();
+        _sedpSubscriptionsReader.Dispose();
+        _spdpWriter.Dispose();
+        _spdpReader.Dispose();
+        _leaseExpiryMonitor.Dispose();
+        _receiver.Dispose();
+        _transports.Dispose();
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed) throw new ObjectDisposedException(GetType().Name);
     }
 
     public ParticipantData BuildParticipantData()
