@@ -62,7 +62,7 @@ public sealed class DomainParticipant : IDisposable
         GuidPrefix = GuidPrefix.CreateForCurrentProcess(_options.VendorId);
         Guid = new Guid(GuidPrefix, BuiltinEntityIds.Participant);
 
-        _transports = ParticipantTransportSet.Create(_options);
+        _transports = ParticipantTransportSet.Create(Rcl.ContextOptions.FromLegacy(_options));
         _receiver = new ParticipantRtpsReceiver(GuidPrefix, _options.Logger);
 
         _discoveryDb = new DiscoveryDb(_options.DiscoveryLimits);

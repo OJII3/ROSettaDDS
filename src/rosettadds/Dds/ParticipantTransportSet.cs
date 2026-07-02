@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Rcl;
 using ROSettaDDS.Transport;
 
 namespace ROSettaDDS.Dds;
@@ -56,7 +57,7 @@ internal sealed class ParticipantTransportSet : IDisposable
     /// <summary>実際に使用された Participant ID。auto-probe により入力値と異なる場合がある。</summary>
     public int ResolvedParticipantId { get; }
 
-    public static ParticipantTransportSet Create(DomainParticipantOptions options)
+    public static ParticipantTransportSet Create(Rcl.ContextOptions options)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
 
@@ -164,7 +165,7 @@ internal sealed class ParticipantTransportSet : IDisposable
     private static (OwnedTransport metatraffic, OwnedTransport user, int participantId)
         ProbeUnicastTransports(
             List<OwnedTransport> created,
-            DomainParticipantOptions options,
+            Rcl.ContextOptions options,
             IPAddress localAddress)
     {
         for (int id = options.ParticipantId; id <= RtpsConstants.MaxParticipantId; id++)
