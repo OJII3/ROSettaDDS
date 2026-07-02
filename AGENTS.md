@@ -9,14 +9,3 @@
 
 - Unity で取り込む `src/rosettadds` 配下のファイル・フォルダには `.meta` を必ずコミットすること。
 - `.meta` の不足や orphan は `.github/scripts/check_unity_meta.sh` で確認すること。
-
-## msg 型の命名方針 (案 B)
-
-`ROSettaDDS.Msgs.*` 配下の msg 型は以下のルールに従う:
-
-- **BCL 型と衝突する型のみ `Message` サフィックスを付ける**
-  例: `StringMessage`, `BoolMessage`, `Int32Message`, `Float32Message`, `ByteMessage`, `CharMessage`, `EmptyMessage` など
-- **衝突しない型はサフィックスなし** (ROS 2 名に近づける)
-  例: `Header`, `ColorRgba`, `Time`, `Duration`, `MultiArrayLayout`, `MultiArrayDimension`, `ByteMultiArray`, `Float32MultiArray` など
-- 今後追加する `geometry_msgs/Vector3, Point, Quaternion, Pose, Twist, Transform` などはサフィックスなし
-- Serializer クラスは型名に `Serializer` を付ける (`HeaderSerializer`, `ColorRgbaSerializer`, `StringMessageSerializer`)
