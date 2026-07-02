@@ -1,4 +1,5 @@
 using System.Net;
+using System.Threading;
 using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
@@ -31,7 +32,7 @@ public sealed class Context : IDisposable
     private readonly SedpEndpointReader _sedpSubscriptionsReader;
     private readonly SedpEndpointAdvertiser _sedpAdvertiser;
 
-    private readonly List<object> _nodes = new();
+    private readonly List<Node> _nodes = new();
     private readonly object _nodesLock = new();
 
     private bool _started;
@@ -137,6 +138,12 @@ public sealed class Context : IDisposable
     public Locator UserMulticastDestination => _transports.UserMulticastDestination;
     public DiscoveryDb DiscoveryDb => _discoveryDb;
 
+    // ----- Node からの借用口 (internal) -----
+
+    internal ParticipantTransportSet Transports => _transports;
+    internal ParticipantRtpsReceiver Receiver => _receiver;
+    internal CancellationToken LeaseExpiryCancellationToken => _leaseExpiryMonitor.CancellationToken;
+
     public void Start()
     {
         ThrowIfDisposed();
@@ -187,10 +194,26 @@ public sealed class Context : IDisposable
         _transports.Dispose();
     }
 
+    internal void RegisterNode(Node node)
+    {
+        ThrowIfDisposed();
+        lock (_nodesLock) _nodes.Add(node);
+    }
+
+    internal void UnregisterNode(Node node)
+    {
+        lock (_nodesLock) _nodes.Remove(node);
+    }
+
     private void DisposeTrackedNodes()
     {
-        // TODO: Task 4.1 で Node 型を import して _nodes.ToArray() を iterate する。
-        // Task 3.5 時点では Node 型がまだ存在しないのでスケルトン。
+        Node[] snapshot;
+        lock (_nodesLock) snapshot = _nodes.ToArray();
+        foreach (var node in snapshot)
+        {
+            try { node.Dispose(); }
+            catch (Exception ex) { _options.Logger.Warn($"Context.Dispose failed to dispose Node: {ex.Message}", ex); }
+        }
     }
 
     private void ThrowIfDisposed()
