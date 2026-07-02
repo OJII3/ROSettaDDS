@@ -116,6 +116,11 @@ public sealed class Context : IDisposable
         _receiver.RegisterReader(BuiltinEntityIds.SedpBuiltinSubscriptionsReader, _sedpSubscriptionsReader.Stateful);
         _receiver.RegisterWriter(BuiltinEntityIds.SedpBuiltinPublicationsWriter, _sedpPublicationsWriter.Stateful);
         _receiver.RegisterWriter(BuiltinEntityIds.SedpBuiltinSubscriptionsWriter, _sedpSubscriptionsWriter.Stateful);
+
+        // SPDP で remote participant を発見/更新したら SEDP endpoint を auto-match
+        _discoveryDb.ParticipantDiscovered += OnRemoteParticipantDiscovered;
+        _discoveryDb.ParticipantUpdated += OnRemoteParticipantDiscovered;
+        _discoveryDb.ParticipantLost += OnRemoteParticipantLost;
     }
 
     public GuidPrefix GuidPrefix { get; }
@@ -181,6 +186,42 @@ public sealed class Context : IDisposable
     private void ThrowIfDisposed()
     {
         if (_disposed) throw new ObjectDisposedException(GetType().Name);
+    }
+
+    private void OnRemoteParticipantDiscovered(RemoteParticipant participant)
+    {
+        // remote SEDP endpoint の Guid を計算 (固定 EntityId)
+        var prefix = participant.GuidPrefix;
+        var remoteSedpPubReader = new Guid(prefix, BuiltinEntityIds.SedpBuiltinPublicationsReader);
+        var remoteSedpPubWriter = new Guid(prefix, BuiltinEntityIds.SedpBuiltinPublicationsWriter);
+        var remoteSedpSubReader = new Guid(prefix, BuiltinEntityIds.SedpBuiltinSubscriptionsReader);
+        var remoteSedpSubWriter = new Guid(prefix, BuiltinEntityIds.SedpBuiltinSubscriptionsWriter);
+
+        // remote の metatraffic unicast (ACKNACK 返送先 / DATA 送信先)
+        Locator? remoteUnicast = participant.Data.MetatrafficUnicastLocators.Count > 0
+            ? participant.Data.MetatrafficUnicastLocators[0]
+            : null;
+
+        // 自 writer ↔ remote reader
+        _sedpPublicationsWriter.MatchRemoteReader(remoteSedpPubReader, remoteUnicast);
+        _sedpSubscriptionsWriter.MatchRemoteReader(remoteSedpSubReader, remoteUnicast);
+
+        // 自 reader ↔ remote writer (ACKNACK 返送先として remoteUnicast)
+        _sedpPublicationsReader.MatchRemoteWriter(remoteSedpPubWriter, remoteUnicast);
+        _sedpSubscriptionsReader.MatchRemoteWriter(remoteSedpSubWriter, remoteUnicast);
+
+        _options.Logger.Debug($"Context: auto-matched SEDP endpoints for {participant.Guid}");
+    }
+
+    private void OnRemoteParticipantLost(RemoteParticipant participant)
+    {
+        var prefix = participant.GuidPrefix;
+        _sedpPublicationsWriter.UnmatchRemoteReader(new Guid(prefix, BuiltinEntityIds.SedpBuiltinPublicationsReader));
+        _sedpSubscriptionsWriter.UnmatchRemoteReader(new Guid(prefix, BuiltinEntityIds.SedpBuiltinSubscriptionsReader));
+        _sedpPublicationsReader.UnmatchRemoteWriter(new Guid(prefix, BuiltinEntityIds.SedpBuiltinPublicationsWriter));
+        _sedpSubscriptionsReader.UnmatchRemoteWriter(new Guid(prefix, BuiltinEntityIds.SedpBuiltinSubscriptionsWriter));
+
+        _options.Logger.Debug($"Context: unmatched SEDP endpoints for lost participant {participant.Guid}");
     }
 
     public ParticipantData BuildParticipantData()
