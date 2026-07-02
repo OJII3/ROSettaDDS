@@ -39,6 +39,7 @@ follows.
 - Bundles `std_msgs` / `builtin_interfaces` / `geometry_msgs`; generates CDR-compatible C# types from `.msg`
 - Selectable Reliable / Best Effort QoS
 - Zero native dependency; IL2CPP / AOT-compatible compile-time msg generation
+- `Rcl.Context` / `Rcl.Node` 2-layer API aligned with the ROS 2 `rcl_context_t` / `rcl_node_t` model
 - Verified on Unity 6000.3 (.NET Standard 2.1); supports cross-platform builds
 
 > [!NOTE]
@@ -54,32 +55,44 @@ dotnet new console -n MyROSettaDDSApp
 dotnet add MyROSettaDDSApp/MyROSettaDDSApp.csproj reference src/rosettadds/rosettadds.csproj
 ```
 
-Write `Program.cs` like this to publish / subscribe `std_msgs/msg/String`.
+Write `Program.cs` like this to publish / subscribe `std_msgs/msg/String`. The public API is
+split into two layers, mirroring the ROS 2 `rcl_context_t` / `rcl_node_t` split:
+
+- `Rcl.Context` owns the domain-wide DDS resources (UDP transport × 4, discovery, SPDP/SEDP).
+- `Rcl.Node` is the user-facing object that creates `Publisher<T>` / `Subscription<T>` / `ServiceClient<TReq,TRes>`.
 
 ```csharp
-using ROSettaDDS.Dds;
+using ROSettaDDS.Rcl;
 using ROSettaDDS.Msgs.Std;
 
-var participant = new DomainParticipant(new DomainParticipantOptions
+using var context = new Context(new ContextOptions
 {
     DomainId = 0,
     EntityName = "rosettadds_demo",
     // By default all local NICs are enumerated and advertised, so LAN nodes can reach you.
     // Set LocalhostOnly = true to restrict to loopback (equivalent to ROS_LOCALHOST_ONLY=1).
 });
-participant.Start();
+context.Start();
+
+using var node = new Node(context, "rosettadds_demo");
 
 // subscribe
-participant.CreateSubscription<StringMessage>(
+node.CreateSubscription<StringMessage>(
     "chatter", StringMessageSerializer.Instance,
     (msg, source) => Console.WriteLine($"I heard: '{msg.Data}' from {source}"),
     StringMessage.DdsTypeName);
 
 // publish
-var pub = participant.CreatePublisher<StringMessage>(
+var pub = node.CreatePublisher<StringMessage>(
     "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
 await pub.PublishAsync(new StringMessage("Hello rosettadds"));
 ```
+
+> [!NOTE]
+> The legacy `ROSettaDDS.Dds.DomainParticipant` type is still present for backward compatibility
+> and now delegates to `Rcl.Context` + `Rcl.Node` internally. New code should use the
+> `ROSettaDDS.Rcl` namespace directly. See [docs/compatibility.md](docs/compatibility.md#legacy-domainparticipant)
+> for the migration note.
 
 A complete sample that splits the talker / listener into separate processes is in
 [`samples/TalkerListener`](samples/TalkerListener). Start them in two shells.
@@ -149,13 +162,14 @@ dotnet run --project tools/rosettadds-genmsg -- --input msgs --output src/rosett
 
 ## Specifying QoS
 
-`CreatePublisher` creates a Reliable publisher by default. To send to a Best Effort subscriber
-(equivalent to ROS 2 sensor-data), specify the QoS explicitly when creating the publisher.
+`Node.CreatePublisher` creates a Reliable publisher by default. To send to a Best Effort
+subscriber (equivalent to ROS 2 sensor-data), specify the QoS explicitly when creating the
+publisher.
 
 ```csharp
 using ROSettaDDS.Dds.QoS;
 
-using var pub = participant.CreatePublisher<StringMessage>(
+using var pub = node.CreatePublisher<StringMessage>(
     "chatter",
     StringMessageSerializer.Instance,
     ReliabilityQos.BestEffort,

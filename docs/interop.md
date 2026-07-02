@@ -74,14 +74,16 @@ ros2 run examples_rclcpp_minimal_service service_main
 ROSettaDDS 側で生成 (Source Generator または rosettadds-genmsg) し、クライアントから呼び出す:
 
 ```csharp
-using var participant = new DomainParticipant(new DomainParticipantOptions
+using var context = new ROSettaDDS.Rcl.Context(new ROSettaDDS.Rcl.ContextOptions
 {
     DomainId = 0,
     EntityName = "rosettadds_svc",
 });
-participant.Start();
+context.Start();
 
-using var client = participant.CreateServiceClient(AddTwoIntsService.Descriptor, "add_two_ints");
+using var node = new ROSettaDDS.Rcl.Node(context, "rosettadds_svc");
+
+using var client = node.CreateServiceClient(AddTwoIntsService.Descriptor, "add_two_ints");
 if (!await client.WaitForServiceAsync(TimeSpan.FromSeconds(5)))
 {
     Console.Error.WriteLine("service not available");

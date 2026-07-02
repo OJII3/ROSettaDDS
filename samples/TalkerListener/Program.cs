@@ -7,7 +7,7 @@
 //   ROS_LOCALHOST_ONLY=1 ros2 run demo_nodes_cpp listener
 //   ROS_LOCALHOST_ONLY=1 ros2 run demo_nodes_cpp talker
 using ROSettaDDS.Common.Logging;
-using ROSettaDDS.Dds;
+using ROSettaDDS.Rcl;
 using ROSettaDDS.Msgs.Std;
 
 if (args.Length < 1 || (args[0] != "talker" && args[0] != "listener"))
@@ -24,7 +24,7 @@ string entityName = args.Length > 3 ? args[3] : $"rosettadds_{mode}_{Environment
 
 var logger = new ConsoleLogger(mode, LogLevel.Info);
 
-var options = new DomainParticipantOptions
+var options = new ContextOptions
 {
     DomainId = domainId,
     ParticipantId = participantId,
@@ -35,7 +35,8 @@ var options = new DomainParticipantOptions
     SpdpInterval = TimeSpan.FromSeconds(1),
 };
 
-using var participant = new DomainParticipant(options);
+using var context = new Context(options);
+using var node = new Node(context, entityName);
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
@@ -44,13 +45,13 @@ Console.CancelKeyPress += (_, e) =>
     cts.Cancel();
 };
 
-participant.Start();
+context.Start();
 logger.Info($"Starting {mode}: domain={domainId} participant={participantId} name={entityName}");
-logger.Info($"Local Guid: {participant.Guid}");
+logger.Info($"Local Guid: {context.Guid}");
 
 if (mode == "talker")
 {
-    using var pub = participant.CreatePublisher<StringMessage>(
+    using var pub = node.CreatePublisher<StringMessage>(
         "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
 
     int counter = 0;
@@ -68,7 +69,7 @@ if (mode == "talker")
 }
 else // listener
 {
-    using var sub = participant.CreateSubscription<StringMessage>(
+    using var sub = node.CreateSubscription<StringMessage>(
         "chatter",
         StringMessageSerializer.Instance,
         (msg, src) => logger.Info($"I heard: '{msg.Data}' from {src}"),
@@ -82,5 +83,5 @@ else // listener
 }
 
 logger.Info("Stopping...");
-participant.Stop();
+context.Stop();
 return 0;

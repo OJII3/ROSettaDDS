@@ -1,3 +1,8 @@
+// Legacy DomainParticipant API を使った互換性検証。
+// ROSettaDDS.Rcl.Context/Node が正本だが、後方互換のため
+// `ROSettaDDS.Dds.DomainParticipant` を直接利用する経路の挙動を
+// ここで継続的にカバーする。
+#pragma warning disable CS0618 // Type or member is obsolete (DomainParticipant)
 using System.Net;
 using ROSettaDDS.Common;
 using ROSettaDDS.Dds;

@@ -39,6 +39,7 @@ Unity / .NET から ROS 2 と通信する手段は既にいくつか存在しま
 - `std_msgs` / `builtin_interfaces` / `geometry_msgs` を同梱。`.msg` から CDR 互換な C# 型を生成できる
 - Reliable / Best Effort の QoS を選択できる
 - ネイティブ依存ゼロ。IL2CPP / AOT 互換のコンパイル時 msg 生成
+- ROS 2 の `rcl_context_t` / `rcl_node_t` に対応する `Rcl.Context` / `Rcl.Node` の 2 層 API
 - Unity 6000.3 (.NET Standard 2.1) で検証済み。クロスプラットフォームビルドに対応
 
 > [!NOTE]
@@ -55,31 +56,43 @@ dotnet add MyROSettaDDSApp/MyROSettaDDSApp.csproj reference src/rosettadds/roset
 ```
 
 `Program.cs` を次のように書くと、`std_msgs/msg/String` を publish / subscribe できます。
+公開 API は ROS 2 の `rcl_context_t` / `rcl_node_t` と同じく 2 層に分かれています。
+
+- `Rcl.Context` がドメイン共通の DDS 資源 (UDP transport × 4、DiscoveryDb、SPDP / SEDP) を所有します。
+- `Rcl.Node` が `Publisher<T>` / `Subscription<T>` / `ServiceClient<TReq,TRes>` を生成するユーザー操作対象です。
 
 ```csharp
-using ROSettaDDS.Dds;
+using ROSettaDDS.Rcl;
 using ROSettaDDS.Msgs.Std;
 
-var participant = new DomainParticipant(new DomainParticipantOptions
+using var context = new Context(new ContextOptions
 {
     DomainId = 0,
     EntityName = "rosettadds_demo",
     // 既定で全ローカル NIC を列挙・広告するため、LAN 上のノードから到達できる。
     // loopback に限定したい場合 (ROS_LOCALHOST_ONLY=1 相当) は LocalhostOnly = true を指定。
 });
-participant.Start();
+context.Start();
+
+using var node = new Node(context, "rosettadds_demo");
 
 // subscribe
-participant.CreateSubscription<StringMessage>(
+node.CreateSubscription<StringMessage>(
     "chatter", StringMessageSerializer.Instance,
     (msg, source) => Console.WriteLine($"I heard: '{msg.Data}' from {source}"),
     StringMessage.DdsTypeName);
 
 // publish
-var pub = participant.CreatePublisher<StringMessage>(
+var pub = node.CreatePublisher<StringMessage>(
     "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
 await pub.PublishAsync(new StringMessage("Hello rosettadds"));
 ```
+
+> [!NOTE]
+> 旧 API である `ROSettaDDS.Dds.DomainParticipant` は後方互換のため残っており、内部で
+> `Rcl.Context` + `Rcl.Node` を生成して委譲します。新規コードでは `ROSettaDDS.Rcl` 名前空間を
+> 直接使ってください。移行の詳細は [docs/compatibility.md](docs/compatibility.md#legacy-domainparticipant)
+> を参照してください。
 
 talker / listener を別プロセスに分けた完成版サンプルは
 [`samples/TalkerListener`](samples/TalkerListener) にあります。別シェルで起動してください。
@@ -147,13 +160,13 @@ dotnet run --project tools/rosettadds-genmsg -- --input msgs --output src/rosett
 
 ## QoS を指定する
 
-`CreatePublisher` は既定で Reliable publisher を作ります。ROS 2 の sensor-data 相当の
+`Node.CreatePublisher` は既定で Reliable publisher を作ります。ROS 2 の sensor-data 相当の
 Best Effort subscriber へ送る場合は、publisher 作成時に QoS を明示します。
 
 ```csharp
 using ROSettaDDS.Dds.QoS;
 
-using var pub = participant.CreatePublisher<StringMessage>(
+using var pub = node.CreatePublisher<StringMessage>(
     "chatter",
     StringMessageSerializer.Instance,
     ReliabilityQos.BestEffort,
