@@ -31,6 +31,9 @@ public sealed class Context : IDisposable
     private readonly SedpEndpointReader _sedpSubscriptionsReader;
     private readonly SedpEndpointAdvertiser _sedpAdvertiser;
 
+    private readonly List<object> _nodes = new();
+    private readonly object _nodesLock = new();
+
     private bool _started;
     private bool _disposed;
 
@@ -171,6 +174,7 @@ public sealed class Context : IDisposable
         if (_disposed) return;
         // Stop() は _disposed をチェックするので、先に Stop() してから _disposed = true にする。
         Stop();
+        DisposeTrackedNodes();
         _disposed = true;
         _sedpPublicationsWriter.Dispose();
         _sedpSubscriptionsWriter.Dispose();
@@ -181,6 +185,12 @@ public sealed class Context : IDisposable
         _leaseExpiryMonitor.Dispose();
         _receiver.Dispose();
         _transports.Dispose();
+    }
+
+    private void DisposeTrackedNodes()
+    {
+        // TODO: Task 4.1 で Node 型を import して _nodes.ToArray() を iterate する。
+        // Task 3.5 時点では Node 型がまだ存在しないのでスケルトン。
     }
 
     private void ThrowIfDisposed()

@@ -104,4 +104,16 @@ public class ContextTests
         ctx.Dispose();
         Assert.Throws<ObjectDisposedException>(() => ctx.Stop());
     }
+
+    // 注: Node クラスがまだ未定義 (Phase 4) なのでテスト本体はコメントアウト。
+    // Task 4.4 で有効化する。
+    [Fact(Skip = "Node クラス未実装 (Task 4.1-4.4 待ち)")]
+    public void Context_Dispose_時に_生存中の_Node_を_先に_Dispose_する()
+    {
+        // var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        // var node = new Node(ctx, "test");
+        // ctx.Dispose();
+        // Assert.Throws<ObjectDisposedException>(() => node.CreatePublisher<StringMessage>(
+        //     "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName));
+    }
 }
