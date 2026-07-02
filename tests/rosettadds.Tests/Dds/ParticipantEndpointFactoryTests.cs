@@ -3,6 +3,7 @@ using ROSettaDDS.Cdr;
 using ROSettaDDS.Common;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Dds.QoS;
+using ROSettaDDS.Rcl;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Msgs.Std;
 using ROSettaDDS.Rcl.Naming;
@@ -46,7 +47,7 @@ public class ParticipantEndpointFactoryTests
             .Which.Port.Should().Be(7401);
     }
 
-    private static DomainParticipantOptions CreateOptions()
+    private static ContextOptions CreateOptions()
         => new()
         {
             CustomMulticastTransport = new RecordingTransport(7400),

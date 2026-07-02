@@ -3,6 +3,7 @@ using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
+using ROSettaDDS.Rcl;
 using ROSettaDDS.Rcl.Naming;
 using ROSettaDDS.Rtps.HistoryCache;
 using ROSettaDDS.Rtps.Reader;
@@ -14,7 +15,7 @@ namespace ROSettaDDS.Dds;
 
 internal sealed class ParticipantEndpointFactory
 {
-    private readonly DomainParticipantOptions _options;
+    private readonly Rcl.ContextOptions _options;
     private readonly ParticipantTransportSet _transports;
     private readonly GuidPrefix _guidPrefix;
     private readonly Guid _participantGuid;
@@ -22,7 +23,7 @@ internal sealed class ParticipantEndpointFactory
     private readonly ILogger _logger;
 
     public ParticipantEndpointFactory(
-        DomainParticipantOptions options,
+        Rcl.ContextOptions options,
         ParticipantTransportSet transports,
         GuidPrefix guidPrefix,
         Guid participantGuid,
