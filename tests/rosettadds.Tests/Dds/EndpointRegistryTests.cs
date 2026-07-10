@@ -244,4 +244,29 @@ public class EndpointRegistryTests
         // No other writer or reader with the same GUID exists → should advertise
         registry.ShouldAdvertiseForTopic("rt/chatter", lw.EndpointData.EndpointGuid).Should().BeTrue();
     }
+
+    [Fact]
+    public void UpdateLocalLocatorsは_writerと_readerを更新して再広告snapshotを返す()
+    {
+        var registry = new EndpointRegistry();
+        var localWriter = MakeWriter("rt/chatter", out var writer);
+        var localReader = MakeReader("rt/chatter", out var reader);
+        registry.AddLocalWriter(localWriter.EndpointData, writer);
+        registry.AddLocalReader(localReader.EndpointData, reader);
+        var unicastLocators = new[]
+        {
+            Locator.FromUdpV4(IPAddress.Parse("192.0.2.10"), 7411),
+            Locator.FromUdpV4(IPAddress.Parse("192.0.2.11"), 7411),
+        };
+        var multicastLocator = Locator.FromUdpV4(IPAddress.Parse("239.255.0.1"), 7401);
+
+        var snapshot = registry.UpdateLocalLocators(unicastLocators, multicastLocator);
+
+        snapshot.Writers.Should().ContainSingle().Which.Should().BeSameAs(localWriter.EndpointData);
+        snapshot.Readers.Should().ContainSingle().Which.Should().BeSameAs(localReader.EndpointData);
+        localWriter.EndpointData.UnicastLocators.Should().Equal(unicastLocators);
+        localWriter.EndpointData.MulticastLocators.Should().Equal(multicastLocator);
+        localReader.EndpointData.UnicastLocators.Should().Equal(unicastLocators);
+        localReader.EndpointData.MulticastLocators.Should().Equal(multicastLocator);
+    }
 }

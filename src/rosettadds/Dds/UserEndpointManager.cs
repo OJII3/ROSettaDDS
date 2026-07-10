@@ -155,6 +155,11 @@ internal sealed class UserEndpointManager
 
     public EndpointSnapshot Snapshot() => _registry.Snapshot();
 
+    public EndpointDiscoverySnapshot UpdateLocalLocators(
+        IReadOnlyList<Locator> unicastLocators,
+        Locator multicastLocator)
+        => _registry.UpdateLocalLocators(unicastLocators, multicastLocator);
+
     public void StartWriters() => _registry.StartWriters();
 
     public void StopWriters() => _registry.StopWriters();
