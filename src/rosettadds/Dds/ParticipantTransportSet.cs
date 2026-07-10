@@ -16,6 +16,8 @@ internal sealed class ParticipantTransportSet : IDisposable
     private readonly OwnedTransport _metatrafficUnicast;
     private readonly OwnedTransport _userMulticast;
     private readonly OwnedTransport _userUnicast;
+    private readonly Rcl.ContextOptions _options;
+    private readonly Func<IReadOnlyList<IPAddress>> _addressProvider;
     private bool _started;
     private bool _disposed;
 
@@ -28,7 +30,9 @@ internal sealed class ParticipantTransportSet : IDisposable
         Locator userMulticastDestination,
         IReadOnlyList<Locator> metatrafficUnicastLocators,
         IReadOnlyList<Locator> defaultUnicastLocators,
-        int resolvedParticipantId)
+        int resolvedParticipantId,
+        Rcl.ContextOptions options,
+        Func<IReadOnlyList<IPAddress>> addressProvider)
     {
         _metatrafficMulticast = metatrafficMulticast;
         _metatrafficUnicast = metatrafficUnicast;
@@ -39,6 +43,8 @@ internal sealed class ParticipantTransportSet : IDisposable
         MetatrafficUnicastLocators = metatrafficUnicastLocators;
         DefaultUnicastLocators = defaultUnicastLocators;
         ResolvedParticipantId = resolvedParticipantId;
+        _options = options;
+        _addressProvider = addressProvider;
     }
 
     public IRtpsTransport MetatrafficMulticast => _metatrafficMulticast.Transport;
@@ -49,17 +55,20 @@ internal sealed class ParticipantTransportSet : IDisposable
     public Locator UserMulticastDestination { get; }
 
     /// <summary>SPDP で広告する metatraffic unicast locator 群 (NIC ごとに 1 つ)。</summary>
-    public IReadOnlyList<Locator> MetatrafficUnicastLocators { get; }
+    public IReadOnlyList<Locator> MetatrafficUnicastLocators { get; private set; }
 
     /// <summary>SPDP/SEDP で広告する user (default) unicast locator 群 (NIC ごとに 1 つ)。</summary>
-    public IReadOnlyList<Locator> DefaultUnicastLocators { get; }
+    public IReadOnlyList<Locator> DefaultUnicastLocators { get; private set; }
 
     /// <summary>実際に使用された Participant ID。auto-probe により入力値と異なる場合がある。</summary>
     public int ResolvedParticipantId { get; }
 
-    public static ParticipantTransportSet Create(Rcl.ContextOptions options)
+    public static ParticipantTransportSet Create(
+        Rcl.ContextOptions options,
+        Func<IReadOnlyList<IPAddress>>? addressProvider = null)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
+        addressProvider ??= LocalNetwork.EnumerateUnicastIPv4;
 
         var created = new List<OwnedTransport>(4);
         try
@@ -88,7 +97,7 @@ internal sealed class ParticipantTransportSet : IDisposable
             }
             else
             {
-                advertisedAddresses = LocalNetwork.EnumerateUnicastIPv4();
+                advertisedAddresses = addressProvider();
                 bindAddress = IPAddress.Any;
                 multicastInterface = options.MulticastInterface;
             }
@@ -153,7 +162,9 @@ internal sealed class ParticipantTransportSet : IDisposable
                 Locator.FromUdpV4(options.MulticastGroup, (uint)userMulticastPort),
                 BuildUnicastLocators(options.CustomUnicastTransport, metatrafficUnicast, advertisedAddresses),
                 BuildUnicastLocators(options.CustomUserUnicastTransport, userUnicast, advertisedAddresses),
-                resolvedId);
+                resolvedId,
+                options,
+                addressProvider);
         }
         catch
         {
@@ -218,6 +229,29 @@ internal sealed class ParticipantTransportSet : IDisposable
         MetatrafficMulticast.Stop();
         MetatrafficUnicast.Stop();
         _started = false;
+    }
+
+    internal void RestartOwnedTransports()
+    {
+        ThrowIfDisposed();
+        _metatrafficMulticast.RestartIfOwned();
+        _metatrafficUnicast.RestartIfOwned();
+        _userMulticast.RestartIfOwned();
+        _userUnicast.RestartIfOwned();
+
+        IReadOnlyList<IPAddress> advertisedAddresses = _options.LocalhostOnly
+            ? new[] { IPAddress.Loopback }
+            : _options.LocalUnicastAddress is not null
+                ? new[] { _options.LocalUnicastAddress }
+                : _addressProvider();
+        MetatrafficUnicastLocators = BuildUnicastLocators(
+            _options.CustomUnicastTransport,
+            _metatrafficUnicast,
+            advertisedAddresses);
+        DefaultUnicastLocators = BuildUnicastLocators(
+            _options.CustomUserUnicastTransport,
+            _userUnicast,
+            advertisedAddresses);
     }
 
     public void Dispose()
@@ -302,6 +336,14 @@ internal sealed class ParticipantTransportSet : IDisposable
             if (_ownsTransport)
             {
                 Transport.Dispose();
+            }
+        }
+
+        public void RestartIfOwned()
+        {
+            if (_ownsTransport && Transport is UdpTransport udp)
+            {
+                udp.Restart();
             }
         }
     }
