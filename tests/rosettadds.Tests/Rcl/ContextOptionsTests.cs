@@ -20,6 +20,7 @@ public class ContextOptionsTests
         Assert.Equal(0, opts.DomainId);
         Assert.Equal(0, opts.ParticipantId);
         Assert.True(opts.AutoProbeParticipantId);
+        Assert.True(opts.EnableAutomaticNetworkRecovery);
         Assert.Equal(TimeSpan.FromSeconds(3), opts.SpdpInterval);
         Assert.Equal(TimeSpan.FromSeconds(3), opts.SedpInterval);
         Assert.Equal(Duration.FromSeconds(20), opts.LeaseDuration);
