@@ -118,6 +118,36 @@ public class NetworkRecoveryCoordinatorTests
         calls.Should().Be(0);
     }
 
+    [Fact]
+    public async Task Disposeは実行中の復旧operation完了を待つ()
+    {
+        var source = new FakeNetworkChangeSource();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var coordinator = new NetworkRecoveryCoordinator(
+            source,
+            RecoverAsync,
+            NullLogger.Instance,
+            debounceDelay: TimeSpan.Zero,
+            retryDelay: TimeSpan.FromMilliseconds(1));
+
+        source.Raise();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        var disposeTask = Task.Run(coordinator.Dispose);
+        var completed = await Task.WhenAny(disposeTask, Task.Delay(TimeSpan.FromMilliseconds(1100)));
+        release.TrySetResult();
+        await disposeTask.WaitAsync(TimeSpan.FromSeconds(1));
+
+        completed.Should().NotBe(disposeTask);
+        return;
+
+        async ValueTask RecoverAsync(CancellationToken _)
+        {
+            started.TrySetResult();
+            await release.Task;
+        }
+    }
+
     internal sealed class FakeNetworkChangeSource : INetworkChangeSource
     {
         private NetworkAddressChangedEventHandler? _networkAddressChanged;

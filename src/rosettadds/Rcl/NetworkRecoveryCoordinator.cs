@@ -65,10 +65,7 @@ internal sealed class NetworkRecoveryCoordinator : IDisposable
 
         try
         {
-            if (!Task.WaitAll(workers, TimeSpan.FromSeconds(1)))
-            {
-                _logger.Warn("Network recovery workers did not stop within one second");
-            }
+            Task.WaitAll(workers);
         }
         catch (AggregateException ex) when (ex.InnerExceptions.All(
                    static inner => inner is OperationCanceledException))
