@@ -78,12 +78,15 @@ public class UdpTransportTests
         using var receiver = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
         using var sender = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
 
-        const int count = 200;
+        const int count = 8;
         int received = 0;
+        var handlerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseHandler = new ManualResetEventSlim(false);
         var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         receiver.Received += (_, _) =>
         {
-            Thread.Sleep(2);
+            handlerEntered.TrySetResult();
+            Assert.True(releaseHandler.Wait(TimeSpan.FromSeconds(5)));
             if (Interlocked.Increment(ref received) == count)
             {
                 allReceived.TrySetResult();
@@ -97,6 +100,21 @@ public class UdpTransportTests
             await sender.SendAsync(payload, receiver.LocalLocator);
         }
 
+        // ハンドラが1回呼ばれたことを確認 (ハンドラ内でブロック中)
+        await handlerEntered.Task.WaitAsync(ReceiveTimeout);
+
+        // ハンドラがブロックしていても enqueue が全件完了することを検証
+        var enqDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        while (DateTime.UtcNow < enqDeadline && receiver.Diagnostics.DatagramsEnqueued < count)
+        {
+            await Task.Delay(20);
+        }
+
+        receiver.Diagnostics.DatagramsEnqueued.Should().Be(count);
+        Volatile.Read(ref received).Should().Be(0);
+
+        // ブロック解除後、全件 dispatch されることを検証
+        releaseHandler.Set();
         await allReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Volatile.Read(ref received).Should().Be(count);
     }
