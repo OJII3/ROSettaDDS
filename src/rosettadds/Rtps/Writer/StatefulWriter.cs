@@ -24,13 +24,10 @@ namespace ROSettaDDS.Rtps.Writer;
 /// </summary>
 public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
 {
-    public const int SendBufferSize = 1500;
-    public const int DataFragPayloadSize = 1024;
+    public const int SendBufferSize = StatefulWriterPacketSender.SendBufferSize;
+    public const int DataFragPayloadSize = StatefulWriterPacketSender.DataFragPayloadSize;
 
-    private readonly IRtpsTransport _transport;
     private readonly Locator _multicastDestination;
-    private readonly ProtocolVersion _version;
-    private readonly VendorId _vendorId;
     private readonly GuidPrefix _localPrefix;
     private readonly EntityId _writerEntityId;
     private readonly TimeSpan _heartbeatPeriod;
@@ -38,8 +35,8 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     private readonly ILogger _logger;
     private readonly bool _purgeAckedSamples;
     private readonly bool _resendHistoryOnMatch;
-
     private readonly MatchedReaderRegistry _registry = new();
+    private readonly StatefulWriterPacketSender _sender;
     private readonly BackgroundOperationTracker _tracker;
 
     private CancellationTokenSource? _cts;
@@ -65,10 +62,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         bool purgeAckedSamples = true,
         bool resendHistoryOnMatch = false)
     {
-        _transport = sendTransport;
         _multicastDestination = multicastDestination;
-        _version = version;
-        _vendorId = vendorId;
         _localPrefix = localPrefix;
         _writerEntityId = writerEntityId;
         _heartbeatPeriod = heartbeatPeriod;
@@ -76,6 +70,8 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         _purgeAckedSamples = purgeAckedSamples;
         _resendHistoryOnMatch = resendHistoryOnMatch;
         _logger = logger ?? NullLogger.Instance;
+        _sender = new StatefulWriterPacketSender(
+            sendTransport, version, vendorId, localPrefix, writerEntityId, _logger);
         _tracker = new BackgroundOperationTracker(_logger);
         Guid = new Guid(localPrefix, writerEntityId);
     }
@@ -357,32 +353,10 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
 
     private async ValueTask SendHeartbeatToDestinationAsync(EntityId readerEntityId, Locator destination, int count, CancellationToken cancellationToken)
     {
-        var packet = BuildHeartbeatPacket(readerEntityId, count);
-        if (packet.Length == 0)
-        {
-            return;
-        }
-        try
-        {
-            await _transport.SendAsync(packet, destination, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            _logger.Error("StatefulWriter HEARTBEAT send failed", ex);
-        }
-    }
-
-    /// <summary>HEARTBEAT メッセージを組み立てる (ref struct 使用は同期メソッドに閉じる)。</summary>
-    private byte[] BuildHeartbeatPacket(EntityId readerEntityId, int count)
-    {
         var first = _history.FirstSequenceNumber;
         var last = _history.LastSequenceNumber;
-        // RTPS 仕様: 空 cache でも firstSN=1, lastSN=0 の HB は合法で、
-        // reader が writer 状態を確定するために必要。送信をスキップしない。
         if (last.Value == 0)
         {
-            // 空 cache: firstSN=1, lastSN=0
             first = new SequenceNumber(1L);
             last = new SequenceNumber(0L);
         }
@@ -390,16 +364,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         {
             first = new SequenceNumber(1L);
         }
-
-        var hb = new HeartbeatSubmessage(
-            readerEntityId, _writerEntityId, first, last, count, final: false, liveliness: false);
-
-        var buffer = new byte[SendBufferSize];
-        var msg = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
-        msg.WriteHeartbeat(hb);
-        var packet = new byte[msg.BytesWritten];
-        msg.WrittenSpan.CopyTo(packet);
-        return packet;
+        await _sender.SendHeartbeatAsync(first, last, readerEntityId, destination, count, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask SendDataAsync(CacheChange change, CancellationToken cancellationToken)
@@ -438,144 +403,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     private async ValueTask SendDataToDestinationAsync(
         CacheChange change, EntityId readerEntityId, Locator destination, CancellationToken cancellationToken)
     {
-        bool isAlive = change.Kind == ChangeKind.Alive;
-        ReadOnlyMemory<byte> inlineQos = isAlive
-            ? default
-            : DataSubmessage.BuildStatusInfoInlineQos(ToStatusInfo(change.Kind), CdrEndianness.LittleEndian);
-
-        int dataMessageSize = RtpsHeader.Size
-            + SubmessageHeader.Size + Time.Size
-            + SubmessageHeader.Size + DataSubmessage.FixedHeaderSize
-            + inlineQos.Length
-            + change.SerializedPayload.Length;
-
-        byte[] scratch = ArrayPool<byte>.Shared.Rent(SendBufferSize);
-        try
-        {
-            if (dataMessageSize <= SendBufferSize)
-            {
-                BuildDataPacket(change, readerEntityId, inlineQos, isAlive, scratch, out int written);
-                await _transport.SendAsync(scratch.AsMemory(0, written), destination, cancellationToken)
-                    .ConfigureAwait(false);
-                return;
-            }
-
-            await SendDataFragPacketsSequentialAsync(
-                change, readerEntityId, inlineQos, isAlive, scratch, destination, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            _logger.Error("StatefulWriter DATA send failed", ex);
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(scratch);
-        }
-    }
-
-    private async ValueTask SendDataFragPacketsSequentialAsync(
-        CacheChange change,
-        EntityId readerEntityId,
-        ReadOnlyMemory<byte> inlineQos,
-        bool isAlive,
-        byte[] scratch,
-        Locator destination,
-        CancellationToken cancellationToken)
-    {
-        if (change.SerializedPayload.Length == 0)
-        {
-            return;
-        }
-        int firstFragmentCapacity = SendBufferSize
-            - RtpsHeader.Size
-            - SubmessageHeader.Size
-            - DataFragSubmessage.FixedHeaderSize
-            - inlineQos.Length;
-        int payloadFragmentSize = Math.Min(DataFragPayloadSize, firstFragmentCapacity);
-        if (payloadFragmentSize <= 0)
-        {
-            throw new InvalidOperationException(
-                $"DATA_FRAG inline QoS length {inlineQos.Length} leaves no room for payload.");
-        }
-
-        int fragmentCount = (change.SerializedPayload.Length + payloadFragmentSize - 1) / payloadFragmentSize;
-        ushort fragmentSize = checked((ushort)payloadFragmentSize);
-        uint sampleSize = checked((uint)change.SerializedPayload.Length);
-
-        for (int i = 0; i < fragmentCount; i++)
-        {
-            int offset = i * payloadFragmentSize;
-            int length = Math.Min(payloadFragmentSize, change.SerializedPayload.Length - offset);
-            var fragmentPayload = change.SerializedPayload.Slice(offset, length);
-            var fragmentInlineQos = i == 0 ? inlineQos : default;
-            var dataFrag = new DataFragSubmessage(
-                readerEntityId: readerEntityId,
-                writerEntityId: _writerEntityId,
-                writerSn: change.SequenceNumber,
-                fragmentStartingNumber: checked((uint)i + 1u),
-                fragmentsInSubmessage: 1,
-                fragmentSize: fragmentSize,
-                sampleSize: sampleSize,
-                serializedPayloadFragment: fragmentPayload,
-                inlineQos: fragmentInlineQos,
-                keyPresent: !isAlive);
-
-            int written = WriteDataFragToScratch(scratch, dataFrag);
-            try
-            {
-                await _transport.SendAsync(scratch.AsMemory(0, written), destination, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _logger.Error("StatefulWriter DATA_FRAG send failed", ex);
-            }
-        }
-    }
-
-    /// <summary>DATA メッセージ (INFO_TS + DATA) を組み立てる。</summary>
-    private void BuildDataPacket(
-        CacheChange change,
-        EntityId readerEntityId,
-        ReadOnlyMemory<byte> inlineQos,
-        bool isAlive,
-        Span<byte> destination,
-        out int written)
-    {
-        var writer = new RtpsMessageWriter(destination, _version, _vendorId, _localPrefix);
-        writer.WriteInfoTimestamp(new InfoTimestampSubmessage(change.SourceTimestamp));
-        var data = new DataSubmessage(
-            readerEntityId: readerEntityId,
-            writerEntityId: _writerEntityId,
-            writerSn: change.SequenceNumber,
-            serializedPayload: change.SerializedPayload,
-            inlineQos: inlineQos,
-            dataPresent: isAlive,
-            keyPresent: !isAlive);
-        writer.WriteData(data);
-        written = writer.BytesWritten;
-    }
-
-    private int WriteDataFragToScratch(Span<byte> buffer, DataFragSubmessage dataFrag)
-    {
-        var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
-        writer.WriteDataFrag(dataFrag);
-        return writer.BytesWritten;
-    }
-
-    private static uint ToStatusInfo(ChangeKind kind)
-    {
-        return kind switch
-        {
-            ChangeKind.NotAliveDisposed => DataSubmessage.StatusInfoDisposed,
-            ChangeKind.NotAliveUnregistered => DataSubmessage.StatusInfoUnregistered,
-            ChangeKind.NotAliveDisposedUnregistered =>
-                DataSubmessage.StatusInfoDisposed | DataSubmessage.StatusInfoUnregistered,
-            _ => 0u,
-        };
+        await _sender.SendDataAsync(change, readerEntityId, destination, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ResendRequestedAsync(ReaderProxy proxy, CancellationToken cancellationToken)
@@ -621,32 +449,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         Locator destination,
         CancellationToken cancellationToken)
     {
-        var packet = BuildGapPacket(missingSequenceNumber, readerEntityId);
-        try
-        {
-            await _transport.SendAsync(packet, destination, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            _logger.Error("StatefulWriter GAP send failed", ex);
-        }
-    }
-
-    private byte[] BuildGapPacket(SequenceNumber missingSequenceNumber, EntityId readerEntityId)
-    {
-        var gap = new GapSubmessage(
-            readerEntityId: readerEntityId,
-            writerEntityId: _writerEntityId,
-            gapStart: missingSequenceNumber,
-            gapList: new SequenceNumberSet(missingSequenceNumber + 1, 0, Array.Empty<uint>()));
-
-        var buffer = new byte[SendBufferSize];
-        var writer = new RtpsMessageWriter(buffer, _version, _vendorId, _localPrefix);
-        writer.WriteGap(gap);
-        var packet = new byte[writer.BytesWritten];
-        writer.WrittenSpan.CopyTo(packet);
-        return packet;
+        await _sender.SendGapAsync(missingSequenceNumber, readerEntityId, destination, cancellationToken).ConfigureAwait(false);
     }
 
     private void ThrowIfDisposed()
