@@ -198,8 +198,8 @@ public sealed class UdpTransport : IRtpsTransport
         _receiveCts = new CancellationTokenSource();
         _dispatchQueue = new BlockingCollection<ReceivedPacket>(MaxQueuedReceivedPackets);
         var token = _receiveCts.Token;
-        _dispatchTask = Task.Run(DispatchLoop, token);
-        _receiveTask = Task.Run(() => ReceiveLoop(token), token);
+        _dispatchTask = Task.Factory.StartNew(DispatchLoop, token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        _receiveTask = Task.Factory.StartNew(() => ReceiveLoop(token), token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
     public void Stop()

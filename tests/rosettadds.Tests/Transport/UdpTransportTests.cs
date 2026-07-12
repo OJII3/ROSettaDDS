@@ -330,6 +330,25 @@ public class UdpTransportTests
         transport.LocalLocator.Should().Be(locator);
     }
 
+    [Fact]
+    public async Task 受信ThreadはThreadPoolに属さない()
+    {
+        using var receiver = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+        using var sender = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+
+        var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        receiver.Received += (data, _) =>
+        {
+            // DispatchLoop 上の ThreadPool 枯渇を防ぐため、専用スレッドで動作すべき
+            Assert.False(Thread.CurrentThread.IsThreadPoolThread);
+            tcs.TrySetResult(data.ToArray());
+        };
+        receiver.Start();
+
+        await sender.SendAsync(new byte[] { 0x01, 0x02 }, receiver.LocalLocator);
+        await tcs.Task.WaitAsync(ReceiveTimeout);
+    }
+
     private static int GetFreeUdpPort()
     {
         using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
