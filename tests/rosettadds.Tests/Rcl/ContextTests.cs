@@ -177,10 +177,11 @@ public class ContextTests
             new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance },
             source);
         using var node = new Node(ctx, "recovery_test");
+        var topicName = $"chatter_{System.Guid.NewGuid():N}";
         using var publisher = node.CreatePublisher<StringMessage>(
-            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+            topicName, StringMessageSerializer.Instance, StringMessage.DdsTypeName);
         using var subscription = node.CreateSubscription<StringMessage>(
-            "chatter", StringMessageSerializer.Instance, _ => { });
+            topicName, StringMessageSerializer.Instance, _ => { });
         ctx.Start();
         await WaitUntilAsync(
             () => ctx.PublishedPublicationStateCount > 0
