@@ -57,6 +57,9 @@ Desktop.ini
 result
 result-*
 
+## Worktrees
+.worktrees/
+
 ## Unity verification project
 Ros2Unity/[Ll]ibrary/
 Ros2Unity/[Tt]emp/
