@@ -1,9 +1,11 @@
+using System.Net.NetworkInformation;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Rcl;
 using ROSettaDDS.Msgs.Std;
 using ROSettaDDS.Rtps;
+using ROSettaDDS.Transport;
 using Guid = ROSettaDDS.Common.Guid;
 using Xunit;
 using ROSettaDDS.Rcl.Naming;
@@ -134,5 +136,101 @@ public class ContextTests
         var idA = ctx.UserEntityIds.AllocateWriter();
         var idB = ctx.UserEntityIds.AllocateWriter();
         Assert.NotEqual(idA, idB);
+    }
+
+    [Fact]
+    public void 自動復旧は既定で通知を購読し_Disposeで解除する()
+    {
+        var source = new FakeNetworkChangeSource();
+        var ctx = new Context(
+            new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance },
+            source);
+
+        source.SubscriberCount.Should().Be(1);
+
+        ctx.Dispose();
+
+        source.SubscriberCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void 自動復旧を無効化すると通知を購読しない()
+    {
+        var source = new FakeNetworkChangeSource();
+        using var ctx = new Context(
+            new ContextOptions
+            {
+                LocalhostOnly = true,
+                EnableAutomaticNetworkRecovery = false,
+                Logger = NullLogger.Instance,
+            },
+            source);
+
+        source.SubscriberCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task 復旧後も既存endpointとtransportを維持して再広告する()
+    {
+        var source = new FakeNetworkChangeSource();
+        using var ctx = new Context(
+            new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance },
+            source);
+        using var node = new Node(ctx, "recovery_test");
+        using var publisher = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+        using var subscription = node.CreateSubscription<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, _ => { });
+        ctx.Start();
+        await WaitUntilAsync(
+            () => ctx.PublishedPublicationStateCount > 0
+                  && ctx.PublishedSubscriptionStateCount > 0,
+            TimeSpan.FromSeconds(2));
+        var multicastTransport = ctx.UserMulticastTransport;
+        var publicationCount = ctx.PublishedPublicationStateCount;
+        var subscriptionCount = ctx.PublishedSubscriptionStateCount;
+
+        await ctx.RecoverNetworkAsync(CancellationToken.None);
+
+        ctx.UserMulticastTransport.Should().BeSameAs(multicastTransport);
+        ctx.PublishedPublicationStateCount.Should().BeGreaterThan(publicationCount);
+        ctx.PublishedSubscriptionStateCount.Should().BeGreaterThan(subscriptionCount);
+        await publisher.PublishAsync(new StringMessage("after recovery"));
+        using var additionalPublisher = node.CreatePublisher<StringMessage>(
+            "after_recovery", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new TimeoutException("Condition was not satisfied within the timeout.");
+            }
+            await Task.Delay(10);
+        }
+    }
+
+    private sealed class FakeNetworkChangeSource : INetworkChangeSource
+    {
+        private NetworkAddressChangedEventHandler? _networkAddressChanged;
+
+        public int SubscriberCount { get; private set; }
+
+        public event NetworkAddressChangedEventHandler? NetworkAddressChanged
+        {
+            add
+            {
+                _networkAddressChanged += value;
+                SubscriberCount++;
+            }
+            remove
+            {
+                _networkAddressChanged -= value;
+                SubscriberCount--;
+            }
+        }
     }
 }

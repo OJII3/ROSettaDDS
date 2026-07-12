@@ -159,6 +159,19 @@ public sealed class Node : IDisposable
             requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits);
     }
 
+    internal EndpointDiscoverySnapshot RefreshLocalEndpointLocators(
+        IReadOnlyList<Locator> unicastLocators,
+        Locator multicastLocator)
+    {
+        if (_disposed)
+        {
+            return new EndpointDiscoverySnapshot(
+                Array.Empty<DiscoveredEndpointData>(),
+                Array.Empty<DiscoveredEndpointData>());
+        }
+        return _userEndpoints.UpdateLocalLocators(unicastLocators, multicastLocator);
+    }
+
     private Publisher<T> CreateWriterInternal<T>(
         string ddsTopic,
         ICdrSerializer<T> serializer,

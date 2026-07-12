@@ -31,6 +31,8 @@ public sealed class Context : IDisposable
     private readonly SedpEndpointReader _sedpPublicationsReader;
     private readonly SedpEndpointWriter _sedpSubscriptionsWriter;
     private readonly SedpEndpointReader _sedpSubscriptionsReader;
+    private readonly NetworkRecoveryCoordinator? _networkRecovery;
+    private readonly SemaphoreSlim _networkRecoveryGate = new(1, 1);
     private readonly UserEntityIdAllocator _userEntityIds = new();
     private readonly List<Node> _nodes = new();
     private readonly object _nodesLock = new();
@@ -39,8 +41,14 @@ public sealed class Context : IDisposable
     private bool _disposed;
 
     public Context(ContextOptions options)
+        : this(options, SystemNetworkChangeSource.Instance)
+    {
+    }
+
+    internal Context(ContextOptions options, INetworkChangeSource networkChangeSource)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
+        if (networkChangeSource is null) throw new ArgumentNullException(nameof(networkChangeSource));
         _options = options;
 
         GuidPrefix = GuidPrefix.CreateForCurrentProcess(_options.VendorId);
@@ -120,6 +128,14 @@ public sealed class Context : IDisposable
         _discoveryDb.ParticipantDiscovered += OnRemoteParticipantDiscovered;
         _discoveryDb.ParticipantUpdated += OnRemoteParticipantDiscovered;
         _discoveryDb.ParticipantLost += OnRemoteParticipantLost;
+
+        if (_options.EnableAutomaticNetworkRecovery)
+        {
+            _networkRecovery = new NetworkRecoveryCoordinator(
+                networkChangeSource,
+                RecoverNetworkAsync,
+                _options.Logger);
+        }
     }
 
     public GuidPrefix GuidPrefix { get; }
@@ -139,6 +155,8 @@ public sealed class Context : IDisposable
     internal ParticipantRtpsReceiver Receiver => _receiver;
     internal CancellationToken LeaseExpiryCancellationToken => _leaseExpiryMonitor.CancellationToken;
     internal UserEntityIdAllocator UserEntityIds => _userEntityIds;
+    internal int PublishedPublicationStateCount => _sedpPublicationsWriter.PublishedCount;
+    internal int PublishedSubscriptionStateCount => _sedpSubscriptionsWriter.PublishedCount;
 
     // ----- SEDP 広告の Node 向け delegate -----
 
@@ -189,6 +207,7 @@ public sealed class Context : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
+        _networkRecovery?.Dispose();
         // Stop() は _disposed をチェックするので、先に Stop() してから _disposed = true にする。
         Stop();
         DisposeTrackedNodes();
@@ -202,6 +221,57 @@ public sealed class Context : IDisposable
         _leaseExpiryMonitor.Dispose();
         _receiver.Dispose();
         _transports.Dispose();
+    }
+
+    internal async ValueTask RecoverNetworkAsync(CancellationToken cancellationToken)
+    {
+        await _networkRecoveryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        bool restartDiscoveryWriters = false;
+        try
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            restartDiscoveryWriters = _started;
+            if (restartDiscoveryWriters)
+            {
+                _spdpWriter.Stop();
+                _sedpPublicationsWriter.Stop();
+                _sedpSubscriptionsWriter.Stop();
+            }
+
+            _transports.RestartOwnedTransports();
+            foreach (var node in SnapshotNodes())
+            {
+                var endpoints = node.RefreshLocalEndpointLocators(
+                    _transports.DefaultUnicastLocators,
+                    _transports.UserMulticastDestination);
+                foreach (var writer in endpoints.Writers)
+                {
+                    await _sedpPublicationsWriter.AddEndpointAsync(writer, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                foreach (var reader in endpoints.Readers)
+                {
+                    await _sedpSubscriptionsWriter.AddEndpointAsync(reader, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            _options.Logger.Info("Context: network transport recovery completed");
+        }
+        finally
+        {
+            if (restartDiscoveryWriters && !_disposed)
+            {
+                _sedpPublicationsWriter.Start();
+                _sedpSubscriptionsWriter.Start();
+                _spdpWriter.Start();
+            }
+            _networkRecoveryGate.Release();
+        }
     }
 
     internal void RegisterNode(Node node)
@@ -223,6 +293,14 @@ public sealed class Context : IDisposable
         {
             try { node.Dispose(); }
             catch (Exception ex) { _options.Logger.Warn($"Context.Dispose failed to dispose Node: {ex.Message}", ex); }
+        }
+    }
+
+    private Node[] SnapshotNodes()
+    {
+        lock (_nodesLock)
+        {
+            return _nodes.ToArray();
         }
     }
 

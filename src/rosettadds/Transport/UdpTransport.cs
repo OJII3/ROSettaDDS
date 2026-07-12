@@ -25,12 +25,18 @@ public sealed class UdpTransport : IRtpsTransport
     private const int MaxQueuedReceivedPackets = 8192;
     private static int s_activeReceiveLoopCount;
 
-    private readonly Socket _socket;
-    private readonly Locator _localLocator;
+    private Socket _socket;
+    private Locator _localLocator;
     private readonly bool _isMulticast;
     private readonly IPAddress? _multicastGroup;
+    private readonly IPAddress _bindAddress;
+    private readonly int _boundPort;
+    private readonly IPAddress? _joinInterface;
+    private readonly int _multicastTimeToLive;
     private readonly ILogger _logger;
     private readonly int _receiveBufferSize;
+    private readonly object _lifecycleLock = new();
+    private readonly SemaphoreSlim _sendGate = new(1, 1);
 
     private CancellationTokenSource? _receiveCts;
     private Task? _receiveTask;
@@ -60,6 +66,9 @@ public sealed class UdpTransport : IRtpsTransport
         Locator localLocator,
         bool isMulticast,
         IPAddress? multicastGroup,
+        IPAddress bindAddress,
+        IPAddress? joinInterface,
+        int multicastTimeToLive,
         ILogger logger,
         int receiveBufferSize)
     {
@@ -68,6 +77,10 @@ public sealed class UdpTransport : IRtpsTransport
         _localLocator = localLocator;
         _isMulticast = isMulticast;
         _multicastGroup = multicastGroup;
+        _bindAddress = bindAddress;
+        _boundPort = checked((int)localLocator.Port);
+        _joinInterface = joinInterface;
+        _multicastTimeToLive = multicastTimeToLive;
         _logger = logger;
         _receiveBufferSize = receiveBufferSize;
     }
@@ -91,26 +104,17 @@ public sealed class UdpTransport : IRtpsTransport
             throw new ArgumentException("Only IPv4 bindAddress supported.", nameof(bindAddress));
         }
 
-        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        try
-        {
-            ConfigureReceiveBuffer(socket);
-            // SO_REUSEADDR は設定しない。
-            // Linux では双方に SO_REUSEADDR があると同一ポートへの二重 bind が成功してしまい、
-            // ParticipantId auto-probe の前提である AddressAlreadyInUse が発生しなくなるため。
-            socket.Bind(new IPEndPoint(bindAddress, port));
-            var ep = (IPEndPoint)socket.LocalEndPoint!;
-            var locator = Locator.FromUdpV4(ep.Address, (uint)ep.Port);
-            return new UdpTransport(
-                socket, locator,
-                isMulticast: false, multicastGroup: null,
-                logger ?? NullLogger.Instance, receiveBufferSize);
-        }
-        catch
-        {
-            socket.Dispose();
-            throw;
-        }
+        var (socket, locator) = CreateUnicastSocket(bindAddress, port);
+        return new UdpTransport(
+            socket,
+            locator,
+            isMulticast: false,
+            multicastGroup: null,
+            bindAddress,
+            joinInterface: null,
+            multicastTimeToLive: 1,
+            logger ?? NullLogger.Instance,
+            receiveBufferSize);
     }
 
     /// <summary>
@@ -136,39 +140,21 @@ public sealed class UdpTransport : IRtpsTransport
             throw new ArgumentException("Only IPv4 multicast supported.", nameof(multicastGroup));
         }
 
-        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        try
-        {
-            ConfigureReceiveBuffer(socket);
-            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            // 全 NIC からマルチキャスト受信を取りこぼさないため ANY:port にバインドする
-            socket.Bind(new IPEndPoint(IPAddress.Any, port));
-
-            // Join multicast group
-            var iface = joinInterface ?? IPAddress.Any;
-            socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership,
-                new MulticastOption(multicastGroup, iface));
-
-            // 送信側マルチキャスト設定
-            socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, multicastTimeToLive);
-            if (joinInterface is not null && !joinInterface.Equals(IPAddress.Any))
-            {
-                // 送信時のマルチキャスト送信元 NIC を明示
-                socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface, joinInterface.GetAddressBytes());
-            }
-
-            var actualPort = ((IPEndPoint)socket.LocalEndPoint!).Port;
-            var locator = Locator.FromUdpV4(multicastGroup, (uint)actualPort);
-            return new UdpTransport(
-                socket, locator,
-                isMulticast: true, multicastGroup: multicastGroup,
-                logger ?? NullLogger.Instance, receiveBufferSize);
-        }
-        catch
-        {
-            socket.Dispose();
-            throw;
-        }
+        var (socket, locator) = CreateMulticastSocket(
+            multicastGroup,
+            port,
+            joinInterface,
+            multicastTimeToLive);
+        return new UdpTransport(
+            socket,
+            locator,
+            isMulticast: true,
+            multicastGroup,
+            bindAddress: IPAddress.Any,
+            joinInterface,
+            multicastTimeToLive,
+            logger ?? NullLogger.Instance,
+            receiveBufferSize);
     }
 
     public async ValueTask SendAsync(
@@ -182,12 +168,29 @@ public sealed class UdpTransport : IRtpsTransport
         var segment = MemoryMarshal.TryGetArray(packet, out var s)
             ? s
             : new ArraySegment<byte>(packet.ToArray());
-        await _socket.SendToAsync(segment, SocketFlags.None, endpoint).ConfigureAwait(false);
+        await _sendGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await _socket.SendToAsync(segment, SocketFlags.None, endpoint).ConfigureAwait(false);
+        }
+        finally
+        {
+            _sendGate.Release();
+        }
     }
 
     public void Start()
     {
-        ThrowIfDisposed();
+        lock (_lifecycleLock)
+        {
+            ThrowIfDisposed();
+            StartCore();
+        }
+    }
+
+    private void StartCore()
+    {
         if (_receiveTask is not null)
         {
             return;
@@ -200,6 +203,14 @@ public sealed class UdpTransport : IRtpsTransport
     }
 
     public void Stop()
+    {
+        lock (_lifecycleLock)
+        {
+            StopCore();
+        }
+    }
+
+    private void StopCore()
     {
         if (_receiveCts is null)
         {
@@ -238,6 +249,34 @@ public sealed class UdpTransport : IRtpsTransport
         _receiveCts.Dispose();
         _receiveCts = null;
         _receiveTask = null;
+    }
+
+    internal void Restart()
+    {
+        lock (_lifecycleLock)
+        {
+            ThrowIfDisposed();
+            bool wasStarted = _receiveTask is not null;
+            StopCore();
+
+            _sendGate.Wait();
+            try
+            {
+                DropMembershipAndDisposeSocket(_socket);
+                var replacement = CreateConfiguredSocket();
+                _socket = replacement.Socket;
+                _localLocator = replacement.Locator;
+            }
+            finally
+            {
+                _sendGate.Release();
+            }
+
+            if (wasStarted)
+            {
+                StartCore();
+            }
+        }
     }
 
     private void ReceiveLoop(CancellationToken cancellationToken)
@@ -378,30 +417,119 @@ public sealed class UdpTransport : IRtpsTransport
 
     private static void ConfigureReceiveBuffer(Socket socket)
     {
+        socket.ReceiveTimeout = ReceivePollTimeoutMilliseconds;
         socket.ReceiveBufferSize = Math.Max(socket.ReceiveBufferSize, RequestedSocketReceiveBufferSize);
     }
 
-    public void Dispose()
+    private static (Socket Socket, Locator Locator) CreateUnicastSocket(
+        IPAddress bindAddress,
+        int port)
     {
-        if (_disposed)
+        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        try
         {
-            return;
+            ConfigureReceiveBuffer(socket);
+            // SO_REUSEADDR は設定しない。Linux で同一ポートへの二重 bind を許すと
+            // ParticipantId auto-probe の前提が崩れるため。
+            socket.Bind(new IPEndPoint(bindAddress, port));
+            var endpoint = (IPEndPoint)socket.LocalEndPoint!;
+            return (socket, Locator.FromUdpV4(endpoint.Address, (uint)endpoint.Port));
         }
-        _disposed = true;
-        Stop();
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+
+    private static (Socket Socket, Locator Locator) CreateMulticastSocket(
+        IPAddress multicastGroup,
+        int port,
+        IPAddress? joinInterface,
+        int multicastTimeToLive)
+    {
+        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        try
+        {
+            ConfigureReceiveBuffer(socket);
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            socket.Bind(new IPEndPoint(IPAddress.Any, port));
+
+            var iface = joinInterface ?? IPAddress.Any;
+            socket.SetSocketOption(
+                SocketOptionLevel.IP,
+                SocketOptionName.AddMembership,
+                new MulticastOption(multicastGroup, iface));
+            socket.SetSocketOption(
+                SocketOptionLevel.IP,
+                SocketOptionName.MulticastTimeToLive,
+                multicastTimeToLive);
+            if (joinInterface is not null && !joinInterface.Equals(IPAddress.Any))
+            {
+                socket.SetSocketOption(
+                    SocketOptionLevel.IP,
+                    SocketOptionName.MulticastInterface,
+                    joinInterface.GetAddressBytes());
+            }
+
+            var actualPort = ((IPEndPoint)socket.LocalEndPoint!).Port;
+            return (socket, Locator.FromUdpV4(multicastGroup, (uint)actualPort));
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+
+    private (Socket Socket, Locator Locator) CreateConfiguredSocket()
+        => _isMulticast
+            ? CreateMulticastSocket(
+                _multicastGroup!,
+                _boundPort,
+                _joinInterface,
+                _multicastTimeToLive)
+            : CreateUnicastSocket(_bindAddress, _boundPort);
+
+    private void DropMembershipAndDisposeSocket(Socket socket)
+    {
         if (_isMulticast && _multicastGroup is not null)
         {
             try
             {
-                _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.DropMembership,
-                    new MulticastOption(_multicastGroup));
+                socket.SetSocketOption(
+                    SocketOptionLevel.IP,
+                    SocketOptionName.DropMembership,
+                    new MulticastOption(_multicastGroup, _joinInterface ?? IPAddress.Any));
             }
             catch
             {
-                // best-effort
+                // socket破棄前のbest-effort cleanup。
             }
         }
-        _socket.Dispose();
+        socket.Dispose();
+    }
+
+    public void Dispose()
+    {
+        lock (_lifecycleLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            StopCore();
+            _sendGate.Wait();
+            try
+            {
+                DropMembershipAndDisposeSocket(_socket);
+            }
+            finally
+            {
+                _sendGate.Release();
+            }
+        }
     }
 
     private void ThrowIfDisposed()

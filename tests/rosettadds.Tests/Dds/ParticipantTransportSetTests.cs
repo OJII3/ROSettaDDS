@@ -124,6 +124,45 @@ public class ParticipantTransportSetTests
             .Which.Port.Should().Be(7411);
     }
 
+    [Fact]
+    public void Restartは_owned_transportの参照を維持して広告addressを再列挙する()
+    {
+        IReadOnlyList<IPAddress> addresses = new[] { IPAddress.Parse("127.0.0.2") };
+        using var transports = ParticipantTransportSet.Create(
+            new ContextOptions { DomainId = 89 },
+            () => addresses);
+        var metatrafficMulticast = transports.MetatrafficMulticast;
+        var metatrafficUnicast = transports.MetatrafficUnicast;
+        var userMulticast = transports.UserMulticast;
+        var userUnicast = transports.UserUnicast;
+        transports.Start();
+
+        addresses = new[] { IPAddress.Parse("127.0.0.3") };
+        transports.RestartOwnedTransports();
+
+        transports.MetatrafficMulticast.Should().BeSameAs(metatrafficMulticast);
+        transports.MetatrafficUnicast.Should().BeSameAs(metatrafficUnicast);
+        transports.UserMulticast.Should().BeSameAs(userMulticast);
+        transports.UserUnicast.Should().BeSameAs(userUnicast);
+        transports.MetatrafficUnicastLocators.Select(static locator => locator.ToIPAddress())
+            .Should().Equal(IPAddress.Parse("127.0.0.3"));
+        transports.DefaultUnicastLocators.Select(static locator => locator.ToIPAddress())
+            .Should().Equal(IPAddress.Parse("127.0.0.3"));
+    }
+
+    [Fact]
+    public void Restartは_custom_transportのライフサイクルを変更しない()
+    {
+        var calls = new List<string>();
+        using var transports = ParticipantTransportSet.Create(CreateOptions(calls));
+        transports.Start();
+        var beforeRestart = calls.ToArray();
+
+        transports.RestartOwnedTransports();
+
+        calls.Should().Equal(beforeRestart);
+    }
+
     private static ContextOptions CreateOptions(List<string> calls)
         => new()
         {

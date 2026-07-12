@@ -260,6 +260,76 @@ public class UdpTransportTests
         }
     }
 
+    [Fact]
+    public async Task Unicast_restart後も同じ_instanceと_handlerで受信を再開する()
+    {
+        using var receiver = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+        using var sender = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+        var originalLocator = receiver.LocalLocator;
+        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        receiver.Received += (data, _) =>
+        {
+            if (data.Span[0] == 0x01) first.TrySetResult();
+            if (data.Span[0] == 0x02) second.TrySetResult();
+        };
+        receiver.Start();
+
+        await sender.SendAsync(new byte[] { 0x01 }, originalLocator);
+        await first.Task.WaitAsync(ReceiveTimeout);
+
+        receiver.Restart();
+
+        receiver.LocalLocator.Should().Be(originalLocator);
+        await sender.SendAsync(new byte[] { 0x02 }, originalLocator);
+        await second.Task.WaitAsync(ReceiveTimeout);
+    }
+
+    [Fact]
+    public async Task Multicast_restart後も同じ_handlerで自己受信を再開する()
+    {
+        var group = IPAddress.Parse("239.255.42.124");
+        int port = GetFreeUdpPort();
+        using var transport = UdpTransport.CreateMulticast(group, port, IPAddress.Loopback);
+        var destination = Locator.FromUdpV4(group, (uint)port);
+        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        transport.Received += (data, _) =>
+        {
+            if (data.Span[0] == 0x11) first.TrySetResult();
+            if (data.Span[0] == 0x22) second.TrySetResult();
+        };
+        transport.Start();
+
+        await transport.SendAsync(new byte[] { 0x11 }, destination);
+        await first.Task.WaitAsync(ReceiveTimeout);
+
+        transport.Restart();
+
+        await transport.SendAsync(new byte[] { 0x22 }, destination);
+        await second.Task.WaitAsync(ReceiveTimeout);
+    }
+
+    [Fact]
+    public void Dispose後の_restartは_ObjectDisposedException()
+    {
+        var transport = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+        transport.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => transport.Restart());
+    }
+
+    [Fact]
+    public void Start前の_restartは同じportを再bindする()
+    {
+        using var transport = UdpTransport.CreateUnicast(IPAddress.Loopback, 0);
+        var locator = transport.LocalLocator;
+
+        transport.Restart();
+
+        transport.LocalLocator.Should().Be(locator);
+    }
+
     private static int GetFreeUdpPort()
     {
         using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);

@@ -18,6 +18,8 @@ public sealed class ContextOptions
     public int DomainId { get; init; }
     public int ParticipantId { get; init; } = 0;
     public bool AutoProbeParticipantId { get; init; } = true;
+    /// <summary>NIC の IP 変更時に組み込み UDP transport を自動復旧する。</summary>
+    public bool EnableAutomaticNetworkRecovery { get; init; } = true;
     public TimeSpan SpdpInterval { get; init; } = TimeSpan.FromSeconds(3);
     public TimeSpan SedpInterval { get; init; } = TimeSpan.FromSeconds(3);
     public Duration LeaseDuration { get; init; } = Duration.FromSeconds(20);

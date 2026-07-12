@@ -102,12 +102,43 @@ internal sealed class EndpointRegistry
         }
     }
 
+    public EndpointDiscoverySnapshot UpdateLocalLocators(
+        IReadOnlyList<Locator> unicastLocators,
+        Locator multicastLocator)
+    {
+        if (unicastLocators is null) throw new ArgumentNullException(nameof(unicastLocators));
+
+        lock (_lock)
+        {
+            foreach (var endpoint in _writers)
+            {
+                UpdateEndpointLocators(endpoint, unicastLocators, multicastLocator);
+            }
+            foreach (var endpoint in _readers)
+            {
+                UpdateEndpointLocators(endpoint, unicastLocators, multicastLocator);
+            }
+            return new EndpointDiscoverySnapshot(_writers.ToArray(), _readers.ToArray());
+        }
+    }
+
     private void RefreshWriterSnapshotLocked()
     {
         _writerSnapshot = _writersByTopic.Values
             .SelectMany(static items => items)
             .Select(static item => item.Writer)
             .ToArray();
+    }
+
+    private static void UpdateEndpointLocators(
+        DiscoveredEndpointData endpoint,
+        IReadOnlyList<Locator> unicastLocators,
+        Locator multicastLocator)
+    {
+        endpoint.UnicastLocators.Clear();
+        endpoint.UnicastLocators.AddRange(unicastLocators);
+        endpoint.MulticastLocators.Clear();
+        endpoint.MulticastLocators.Add(multicastLocator);
     }
 
     private static void AddByTopic<T>(Dictionary<string, List<T>> map, string topic, T item)
