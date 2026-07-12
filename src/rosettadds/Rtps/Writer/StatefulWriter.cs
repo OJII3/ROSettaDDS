@@ -39,14 +39,8 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     private readonly bool _purgeAckedSamples;
     private readonly bool _resendHistoryOnMatch;
 
-    private readonly object _matchedLock = new();
-    private readonly Dictionary<Guid, ReaderProxy> _matched = new();
-    private long _totalMatchedReaders;
-    private Guid? _lastSubscriptionHandle;
-    private int _lastReportedCurrentReaders;
-    private long _lastReportedTotalReaders;
-    private readonly object _backgroundTasksLock = new();
-    private readonly HashSet<Task> _backgroundTasks = new();
+    private readonly MatchedReaderRegistry _registry = new();
+    private readonly BackgroundOperationTracker _tracker;
 
     private CancellationTokenSource? _cts;
     private Task? _hbLoop;
@@ -82,6 +76,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
         _purgeAckedSamples = purgeAckedSamples;
         _resendHistoryOnMatch = resendHistoryOnMatch;
         _logger = logger ?? NullLogger.Instance;
+        _tracker = new BackgroundOperationTracker(_logger);
         Guid = new Guid(localPrefix, writerEntityId);
     }
 
@@ -94,39 +89,21 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     public void MatchReader(Guid readerGuid, Locator? unicastLocator = null, ReliabilityKind reliability = ReliabilityKind.Reliable)
     {
         ThrowIfDisposed();
-        ReaderProxy? addedProxy = null;
-        lock (_matchedLock)
-        {
-            if (_matched.TryGetValue(readerGuid, out var existing))
-            {
-                existing.UpdateUnicastLocator(unicastLocator);
-                // reliability は proxy 生成時に確定するため再設定しない
-            }
-            else
-            {
-                addedProxy = new ReaderProxy(readerGuid, unicastLocator, reliability);
-                _matched[readerGuid] = addedProxy;
-                _totalMatchedReaders++;
-                _lastSubscriptionHandle = readerGuid;
-            }
-        }
-        if (addedProxy is not null)
+        var (proxy, added) = _registry.Match(readerGuid, unicastLocator, reliability);
+        if (added)
         {
             if (_resendHistoryOnMatch)
             {
                 RunBackground(
-                    token => SendHistoricalDataToReaderAsync(addedProxy, token),
+                    token => SendHistoricalDataToReaderAsync(proxy, token),
                     "StatefulWriter historical DATA send");
             }
             else if (reliability == ReliabilityKind.Reliable)
             {
-                // Pre-join sample suppression: Volatile writer + reliable reader のとき、
-                // match 時点の writer 履歴 LastSequenceNumber を per-reader low watermark として記録する。
-                // これにより NACK されてきた pre-join SN には GAP を返し、DATA では再送しない。
                 var lastSn = _history.LastSequenceNumber;
                 if (lastSn.Value > 0)
                 {
-                    addedProxy.SetLowWatermark(lastSn);
+                    proxy.SetLowWatermark(lastSn);
                     _logger.Debug(
                         $"StatefulWriter: pre-join low watermark {lastSn} set for reader {readerGuid} (Volatile)");
                 }
@@ -136,52 +113,27 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
 
     public void UnmatchReader(Guid readerGuid)
     {
-        lock (_matchedLock) { _matched.Remove(readerGuid); }
+        _registry.Unmatch(readerGuid);
     }
 
     public ReaderProxy? GetReaderProxy(Guid readerGuid)
     {
-        lock (_matchedLock) { return _matched.TryGetValue(readerGuid, out var p) ? p : null; }
+        return _registry.Find(readerGuid);
     }
 
     public IReadOnlyList<ReaderProxy> MatchedReaders
     {
-        get { lock (_matchedLock) { return _matched.Values.ToArray(); } }
+        get { return _registry.Snapshot(); }
     }
 
     public int MatchedReaderCount
     {
-        get { lock (_matchedLock) { return _matched.Count; } }
+        get { return _registry.Count; }
     }
 
     public PublicationMatchedStatus PublicationMatchedStatus
     {
-        get
-        {
-            int current;
-            long total;
-            int currentChange;
-            long totalChange;
-            Guid? lastHandle;
-            lock (_matchedLock)
-            {
-                current = _matched.Count;
-                total = _totalMatchedReaders;
-                lastHandle = _lastSubscriptionHandle;
-                currentChange = current - _lastReportedCurrentReaders;
-                totalChange = total - _lastReportedTotalReaders;
-                _lastReportedCurrentReaders = current;
-                _lastReportedTotalReaders = total;
-            }
-            return new PublicationMatchedStatus
-            {
-                CurrentCount = current,
-                CurrentCountChange = currentChange,
-                TotalCount = checked((int)Math.Min(total, int.MaxValue)),
-                TotalCountChange = checked((int)Math.Min(totalChange, int.MaxValue)),
-                LastSubscriptionHandle = lastHandle,
-            };
-        }
+        get { return _registry.TakePublicationMatchedStatus(); }
     }
 
     /// <summary>
@@ -293,31 +245,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
 
     private void WaitForBackgroundTasks()
     {
-        Task[] tasks;
-        lock (_backgroundTasksLock)
-        {
-            tasks = _backgroundTasks.ToArray();
-        }
-
-        if (tasks.Length == 0)
-        {
-            return;
-        }
-
-        try
-        {
-            if (!Task.WaitAll(tasks, TimeSpan.FromSeconds(1)))
-            {
-                _logger.Warn("StatefulWriter background tasks did not exit cleanly");
-            }
-        }
-        catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException))
-        {
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn("StatefulWriter background tasks did not exit cleanly", ex);
-        }
+        _tracker.WaitForCompletion(TimeSpan.FromSeconds(1));
     }
 
     public void Dispose()
@@ -354,21 +282,17 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     {
         if (!ack.WriterEntityId.Equals(_writerEntityId)) return;
 
-        // reader 側 EntityId + sourcePrefix で proxy を特定
         var readerGuid = new Guid(ctx.SourceGuidPrefix, ack.ReaderEntityId);
-        ReaderProxy? proxy;
-        lock (_matchedLock) { _matched.TryGetValue(readerGuid, out proxy); }
+        var proxy = _registry.Find(readerGuid);
         if (proxy is null) return;
 
         proxy.ProcessAckNack(ack.ReaderSnState);
 
         if (_purgeAckedSamples)
         {
-            // ack 済みサンプルを history から削除 (全 reader の最小 ack を基準)
             PurgeAckedSamples();
         }
 
-        // 再送
         RunBackground(
             token => ResendRequestedAsync(proxy, token),
             "StatefulWriter requested resend");
@@ -384,25 +308,12 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     /// </summary>
     private void PurgeAckedSamples()
     {
-        long minAcked;
-        lock (_matchedLock)
+        var minAcked = _registry.MinimumReliableAcknowledged();
+        if (minAcked is null) return;
+        var value = minAcked.Value.Value;
+        if (value > 0 && value < long.MaxValue)
         {
-            if (_matched.Count == 0) return;
-            minAcked = long.MaxValue;
-            bool hasReliable = false;
-            foreach (var proxy in _matched.Values)
-            {
-                if (!proxy.IsReliable) continue;
-                hasReliable = true;
-                var acked = proxy.HighestAcked.Value;
-                if (acked < minAcked) minAcked = acked;
-            }
-            // reliable proxy が 1 つも無ければ purge しない
-            if (!hasReliable) return;
-        }
-        if (minAcked > 0 && minAcked < long.MaxValue)
-        {
-            _history.RemoveBelowOrEqual(new SequenceNumber(minAcked));
+            _history.RemoveBelowOrEqual(new SequenceNumber(value));
         }
     }
 
@@ -420,61 +331,14 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
 
     private void RunBackground(Func<CancellationToken, Task> operation, string operationName)
     {
-        CancellationToken token;
-        lock (_backgroundTasksLock)
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            token = _cts?.Token ?? CancellationToken.None;
-        }
-
-        var task = RunBackgroundAsync(operation, operationName, token);
-        lock (_backgroundTasksLock)
-        {
-            _backgroundTasks.Add(task);
-        }
-
-        _ = task.ContinueWith(
-            completed =>
-            {
-                lock (_backgroundTasksLock)
-                {
-                    _backgroundTasks.Remove(completed);
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
-
-    private async Task RunBackgroundAsync(
-        Func<CancellationToken, Task> operation,
-        string operationName,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            await operation(cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (ObjectDisposedException) when (_disposed || cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn($"{operationName} failed", ex);
-        }
+        if (_disposed) return;
+        var token = _cts?.Token ?? CancellationToken.None;
+        _tracker.Run(operation, operationName, token);
     }
 
     private async ValueTask SendHeartbeatToAllAsync(CancellationToken cancellationToken)
     {
-        ReaderProxy[] proxies;
-        lock (_matchedLock) { proxies = _matched.Values.ToArray(); }
+        var proxies = _registry.Snapshot();
         if (proxies.Length == 0)
         {
             // matched reader がいないが、multicast に向けて HB を出すこともある (初期発見支援)
@@ -540,8 +404,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
 
     private async ValueTask SendDataAsync(CacheChange change, CancellationToken cancellationToken)
     {
-        ReaderProxy[] proxies;
-        lock (_matchedLock) { proxies = _matched.Values.ToArray(); }
+        var proxies = _registry.Snapshot();
         if (proxies.Length == 0)
         {
             // matched reader がいなければ multicast へ
