@@ -80,13 +80,14 @@ public class NodeTests
         using var talker = new Node(talkerCtx, "talker");
         using var listener = new Node(listenerCtx, "listener");
 
+        var topicName = $"chatter_{System.Guid.NewGuid():N}";
         var received = new System.Collections.Concurrent.ConcurrentQueue<string>();
         using var sub = listener.CreateSubscription<StringMessage>(
-            "chatter", StringMessageSerializer.Instance,
+            topicName, StringMessageSerializer.Instance,
             (msg, _) => received.Enqueue(msg.Data),
             typeName: StringMessage.DdsTypeName);
         using var pub = talker.CreatePublisher<StringMessage>(
-            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+            topicName, StringMessageSerializer.Instance, StringMessage.DdsTypeName);
 
         // 両側でマッチしてから配信
         await sub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(10));
