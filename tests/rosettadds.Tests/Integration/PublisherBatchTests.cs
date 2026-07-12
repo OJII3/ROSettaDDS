@@ -104,7 +104,10 @@ public class PublisherBatchTests
 
         pA.Start();
         pB.Start();
-        await pub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+        var subMatched = await sub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+        var pubMatched = await pub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+        subMatched.Should().BeTrue("subscription should discover publisher before sending");
+        pubMatched.Should().BeTrue("publisher should discover subscription before sending");
 
         const int N = 1000;
         var messages = new StringMessage[N];
@@ -151,7 +154,10 @@ public class PublisherBatchTests
 
         pA.Start();
         pB.Start();
-        await pub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+        var subMatched = await sub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+        var pubMatched = await pub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+        subMatched.Should().BeTrue("subscription should discover publisher before sending");
+        pubMatched.Should().BeTrue("publisher should discover subscription before sending");
 
         const int N = 500;
         var msg = new StringMessage("payload");
@@ -233,7 +239,10 @@ public class PublisherBatchTests
 
         pA.Start();
         pB.Start();
-        await pub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+        var subMatched = await sub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+        var pubMatched = await pub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5));
+        subMatched.Should().BeTrue("subscription should discover publisher before sending");
+        pubMatched.Should().BeTrue("publisher should discover subscription before sending");
 
         const int N = 2000;
         var messages = new StringMessage[N];
