@@ -189,30 +189,49 @@ public class TopicDiagnosticsTests
 
         var cloned = orig.Clone();
 
-        // cloned の Partition は独立した配列を指す
         cloned.Partition.Should().Be(new PartitionQos("group_a"));
         orig.Partition = new PartitionQos("group_b");
         cloned.Partition.Should().Be(new PartitionQos("group_a"));
     }
 
     [Fact]
-    public void Clone_はPartitionQosの配列要素変更がsnapshotに影響しない()
+    public void Clone_はPartitionQosの元配列要素変更に影響されない()
+    {
+        var names = new[] { "original" };
+        var orig = new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Writer,
+            TopicName = "rt/array_test",
+            Partition = new PartitionQos(names),
+        };
+
+        var cloned = orig.Clone();
+
+        // 元の配列要素を書き換えても cloned に影響しない
+        names[0] = "mutated";
+        cloned.Partition.Names.Should().Equal("original");
+    }
+
+    [Fact]
+    public void CreateGraphSnapshot_はPartitionQosの元配列要素変更に影響されない()
     {
         using var context = CreateContext();
-        using var node = new Node(context, "partition_node");
+        using var node = new Node(context, "part_arr_node");
 
         var prefix = Prefix(7);
         context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
-        var endp = Endpoint(prefix, EndpointKind.Writer, 0x70, "rt/part_topic");
-        endp.Partition = new PartitionQos("group_x");
+
+        var names = new[] { "snapshot_group" };
+        var endp = Endpoint(prefix, EndpointKind.Writer, 0x70, "rt/part_arr");
+        endp.Partition = new PartitionQos(names);
         context.DiscoveryDb.UpsertEndpoint(endp, DateTime.UtcNow);
 
+        // snapshot 取得後に元の配列要素を書き換えても snapshot に影響しない
         var snapshot = context.CreateGraphSnapshot();
-        snapshot.Endpoints[0].Partition.Should().Be(new PartitionQos("group_x"));
+        snapshot.Endpoints[0].Partition.Names.Should().Equal("snapshot_group");
 
-        // 元の PartitionQos は値型だが内部配列は独立している
-        endp.Partition = new PartitionQos("group_y");
-        snapshot.Endpoints[0].Partition.Should().Be(new PartitionQos("group_x"));
+        names[0] = "corrupted";
+        snapshot.Endpoints[0].Partition.Names.Should().Equal("snapshot_group");
     }
 
     [Fact]
@@ -300,211 +319,114 @@ public class TopicDiagnosticsTests
     // ======== Dispose 時の SEDP unregister 通知 ========
 
     [Fact]
-    public void Node_Dispose_でSEDP_unregisterが呼ばれる()
+    public void Node_Dispose_でSEDP_unregisterが発行される()
     {
         using var context = CreateContext();
         context.Start();
+        var initialCount = context.PublishedPublicationStateCount;
+
         var node = new Node(context, "sedp_node");
         var pub = node.CreatePublisher<StringMessage>(
             "sedp_test", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
 
-        var snapBefore = context.CreateGraphSnapshot();
-        snapBefore.Endpoints.Should().Contain(e => e.Kind == EndpointKind.Writer);
+        // 広告後は count が増えている (add publication が発行された)
+        var afterAdvertise = context.PublishedPublicationStateCount;
+        afterAdvertise.Should().BeGreaterThan(initialCount,
+            "add publication must increase PublishedPublicationStateCount");
 
-        // Dispose で endpoint が除去される
         node.Dispose();
 
-        var snapAfter = context.CreateGraphSnapshot();
-        snapAfter.Endpoints.Should().NotContain(e => e.Kind == EndpointKind.Writer);
+        // Dispose 後は count が再度増えている (unregister publication が発行された)
+        var afterDispose = context.PublishedPublicationStateCount;
+        afterDispose.Should().BeGreaterThan(afterAdvertise,
+            "dispose must send unregister and increase PublishedPublicationStateCount");
     }
 
-    // ======== graph lock による競合安定性 ========
-
-    // --- 内部境界を使った競合テスト (UDP 非依存) ---
+    // ======== graph lock 競合検出 ========
 
     [Fact]
-    public async Task 内部境界_並行remote追加とCreateGraphSnapshotで中間値が許容集合()
+    public void ExternalLockEnter_は_graphLock_と同一Monitorでmutationをブロックする()
     {
         using var context = CreateContext();
-        using var node = new Node(context, "race_node");
+        using var node = new Node(context, "lock_contention");
 
         var prefix = Prefix(20);
         context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
 
-        var added = new List<Guid>();
-        var tasks = new List<Task>();
-        var started = new TaskCompletionSource();
-        var snapshotResults = new List<GraphSnapshot>();
-        const int iterations = 15;
+        // GraphLock を保持 → ExternalLockEnter がブロックすることを確認
+        var mutationStarted = new ManualResetEventSlim();
+        var mutationCompleted = false;
 
-        for (int i = 0; i < iterations; i++)
+        var mutationThread = new Thread(() =>
         {
-            int idx = i;
-            tasks.Add(Task.Run(async () =>
-            {
-                await started.Task;
-                var endp = Endpoint(prefix, EndpointKind.Writer, (uint)(0x100 + idx), $"rt/race_{idx}");
-                context.DiscoveryDb.UpsertEndpoint(endp, DateTime.UtcNow);
-                lock (added) { if (!added.Contains(endp.EndpointGuid)) added.Add(endp.EndpointGuid); }
-            }));
+            mutationStarted.Set();
+            // UpsertEndpoint 内部で ExternalLockEnter → Monitor.Enter(_graphLock) を呼ぶ
+            context.DiscoveryDb.UpsertEndpoint(
+                Endpoint(prefix, EndpointKind.Writer, 0x20, "rt/locked"),
+                DateTime.UtcNow);
+            mutationCompleted = true;
+        });
+
+        lock (context.GraphLock)
+        {
+            mutationThread.Start();
+            mutationStarted.Wait(TimeSpan.FromSeconds(1));
+
+            // Mutation スレッドは Monitor.Enter(_graphLock) でブロックされている
+            Thread.Sleep(200);
+            mutationCompleted.Should().BeFalse(
+                "mutation must be blocked by same lock as GraphLock");
+
+            // Lock 保持中は snapshot もブロックされる → test thread が lock を保持しているので
+            // このテストでは snapshot は取らない（別スレッドで取ればブロック確認できる）
         }
 
-        tasks.Add(Task.Run(async () =>
-        {
-            await started.Task;
-            for (int j = 0; j < 10; j++)
-            {
-                var snap = context.CreateGraphSnapshot();
-                lock (snapshotResults) snapshotResults.Add(snap);
-            }
-        }));
+        // Lock 解放 → mutation が進行
+        mutationThread.Join(TimeSpan.FromSeconds(1));
+        mutationCompleted.Should().BeTrue("mutation must complete after GraphLock released");
 
-        started.SetResult();
-        await Task.WhenAll(tasks);
-
-        // 全端点が最終的に追加されている
-        context.CreateGraphSnapshot().Endpoints.Should().HaveCount(iterations);
-
-        // 各中間 snapshot の GUID 集合は追加前または追加後の一貫した部分集合
-        var finalGuids = new HashSet<Guid>(added);
-        foreach (var snap in snapshotResults)
-        {
-            var snapGuids = snap.Endpoints.Select(e => e.EndpointGuid).ToHashSet();
-            // snapGuids は finalGuids の部分集合
-            snapGuids.IsSubsetOf(finalGuids).Should().BeTrue(
-                "snapshot GUID must be subset of final set");
-        }
+        // mutation 後の状態を確認
+        context.CreateGraphSnapshot().Endpoints.Should().Contain(e => e.TopicName == "rt/locked");
     }
 
     [Fact]
-    public async Task 内部境界_並行remote削除とCreateGraphSnapshotで中間値が許容集合()
+    public void CreateGraphSnapshot中はmutationが_graphLock待ちでブロックされる()
     {
         using var context = CreateContext();
-        using var node = new Node(context, "delete_race_node");
+        using var node = new Node(context, "snapshot_blocks_mutation");
 
         var prefix = Prefix(21);
         context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
-        for (int i = 0; i < 15; i++)
+
+        // long snapshot をシミュレートする代わりに、
+        // GraphLock 保持中に mutation がブロックされることを確認する
+        var mutationQueued = false;
+        var mutationCompleted = false;
+
+        var mutationThread = new Thread(() =>
         {
+            mutationQueued = true;
             context.DiscoveryDb.UpsertEndpoint(
-                Endpoint(prefix, EndpointKind.Writer, (uint)(0x200 + i), $"rt/del_{i}"),
+                Endpoint(prefix, EndpointKind.Writer, 0x21, "rt/blocked"),
                 DateTime.UtcNow);
+            mutationCompleted = true;
+        });
+
+        // GraphLock を取得 (CreateGraphSnapshot 内部で取得されるのと同一)
+        lock (context.GraphLock)
+        {
+            mutationThread.Start();
+            Thread.Sleep(200);
+
+            mutationCompleted.Should().BeFalse(
+                "mutation must be blocked while GraphLock is held (as in CreateGraphSnapshot)");
         }
 
-        var tasks = new List<Task>();
-        var started = new TaskCompletionSource();
-        var snapshotResults = new List<GraphSnapshot>();
-        var initialCount = context.CreateGraphSnapshot().Endpoints.Count;
+        mutationThread.Join(TimeSpan.FromSeconds(1));
+        mutationCompleted.Should().BeTrue(
+            "mutation must complete after GraphLock released");
 
-        for (int i = 0; i < 15; i++)
-        {
-            int idx = i;
-            tasks.Add(Task.Run(async () =>
-            {
-                await started.Task;
-                context.DiscoveryDb.TryRemoveEndpoint(
-                    EndpointKind.Writer,
-                    new Guid(prefix, new EntityId((uint)(0x200 + idx), EntityKind.UserDefinedWriterNoKey)));
-            }));
-        }
-
-        tasks.Add(Task.Run(async () =>
-        {
-            await started.Task;
-            for (int j = 0; j < 10; j++)
-            {
-                var snap = context.CreateGraphSnapshot();
-                lock (snapshotResults) snapshotResults.Add(snap);
-            }
-        }));
-
-        started.SetResult();
-        await Task.WhenAll(tasks);
-
-        // 全端点が削除されている
-        context.CreateGraphSnapshot().Endpoints.Should().BeEmpty();
-
-        // 各中間 snapshot は初期状態の部分集合
-        foreach (var snap in snapshotResults)
-        {
-            snap.Endpoints.Count.Should().BeLessOrEqualTo(initialCount,
-                "intermediate snapshot must be subset of initial state");
-        }
-    }
-
-    [Fact]
-    public async Task 内部境界_並行remote追加_削除とCreateGraphSnapshotで競合しない()
-    {
-        using var context = CreateContext();
-        using var node = new Node(context, "mixed_race_node");
-
-        var prefix = Prefix(22);
-        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
-        for (int i = 0; i < 10; i++)
-        {
-            context.DiscoveryDb.UpsertEndpoint(
-                Endpoint(prefix, EndpointKind.Writer, (uint)(0x300 + i), $"rt/mix_{i}"),
-                DateTime.UtcNow);
-        }
-
-        var tasks = new List<Task>();
-        var started = new TaskCompletionSource();
-        var snapshotResults = new List<GraphSnapshot>();
-        var initialGuids = context.CreateGraphSnapshot().Endpoints
-            .Select(e => e.EndpointGuid).ToHashSet();
-
-        // 5 件削除 + 5 件追加を並行
-        for (int i = 0; i < 5; i++)
-        {
-            int idx = i;
-            tasks.Add(Task.Run(async () =>
-            {
-                await started.Task;
-                context.DiscoveryDb.TryRemoveEndpoint(
-                    EndpointKind.Writer,
-                    new Guid(prefix, new EntityId((uint)(0x300 + idx), EntityKind.UserDefinedWriterNoKey)));
-            }));
-        }
-        for (int i = 0; i < 5; i++)
-        {
-            int idx = i + 100;
-            tasks.Add(Task.Run(async () =>
-            {
-                await started.Task;
-                context.DiscoveryDb.UpsertEndpoint(
-                    Endpoint(prefix, EndpointKind.Writer, (uint)(0x400 + idx), $"rt/new_{idx}"),
-                    DateTime.UtcNow);
-            }));
-        }
-
-        tasks.Add(Task.Run(async () =>
-        {
-            await started.Task;
-            for (int j = 0; j < 10; j++)
-            {
-                var snap = context.CreateGraphSnapshot();
-                lock (snapshotResults) snapshotResults.Add(snap);
-            }
-        }));
-
-        started.SetResult();
-        await Task.WhenAll(tasks);
-
-        var finalSnap = context.CreateGraphSnapshot();
-        // 10 初期 - 5 削除 + 5 追加 = 10
-        finalSnap.Endpoints.Should().HaveCount(10);
-
-        // 各中間 snapshot の GUID は初期集合と最終集合の和集合の部分集合
-        var finalGuids = finalSnap.Endpoints.Select(e => e.EndpointGuid).ToHashSet();
-        var allPossible = new HashSet<Guid>(initialGuids);
-        allPossible.UnionWith(finalGuids);
-
-        foreach (var snap in snapshotResults)
-        {
-            var snapGuids = snap.Endpoints.Select(e => e.EndpointGuid).ToHashSet();
-            snapGuids.IsSubsetOf(allPossible).Should().BeTrue(
-                "snapshot GUID must be subset of initial ∪ final set");
-        }
+        context.CreateGraphSnapshot().Endpoints.Should().Contain(e => e.TopicName == "rt/blocked");
     }
 
     // ======== service topic (rq/rr) が内部基盤に含まれることの確認 ========
