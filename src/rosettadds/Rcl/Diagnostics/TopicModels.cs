@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using ROSettaDDS.Common;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
@@ -49,16 +50,16 @@ namespace ROSettaDDS.Rcl.Diagnostics
 
         internal TopicInfo(
             string topicName,
-            IReadOnlyList<string> rosTypeNames,
+            string[] rosTypeNames,
             int publisherCount,
             int subscriberCount,
-            IReadOnlyList<TopicEndpointInfo> endpoints)
+            TopicEndpointInfo[] endpoints)
         {
             TopicName = topicName;
-            RosTypeNames = rosTypeNames;
+            RosTypeNames = Array.AsReadOnly(rosTypeNames);
             PublisherCount = publisherCount;
             SubscriberCount = subscriberCount;
-            Endpoints = endpoints;
+            Endpoints = Array.AsReadOnly(endpoints);
         }
     }
 }

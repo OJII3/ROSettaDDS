@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Dds;
@@ -883,5 +884,128 @@ public class TopicDiagnosticsTests
         info!.Endpoints.Should().HaveCount(2);
         info.PublisherCount.Should().Be(1);
         info.SubscriberCount.Should().Be(1);
+    }
+
+    // ======== Spec Review Fixes ========
+
+    [Fact]
+    public void GetTopics_は同一Contextの2Nodeすべてのlocal端点をIsLocalとして含む()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node1 = new Node(context, "node1");
+        using var node2 = new Node(context, "node2");
+        using var pub1 = node1.CreatePublisher<StringMessage>(
+            "local_topic", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+        using var sub2 = node2.CreateSubscription<StringMessage>(
+            "local_topic", StringMessageSerializer.Instance, (_) => { });
+
+        using var diag = node1.CreateTopicDiagnostics();
+        var info = diag.GetTopicInfo("/local_topic");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().OnlyContain(e => e.IsLocal);
+        info.Endpoints.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void GetTopicsの返却リストはReadOnlyCollectionで配列にcastできない()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "ro_node");
+        using var diag = node.CreateTopicDiagnostics();
+        var topics = diag.GetTopics();
+        topics.Should().BeAssignableTo<ReadOnlyCollection<TopicInfo>>();
+        // cast して Add しようとするとコンパイル・実行時エラーになることを確認
+        Func<TopicInfo> addItem = () =>
+        {
+            ((IList<TopicInfo>)topics).Add(default!);
+            return default!;
+        };
+        addItem.Should().Throw<NotSupportedException>();
+    }
+
+    [Fact]
+    public void TopicInfoのRosTypeNamesはReadOnlyCollectionで配列にcastできない()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "ro_type_node");
+        using var pub = node.CreatePublisher<StringMessage>(
+            "ro_type", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+        using var diag = node.CreateTopicDiagnostics();
+        var info = diag.GetTopicInfo("/ro_type");
+        info.Should().NotBeNull();
+        info!.RosTypeNames.Should().BeAssignableTo<ReadOnlyCollection<string>>();
+        Func<string> addItem = () =>
+        {
+            ((IList<string>)info.RosTypeNames).Add("hacked");
+            return default!;
+        };
+        addItem.Should().Throw<NotSupportedException>();
+    }
+
+    [Fact]
+    public void TopicInfoのEndpointsはReadOnlyCollectionで配列にcastできない()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "ro_ep_node");
+        using var pub = node.CreatePublisher<StringMessage>(
+            "ro_ep", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+        using var diag = node.CreateTopicDiagnostics();
+        var info = diag.GetTopicInfo("/ro_ep");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().BeAssignableTo<ReadOnlyCollection<TopicEndpointInfo>>();
+        Func<TopicEndpointInfo> addItem = () =>
+        {
+            ((IList<TopicEndpointInfo>)info.Endpoints).Add(default!);
+            return default!;
+        };
+        addItem.Should().Throw<NotSupportedException>();
+    }
+
+    [Fact]
+    public void GetTopicsのエンドポイントは同一topic内でGUIDのordinal順に並ぶ()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "guid_order_node");
+
+        var prefix = Prefix(50);
+        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
+        // entityKey 順: 0x10 (Reader), 0x20 (Writer), 0x30 (Writer)
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x30, "rt/guid_order"), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Reader, 0x10, "rt/guid_order"), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x20, "rt/guid_order"), DateTime.UtcNow);
+
+        using var diag = node.CreateTopicDiagnostics();
+        var info = diag.GetTopicInfo("/guid_order");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().HaveCount(3);
+        info.Endpoints[0].EndpointGuid.EntityId.Value.Should().Be(
+            new EntityId(0x10, EntityKind.UserDefinedReaderNoKey).Value);
+        info.Endpoints[1].EndpointGuid.EntityId.Value.Should().Be(
+            new EntityId(0x20, EntityKind.UserDefinedWriterNoKey).Value);
+        info.Endpoints[2].EndpointGuid.EntityId.Value.Should().Be(
+            new EntityId(0x30, EntityKind.UserDefinedWriterNoKey).Value);
+    }
+
+    [Fact]
+    public void GetTopics_はrt_nestedのtopic名を正しくdemangleする()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "nested_node");
+
+        var prefix = Prefix(51);
+        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x10, "rt/foo/bar"), DateTime.UtcNow);
+
+        using var diag = node.CreateTopicDiagnostics();
+        var info = diag.GetTopicInfo("/foo/bar");
+        info.Should().NotBeNull();
+        info!.TopicName.Should().Be("/foo/bar");
     }
 }

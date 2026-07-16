@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using ROSettaDDS.Common;
-using ROSettaDDS.Dds;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Rcl.Naming;
 
@@ -25,7 +25,7 @@ namespace ROSettaDDS.Rcl.Diagnostics
         public IReadOnlyList<TopicInfo> GetTopics()
         {
             ThrowIfDisposed();
-            return BuildTopicSnapshot();
+            return Array.AsReadOnly(BuildTopicSnapshot());
         }
 
         public TopicInfo? GetTopicInfo(string topicName)
@@ -35,7 +35,7 @@ namespace ROSettaDDS.Rcl.Diagnostics
             if (topicName.Length == 0) throw new ArgumentException("Value cannot be empty.", nameof(topicName));
 
             var topics = BuildTopicSnapshot();
-            for (int i = 0; i < topics.Count; i++)
+            for (int i = 0; i < topics.Length; i++)
             {
                 if (topics[i].TopicName == topicName)
                     return topics[i];
@@ -54,22 +54,15 @@ namespace ROSettaDDS.Rcl.Diagnostics
             if (_node.IsDisposed) throw new ObjectDisposedException(GetType().Name);
         }
 
-        private IReadOnlyList<TopicInfo> BuildTopicSnapshot()
+        private TopicInfo[] BuildTopicSnapshot()
         {
-            var localSnapshot = _node.LocalEndpointSnapshot();
-            var localGuids = new HashSet<Guid>();
-            for (int i = 0; i < localSnapshot.Writers.Length; i++)
-                localGuids.Add(localSnapshot.Writers[i].EndpointGuid);
-            for (int i = 0; i < localSnapshot.Readers.Length; i++)
-                localGuids.Add(localSnapshot.Readers[i].EndpointGuid);
-
-            var graphSnapshot = _context.CreateGraphSnapshot();
+            var (snapshot, localGuids) = _context.CreateGraphSnapshotWithLocalInfo();
 
             var endpointInfos = new List<(string displayTopicName, TopicEndpointInfo info)>();
 
-            for (int i = 0; i < graphSnapshot.Endpoints.Count; i++)
+            for (int i = 0; i < snapshot.Endpoints.Count; i++)
             {
-                var ep = graphSnapshot.Endpoints[i];
+                var ep = snapshot.Endpoints[i];
                 if (!ep.TopicName.StartsWith(TopicNameMangler.TopicPrefix, StringComparison.Ordinal))
                     continue;
 

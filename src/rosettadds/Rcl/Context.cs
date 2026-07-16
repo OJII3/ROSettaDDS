@@ -326,22 +326,42 @@ public sealed class Context : IDisposable
     internal GraphSnapshot CreateGraphSnapshot()
     {
         ThrowIfDisposed();
+        var result = CollectSnapshotCore();
+        return new GraphSnapshot(result.endpoints.AsReadOnly());
+    }
+
+    /// <summary>
+    /// <see cref="CreateGraphSnapshot"/> と同じ snapshot に加え、local GUID 集合を同時に返す。
+    /// diagnostics など local/remote 判定が必要な呼び出し元向け。
+    /// </summary>
+    internal (GraphSnapshot Snapshot, HashSet<Guid> LocalGuids) CreateGraphSnapshotWithLocalInfo()
+    {
+        ThrowIfDisposed();
+        var result = CollectSnapshotCore();
+        return (new GraphSnapshot(result.endpoints.AsReadOnly()), result.localGuids);
+    }
+
+    private (List<DiscoveredEndpointData> endpoints, HashSet<Guid> localGuids) CollectSnapshotCore()
+    {
         // _nodesLock → _graphLock の順で取得し、RegisterNode/UnregisterNode と逆転しない。
         lock (_nodesLock)
         lock (_graphLock)
         {
             GraphSnapshotEnterLockCallback?.Invoke();
             GraphSnapshotPauseCallback?.Invoke();
-            if (_disposed) return GraphSnapshot.Empty;
+            if (_disposed) return (new List<DiscoveredEndpointData>(), new HashSet<Guid>());
 
             var localWriters = new List<DiscoveredEndpointData>();
             var localReaders = new List<DiscoveredEndpointData>();
+            var localGuids = new HashSet<Guid>();
 
             foreach (var node in _nodes)
             {
                 var local = node.LocalEndpointSnapshot();
                 localWriters.AddRange(local.Writers);
                 localReaders.AddRange(local.Readers);
+                foreach (var w in local.Writers) localGuids.Add(w.EndpointGuid);
+                foreach (var r in local.Readers) localGuids.Add(r.EndpointGuid);
             }
 
             var remote = _discoveryDb.CreateEndpointSnapshot();
@@ -361,7 +381,7 @@ public sealed class Context : IDisposable
                 return CompareGuid(a.EndpointGuid, b.EndpointGuid);
             });
 
-            return new GraphSnapshot(all.AsReadOnly());
+            return (all, localGuids);
         }
     }
 
