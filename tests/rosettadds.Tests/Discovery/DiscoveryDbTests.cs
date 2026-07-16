@@ -259,7 +259,7 @@ public class DiscoveryDbTests
     }
 
     [Fact]
-    public void UpsertEndpointのExternalLockEnter中はCreateEndpointSnapshotに未反映()
+    public void CreateEndpointSnapshot保持中はUpsertEndpointがDiscoveryDbの_lock待ちになる()
     {
         var db = new DiscoveryDb();
         var now = DateTime.UtcNow;
@@ -269,51 +269,93 @@ public class DiscoveryDbTests
 
         db.UpsertParticipant(Participant(prefix), now);
 
-        var enteredMutation = new ManualResetEventSlim();
-        var continueMutation = new ManualResetEventSlim();
+        var snapshotHoldsLock = new ManualResetEventSlim();
+        var snapshotContinue = new ManualResetEventSlim();
+        db.SnapshotLockAcquiredCallback = () =>
+        {
+            snapshotHoldsLock.Set();
+            if (!snapshotContinue.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("snapshot hold lock timed out");
+        };
+
+        var mutationReachedLockGate = new ManualResetEventSlim();
+        var mutationAcquiredLock = new ManualResetEventSlim();
         var mutationCompleted = new ManualResetEventSlim();
 
-        db.ExternalLockEnter = () =>
+        db.ExternalLockEnter = () => mutationReachedLockGate.Set();
+        db.MutationLockAcquiredCallback = () => mutationAcquiredLock.Set();
+
+        var snapshotDone = new ManualResetEventSlim();
+        Exception? snapshotError = null;
+        var snapshotThread = new Thread(() =>
         {
-            enteredMutation.Set();
-            Assert.True(continueMutation.Wait(TimeSpan.FromSeconds(5)),
-                "mutation must be allowed to proceed within timeout");
-        };
+            try
+            {
+                db.CreateEndpointSnapshot();
+            }
+            catch (Exception ex)
+            {
+                snapshotError = ex;
+            }
+            finally
+            {
+                snapshotDone.Set();
+            }
+        });
+        snapshotThread.Start();
+
+        Assert.True(snapshotHoldsLock.Wait(TimeSpan.FromSeconds(5)),
+            "snapshot must acquire _lock");
 
         var mutationThread = new Thread(() =>
         {
-            db.UpsertEndpoint(
-                new DiscoveredEndpointData
-                {
-                    Kind = EndpointKind.Writer,
-                    EndpointGuid = writerGuid,
-                    ParticipantGuid = participantGuid,
-                    TopicName = "rt/race",
-                    TypeName = "std_msgs::msg::dds_::String_",
-                },
-                DateTime.UtcNow);
-            mutationCompleted.Set();
+            try
+            {
+                db.UpsertEndpoint(
+                    new DiscoveredEndpointData
+                    {
+                        Kind = EndpointKind.Writer,
+                        EndpointGuid = writerGuid,
+                        ParticipantGuid = participantGuid,
+                        TopicName = "rt/race",
+                        TypeName = "std_msgs::msg::dds_::String_",
+                    },
+                    DateTime.UtcNow);
+            }
+            finally
+            {
+                mutationCompleted.Set();
+            }
         });
         mutationThread.Start();
 
-        Assert.True(enteredMutation.Wait(TimeSpan.FromSeconds(5)),
+        Assert.True(mutationReachedLockGate.Wait(TimeSpan.FromSeconds(5)),
             "mutation must reach ExternalLockEnter");
 
-        var snapBefore = db.CreateEndpointSnapshot();
-        snapBefore.Writers.Should().BeEmpty();
+        Assert.False(mutationCompleted.Wait(TimeSpan.FromMilliseconds(300)),
+            "mutation must be blocked on _lock while snapshot holds it");
+        Assert.False(mutationAcquiredLock.IsSet,
+            "mutation must not acquire _lock while snapshot holds it");
 
-        continueMutation.Set();
+        snapshotContinue.Set();
+        Assert.True(snapshotDone.Wait(TimeSpan.FromSeconds(5)),
+            "snapshot must complete after barrier released");
+
+        if (snapshotError is not null)
+            throw new Exception("snapshot thread failed", snapshotError);
+
         Assert.True(mutationCompleted.Wait(TimeSpan.FromSeconds(5)),
-            "mutation must complete after ExternalLockEnter released");
+            "mutation must complete after snapshot releases _lock");
+        Assert.True(mutationAcquiredLock.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must acquire _lock after snapshot releases it");
 
-        var snapAfter = db.CreateEndpointSnapshot();
-        snapAfter.Writers.Should().ContainSingle(w => w.EndpointGuid.Equals(writerGuid));
-
+        db.SnapshotLockAcquiredCallback = null;
+        db.MutationLockAcquiredCallback = null;
         db.ExternalLockEnter = null;
     }
 
     [Fact]
-    public void TryRemoveEndpointのExternalLockEnter中はCreateEndpointSnapshotに削除が未反映()
+    public void CreateEndpointSnapshot保持中はTryRemoveEndpointがDiscoveryDbの_lock待ちになる()
     {
         var db = new DiscoveryDb();
         var now = DateTime.UtcNow;
@@ -333,37 +375,79 @@ public class DiscoveryDbTests
             },
             now);
 
-        var enteredMutation = new ManualResetEventSlim();
-        var continueMutation = new ManualResetEventSlim();
+        var snapshotHoldsLock = new ManualResetEventSlim();
+        var snapshotContinue = new ManualResetEventSlim();
+        db.SnapshotLockAcquiredCallback = () =>
+        {
+            snapshotHoldsLock.Set();
+            if (!snapshotContinue.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("snapshot hold lock timed out");
+        };
+
+        var mutationReachedLockGate = new ManualResetEventSlim();
+        var mutationAcquiredLock = new ManualResetEventSlim();
         var mutationCompleted = new ManualResetEventSlim();
 
-        db.ExternalLockEnter = () =>
+        db.ExternalLockEnter = () => mutationReachedLockGate.Set();
+        db.MutationLockAcquiredCallback = () => mutationAcquiredLock.Set();
+
+        var snapshotDone = new ManualResetEventSlim();
+        Exception? snapshotError = null;
+        var snapshotThread = new Thread(() =>
         {
-            enteredMutation.Set();
-            Assert.True(continueMutation.Wait(TimeSpan.FromSeconds(5)),
-                "mutation must be allowed to proceed within timeout");
-        };
+            try
+            {
+                db.CreateEndpointSnapshot();
+            }
+            catch (Exception ex)
+            {
+                snapshotError = ex;
+            }
+            finally
+            {
+                snapshotDone.Set();
+            }
+        });
+        snapshotThread.Start();
+
+        Assert.True(snapshotHoldsLock.Wait(TimeSpan.FromSeconds(5)),
+            "snapshot must acquire _lock");
 
         var mutationThread = new Thread(() =>
         {
-            db.TryRemoveEndpoint(EndpointKind.Writer, writerGuid);
-            mutationCompleted.Set();
+            try
+            {
+                db.TryRemoveEndpoint(EndpointKind.Writer, writerGuid);
+            }
+            finally
+            {
+                mutationCompleted.Set();
+            }
         });
         mutationThread.Start();
 
-        Assert.True(enteredMutation.Wait(TimeSpan.FromSeconds(5)),
+        Assert.True(mutationReachedLockGate.Wait(TimeSpan.FromSeconds(5)),
             "mutation must reach ExternalLockEnter");
 
-        var snapBefore = db.CreateEndpointSnapshot();
-        snapBefore.Writers.Should().ContainSingle(w => w.EndpointGuid.Equals(writerGuid));
+        Assert.False(mutationCompleted.Wait(TimeSpan.FromMilliseconds(300)),
+            "mutation must be blocked on _lock while snapshot holds it");
+        Assert.False(mutationAcquiredLock.IsSet,
+            "mutation must not acquire _lock while snapshot holds it");
 
-        continueMutation.Set();
+        snapshotContinue.Set();
+        Assert.True(snapshotDone.Wait(TimeSpan.FromSeconds(5)),
+            "snapshot must complete after barrier released");
+
+        if (snapshotError is not null)
+            throw new Exception("snapshot thread failed", snapshotError);
+
         Assert.True(mutationCompleted.Wait(TimeSpan.FromSeconds(5)),
-            "mutation must complete after ExternalLockEnter released");
+            "mutation must complete after snapshot releases _lock");
+        Assert.True(mutationAcquiredLock.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must acquire _lock after snapshot releases it");
 
-        var snapAfter = db.CreateEndpointSnapshot();
-        snapAfter.Writers.Should().BeEmpty();
-
+        db.SnapshotLockAcquiredCallback = null;
+        db.MutationLockAcquiredCallback = null;
         db.ExternalLockEnter = null;
     }
 }

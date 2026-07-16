@@ -402,15 +402,8 @@ public class TopicDiagnosticsTests
         context.GraphSnapshotEnterLockCallback = () => snapshotInLock.Set();
         context.GraphSnapshotPauseCallback = () =>
         {
-            try
-            {
-                Assert.True(snapshotContinue.Wait(TimeSpan.FromSeconds(5)),
-                    "snapshot pause timed out");
-            }
-            finally
-            {
-                snapshotContinue.Set();
-            }
+            if (!snapshotContinue.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("snapshot pause timed out");
         };
 
         var mutationReachedLock = new ManualResetEventSlim();
@@ -424,10 +417,21 @@ public class TopicDiagnosticsTests
         };
 
         var snapshotDone = new ManualResetEventSlim();
+        Exception? snapshotError = null;
         var snapshotThread = new Thread(() =>
         {
-            context.CreateGraphSnapshot();
-            snapshotDone.Set();
+            try
+            {
+                context.CreateGraphSnapshot();
+            }
+            catch (Exception ex)
+            {
+                snapshotError = ex;
+            }
+            finally
+            {
+                snapshotDone.Set();
+            }
         });
         snapshotThread.Start();
 
@@ -436,10 +440,16 @@ public class TopicDiagnosticsTests
 
         var mutationThread = new Thread(() =>
         {
-            context.DiscoveryDb.UpsertEndpoint(
-                Endpoint(prefix, EndpointKind.Writer, 0x21, "rt/blocked"),
-                DateTime.UtcNow);
-            mutationCompleted.Set();
+            try
+            {
+                context.DiscoveryDb.UpsertEndpoint(
+                    Endpoint(prefix, EndpointKind.Writer, 0x21, "rt/blocked"),
+                    DateTime.UtcNow);
+            }
+            finally
+            {
+                mutationCompleted.Set();
+            }
         });
         mutationThread.Start();
 
@@ -454,6 +464,9 @@ public class TopicDiagnosticsTests
             "snapshot must complete after pause released");
         Assert.True(mutationCompleted.Wait(TimeSpan.FromSeconds(5)),
             "mutation must complete after snapshot releases GraphLock");
+
+        if (snapshotError is not null)
+            throw new Exception("snapshot thread failed", snapshotError);
 
         context.CreateGraphSnapshot().Endpoints.Should().Contain(e => e.TopicName == "rt/blocked");
 

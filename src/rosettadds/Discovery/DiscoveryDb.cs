@@ -30,6 +30,12 @@ public sealed class DiscoveryDb
     internal Action? ExternalLockEnter { get; set; }
     internal Action? ExternalLockExit { get; set; }
 
+    /// <summary>テスト用: CreateEndpointSnapshot が内部 _lock を取得した直後に呼ばれる。</summary>
+    internal Action? SnapshotLockAcquiredCallback { get; set; }
+
+    /// <summary>テスト用: UpsertEndpoint/TryRemoveEndpoint が内部 _lock を取得した直後に呼ばれる。</summary>
+    internal Action? MutationLockAcquiredCallback { get; set; }
+
     /// <summary>新規参加者検出時に発火 (lock 外で呼ばれる)。</summary>
     public event Action<RemoteParticipant>? ParticipantDiscovered;
 
@@ -223,6 +229,7 @@ public sealed class DiscoveryDb
         {
             lock (_lock)
             {
+                MutationLockAcquiredCallback?.Invoke();
                 if (!_participants.ContainsKey(data.ParticipantGuid.Prefix)
                     || !data.EndpointGuid.Prefix.Equals(data.ParticipantGuid.Prefix))
                 {
@@ -283,6 +290,7 @@ public sealed class DiscoveryDb
         {
             lock (_lock)
             {
+                MutationLockAcquiredCallback?.Invoke();
                 if (!dict.Remove(endpointGuid, out removed))
                 {
                     return false;
@@ -340,6 +348,7 @@ public sealed class DiscoveryDb
     {
         lock (_lock)
         {
+            SnapshotLockAcquiredCallback?.Invoke();
             var writers = _writers.Values
                 .Select(static w => w.Data.Clone())
                 .ToArray();
