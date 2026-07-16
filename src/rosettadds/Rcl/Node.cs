@@ -116,6 +116,7 @@ public sealed class Node : IDisposable
             Logger,
             cdrReadLimits: Context.Options.CdrReadLimits);
 
+        Context.GraphLockContentionCallback?.Invoke();
         lock (Context.GraphLock) _userEndpoints.RegisterReader(endpointData, reader);
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddSubscriptionAsync(endpointData, token),
@@ -203,6 +204,7 @@ public sealed class Node : IDisposable
         var endpoint = _endpointFactory.CreateWriter(ddsTopic, serializer, reliability, durability, typeName);
         var writer = endpoint.Writer;
         var endpointData = endpoint.EndpointData;
+        Context.GraphLockContentionCallback?.Invoke();
         lock (Context.GraphLock) _userEndpoints.RegisterWriter(endpointData, writer);
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddPublicationAsync(endpointData, token),
@@ -219,6 +221,7 @@ public sealed class Node : IDisposable
         var reader = endpoint.Reader;
         var endpointData = endpoint.EndpointData;
 
+        Context.GraphLockContentionCallback?.Invoke();
         lock (Context.GraphLock) _userEndpoints.RegisterReader(endpointData, reader);
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddSubscriptionAsync(endpointData, token),

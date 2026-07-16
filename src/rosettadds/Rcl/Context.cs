@@ -165,6 +165,7 @@ public sealed class Context : IDisposable
     // テスト用 hook (null のままでは本番動作に影響しない)
     internal Action? GraphSnapshotEnterLockCallback { get; set; }
     internal Action? GraphSnapshotPauseCallback { get; set; }
+    internal Action? GraphLockContentionCallback { get; set; }
     internal int PublishedSubscriptionStateCount => _sedpSubscriptionsWriter.PublishedCount;
 
     // ----- SEDP 広告の Node 向け delegate -----

@@ -1081,12 +1081,14 @@ public class TopicDiagnosticsTests
 
         var lockAcquired = new ManualResetEventSlim();
         var releaseLock = new ManualResetEventSlim();
+        var mutationReached = new ManualResetEventSlim();
         context.GraphSnapshotEnterLockCallback = () => lockAcquired.Set();
         context.GraphSnapshotPauseCallback = () =>
         {
             if (!releaseLock.Wait(TimeSpan.FromSeconds(5)))
                 throw new TimeoutException("snapshot pause timed out");
         };
+        context.GraphLockContentionCallback = () => mutationReached.Set();
 
         GraphSnapshot? snap = null;
         HashSet<Guid>? localGuids = null;
@@ -1122,12 +1124,15 @@ public class TopicDiagnosticsTests
         });
         mutThread.Start();
 
-        Assert.False(mutDone.Wait(TimeSpan.FromMilliseconds(500)),
-            "local endpoint mutation on another Node must be blocked by GraphLock");
+        // mutation が GraphLock 入口に到達したことを確認してからブロック検証
+        Assert.True(mutationReached.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must reach GraphLock contention point");
+        Assert.False(mutDone.IsSet,
+            "mutation must be blocked by GraphLock held by snapshot");
 
         releaseLock.Set();
         Assert.True(snapDone.Wait(TimeSpan.FromSeconds(5)), "snapshot must complete");
-        Assert.True(mutDone.Wait(TimeSpan.FromSeconds(5)), "mutation must complete");
+        Assert.True(mutDone.Wait(TimeSpan.FromSeconds(5)), "mutation must complete after lock release");
 
         if (snapError is not null) throw new Exception("snapshot failed", snapError);
         if (mutError is not null) throw new Exception("mutation failed", mutError);
@@ -1141,8 +1146,12 @@ public class TopicDiagnosticsTests
         snapshot.Endpoints.Should().ContainSingle(e => e.TopicName == steadyTopic);
         snapshot.Endpoints.Should().NotContain(e => e.TopicName == concurrentTopic);
 
-        // 全 endpoint が localGuids に含まれる（同一snapshotの証）
+        // 同一 generation の証:
+        //   (1) 全 endpoint が localGuids に含まれる（local GUID 収集後に endpoint が増えていない）
+        //   (2) 全 localGuid が endpoint に含まれる（endpoint 収集後に local GUID が増えていない）
+        //   → 両方向一致で endpoint 集合と local GUID 集合が単一 GraphLock 区間で取得されたことを実証
         snapshot.Endpoints.Should().OnlyContain(e => localGuids!.Contains(e.EndpointGuid));
+        localGuids!.Should().BeSubsetOf(snapshot.Endpoints.Select(e => e.EndpointGuid));
 
         // mutation 後の状態を確認
         concurrentPub.Should().NotBeNull();
@@ -1152,5 +1161,6 @@ public class TopicDiagnosticsTests
         concurrentPub!.Dispose();
         context.GraphSnapshotEnterLockCallback = null;
         context.GraphSnapshotPauseCallback = null;
+        context.GraphLockContentionCallback = null;
     }
 }
