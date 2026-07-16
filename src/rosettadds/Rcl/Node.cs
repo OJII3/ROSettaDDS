@@ -114,7 +114,7 @@ public sealed class Node : IDisposable
             Logger,
             cdrReadLimits: Context.Options.CdrReadLimits);
 
-        _userEndpoints.RegisterReader(endpointData, reader);
+        lock (Context.GraphLock) _userEndpoints.RegisterReader(endpointData, reader);
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddSubscriptionAsync(endpointData, token),
             "Node failed to advertise local reader endpoint");
@@ -195,7 +195,7 @@ public sealed class Node : IDisposable
         var endpoint = _endpointFactory.CreateWriter(ddsTopic, serializer, reliability, durability, typeName);
         var writer = endpoint.Writer;
         var endpointData = endpoint.EndpointData;
-        _userEndpoints.RegisterWriter(endpointData, writer);
+        lock (Context.GraphLock) _userEndpoints.RegisterWriter(endpointData, writer);
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddPublicationAsync(endpointData, token),
             "Node failed to advertise local writer endpoint");
@@ -211,7 +211,7 @@ public sealed class Node : IDisposable
         var reader = endpoint.Reader;
         var endpointData = endpoint.EndpointData;
 
-        _userEndpoints.RegisterReader(endpointData, reader);
+        lock (Context.GraphLock) _userEndpoints.RegisterReader(endpointData, reader);
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddSubscriptionAsync(endpointData, token),
             "Node failed to advertise local service reply reader endpoint");
@@ -239,22 +239,26 @@ public sealed class Node : IDisposable
     private void UnregisterAllLocalEndpoints()
     {
         var endpoints = _userEndpoints.Snapshot();
+        lock (Context.GraphLock)
+        {
+            foreach (var writer in endpoints.Writers)
+                _userEndpoints.UnregisterWriter(writer.Guid, writer);
+            foreach (var reader in endpoints.Readers)
+            {
+                var readerGuid = new Guid(Context.GuidPrefix, reader.ReaderEntityId);
+                _userEndpoints.UnregisterReader(readerGuid, reader);
+            }
+        }
         foreach (var writer in endpoints.Writers)
-        {
-            UnregisterLocalWriter(writer.Guid, writer);
             writer.Dispose();
-        }
         foreach (var reader in endpoints.Readers)
-        {
-            var readerGuid = new Guid(Context.GuidPrefix, reader.ReaderEntityId);
-            UnregisterLocalReader(readerGuid, reader);
             reader.Dispose();
-        }
     }
 
     private void UnregisterLocalWriter(Guid endpointGuid, StatefulWriter writerToRemove)
     {
-        var result = _userEndpoints.UnregisterWriter(endpointGuid, writerToRemove);
+        UserEndpointManager.UnregisterResult result;
+        lock (Context.GraphLock) result = _userEndpoints.UnregisterWriter(endpointGuid, writerToRemove);
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterPublicationAsync(result.Endpoint!));
@@ -263,7 +267,8 @@ public sealed class Node : IDisposable
 
     private void UnregisterLocalReader(Guid endpointGuid, IUserReader readerToRemove)
     {
-        var result = _userEndpoints.UnregisterReader(endpointGuid, readerToRemove);
+        UserEndpointManager.UnregisterResult result;
+        lock (Context.GraphLock) result = _userEndpoints.UnregisterReader(endpointGuid, readerToRemove);
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterSubscriptionAsync(result.Endpoint!));

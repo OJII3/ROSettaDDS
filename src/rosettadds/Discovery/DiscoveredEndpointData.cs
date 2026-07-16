@@ -59,7 +59,7 @@ public sealed class DiscoveredEndpointData
             Ownership = Ownership,
             DestinationOrder = DestinationOrder,
             Presentation = Presentation,
-            Partition = Partition,
+            Partition = new PartitionQos(Partition.Names.ToArray()),
         };
         clone.UnicastLocators.AddRange(UnicastLocators);
         clone.MulticastLocators.AddRange(MulticastLocators);

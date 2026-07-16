@@ -156,6 +156,7 @@ public sealed class Context : IDisposable
     internal ParticipantRtpsReceiver Receiver => _receiver;
     internal CancellationToken LeaseExpiryCancellationToken => _leaseExpiryMonitor.CancellationToken;
     internal UserEntityIdAllocator UserEntityIds => _userEntityIds;
+    internal object GraphLock => _graphLock;
     internal int PublishedPublicationStateCount => _sedpPublicationsWriter.PublishedCount;
     internal int PublishedSubscriptionStateCount => _sedpSubscriptionsWriter.PublishedCount;
 
@@ -244,11 +245,16 @@ public sealed class Context : IDisposable
             }
 
             _transports.RestartOwnedTransports();
-            foreach (var node in SnapshotNodes())
+            var nodes = SnapshotNodes();
+            foreach (var node in nodes)
             {
-                var endpoints = node.RefreshLocalEndpointLocators(
-                    _transports.DefaultUnicastLocators,
-                    _transports.UserMulticastDestination);
+                EndpointDiscoverySnapshot endpoints;
+                lock (_graphLock)
+                {
+                    endpoints = node.RefreshLocalEndpointLocators(
+                        _transports.DefaultUnicastLocators,
+                        _transports.UserMulticastDestination);
+                }
                 foreach (var writer in endpoints.Writers)
                 {
                     await _sedpPublicationsWriter.AddEndpointAsync(writer, cancellationToken)
@@ -308,16 +314,21 @@ public sealed class Context : IDisposable
     /// <summary>
     /// Context graph lock 下で全 Node の local endpoint と DiscoveryDb の remote endpoint を
     /// 値コピーし、GUID 重複を除外して topic 名・GUID ordinal 順に並べたスナップショットを返す。
+    /// local mutation 経路も同一 graph lock を取得するため、競合 stable な境界を提供する。
     /// </summary>
     internal GraphSnapshot CreateGraphSnapshot()
     {
         ThrowIfDisposed();
+        // _nodesLock → _graphLock の順で取得し、RegisterNode/UnregisterNode と逆転しない。
+        lock (_nodesLock)
         lock (_graphLock)
         {
+            if (_disposed) return GraphSnapshot.Empty;
+
             var localWriters = new List<DiscoveredEndpointData>();
             var localReaders = new List<DiscoveredEndpointData>();
 
-            foreach (var node in SnapshotNodes())
+            foreach (var node in _nodes)
             {
                 var local = node.LocalEndpointSnapshot();
                 localWriters.AddRange(local.Writers);
