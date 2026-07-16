@@ -23,6 +23,13 @@ public sealed class DiscoveryDb
         _limits = limits ?? DiscoveryLimits.Default;
     }
 
+    /// <summary>
+    /// Context から注入される graph lock の Enter/Exit。
+    /// null のままでも DiscoveryDb 単体の動作に影響しない。
+    /// </summary>
+    internal Action? ExternalLockEnter { get; set; }
+    internal Action? ExternalLockExit { get; set; }
+
     /// <summary>新規参加者検出時に発火 (lock 外で呼ばれる)。</summary>
     public event Action<RemoteParticipant>? ParticipantDiscovered;
 
@@ -87,33 +94,41 @@ public sealed class DiscoveryDb
 
         RemoteParticipant participant;
         bool isNew;
-        lock (_lock)
+        ExternalLockEnter?.Invoke();
+        try
         {
-            if (_participants.TryGetValue(data.Guid.Prefix, out var existing))
+            lock (_lock)
             {
-                existing.Update(data, nowUtc);
-                participant = existing;
-                isNew = false;
+                if (_participants.TryGetValue(data.Guid.Prefix, out var existing))
+                {
+                    existing.Update(data, nowUtc);
+                    participant = existing;
+                    isNew = false;
+                }
+                else
+                {
+                    if (_participants.Count >= _limits.MaxRemoteParticipants)
+                    {
+                        return;
+                    }
+                    participant = new RemoteParticipant(data, nowUtc);
+                    _participants[data.Guid.Prefix] = participant;
+                    isNew = true;
+                }
+            }
+
+            if (isNew)
+            {
+                ParticipantDiscovered?.Invoke(participant);
             }
             else
             {
-                if (_participants.Count >= _limits.MaxRemoteParticipants)
-                {
-                    return;
-                }
-                participant = new RemoteParticipant(data, nowUtc);
-                _participants[data.Guid.Prefix] = participant;
-                isNew = true;
+                ParticipantUpdated?.Invoke(participant);
             }
         }
-
-        if (isNew)
+        finally
         {
-            ParticipantDiscovered?.Invoke(participant);
-        }
-        else
-        {
-            ParticipantUpdated?.Invoke(participant);
+            ExternalLockExit?.Invoke();
         }
     }
 
@@ -123,27 +138,35 @@ public sealed class DiscoveryDb
         List<RemoteParticipant>? expired = null;
         List<RemoteEndpoint>? lostWriters = null;
         List<RemoteEndpoint>? lostReaders = null;
-        lock (_lock)
+        ExternalLockEnter?.Invoke();
+        try
         {
-            foreach (var (key, p) in _participants.ToArray())
+            lock (_lock)
             {
-                if (p.IsExpired(nowUtc))
+                foreach (var (key, p) in _participants.ToArray())
                 {
-                    expired ??= new List<RemoteParticipant>();
-                    expired.Add(p);
-                    _participants.Remove(key);
-                    RemoveEndpointsForParticipant(key, ref lostWriters, ref lostReaders);
+                    if (p.IsExpired(nowUtc))
+                    {
+                        expired ??= new List<RemoteParticipant>();
+                        expired.Add(p);
+                        _participants.Remove(key);
+                        RemoveEndpointsForParticipant(key, ref lostWriters, ref lostReaders);
+                    }
                 }
             }
+            if (expired is null)
+            {
+                return;
+            }
+            PublishLostEndpoints(lostWriters, lostReaders);
+            foreach (var p in expired)
+            {
+                ParticipantLost?.Invoke(p);
+            }
         }
-        if (expired is null)
+        finally
         {
-            return;
-        }
-        PublishLostEndpoints(lostWriters, lostReaders);
-        foreach (var p in expired)
-        {
-            ParticipantLost?.Invoke(p);
+            ExternalLockExit?.Invoke();
         }
     }
 
@@ -153,20 +176,28 @@ public sealed class DiscoveryDb
         RemoteParticipant? removed;
         List<RemoteEndpoint>? lostWriters = null;
         List<RemoteEndpoint>? lostReaders = null;
-        lock (_lock)
+        ExternalLockEnter?.Invoke();
+        try
         {
-            if (!_participants.Remove(prefix, out removed))
+            lock (_lock)
             {
-                return false;
+                if (!_participants.Remove(prefix, out removed))
+                {
+                    return false;
+                }
+                RemoveEndpointsForParticipant(prefix, ref lostWriters, ref lostReaders);
             }
-            RemoveEndpointsForParticipant(prefix, ref lostWriters, ref lostReaders);
+            PublishLostEndpoints(lostWriters, lostReaders);
+            if (removed is not null)
+            {
+                ParticipantLost?.Invoke(removed);
+            }
+            return true;
         }
-        PublishLostEndpoints(lostWriters, lostReaders);
-        if (removed is not null)
+        finally
         {
-            ParticipantLost?.Invoke(removed);
+            ExternalLockExit?.Invoke();
         }
-        return true;
     }
 
     /// <summary>
@@ -187,46 +218,54 @@ public sealed class DiscoveryDb
         var dict = data.Kind == EndpointKind.Writer ? _writers : _readers;
         RemoteEndpoint endpoint;
         bool isNew;
-        lock (_lock)
+        ExternalLockEnter?.Invoke();
+        try
         {
-            if (!_participants.ContainsKey(data.ParticipantGuid.Prefix)
-                || !data.EndpointGuid.Prefix.Equals(data.ParticipantGuid.Prefix))
+            lock (_lock)
             {
-                return;
-            }
-            if (dict.TryGetValue(data.EndpointGuid, out var existing))
-            {
-                existing.Update(data, nowUtc);
-                endpoint = existing;
-                isNew = false;
-            }
-            else
-            {
-                if (IsEndpointCapacityExceeded(data.Kind)
-                    || CountEndpointsForParticipant(data.ParticipantGuid.Prefix) >= _limits.MaxRemoteEndpointsPerParticipant)
+                if (!_participants.ContainsKey(data.ParticipantGuid.Prefix)
+                    || !data.EndpointGuid.Prefix.Equals(data.ParticipantGuid.Prefix))
                 {
                     return;
                 }
-                endpoint = new RemoteEndpoint(data, nowUtc);
-                dict[data.EndpointGuid] = endpoint;
-                isNew = true;
+                if (dict.TryGetValue(data.EndpointGuid, out var existing))
+                {
+                    existing.Update(data, nowUtc);
+                    endpoint = existing;
+                    isNew = false;
+                }
+                else
+                {
+                    if (IsEndpointCapacityExceeded(data.Kind)
+                        || CountEndpointsForParticipant(data.ParticipantGuid.Prefix) >= _limits.MaxRemoteEndpointsPerParticipant)
+                    {
+                        return;
+                    }
+                    endpoint = new RemoteEndpoint(data, nowUtc);
+                    dict[data.EndpointGuid] = endpoint;
+                    isNew = true;
+                }
             }
-        }
 
-        if (isNew)
-        {
-            if (data.Kind == EndpointKind.Writer)
+            if (isNew)
             {
-                WriterDiscovered?.Invoke(endpoint);
+                if (data.Kind == EndpointKind.Writer)
+                {
+                    WriterDiscovered?.Invoke(endpoint);
+                }
+                else
+                {
+                    ReaderDiscovered?.Invoke(endpoint);
+                }
             }
             else
             {
-                ReaderDiscovered?.Invoke(endpoint);
+                EndpointUpdated?.Invoke(endpoint);
             }
         }
-        else
+        finally
         {
-            EndpointUpdated?.Invoke(endpoint);
+            ExternalLockExit?.Invoke();
         }
     }
 
@@ -239,26 +278,34 @@ public sealed class DiscoveryDb
 
         var dict = kind == EndpointKind.Writer ? _writers : _readers;
         RemoteEndpoint? removed;
-        lock (_lock)
+        ExternalLockEnter?.Invoke();
+        try
         {
-            if (!dict.Remove(endpointGuid, out removed))
+            lock (_lock)
             {
-                return false;
+                if (!dict.Remove(endpointGuid, out removed))
+                {
+                    return false;
+                }
             }
-        }
 
-        if (removed is not null)
-        {
-            if (kind == EndpointKind.Writer)
+            if (removed is not null)
             {
-                WriterLost?.Invoke(removed);
+                if (kind == EndpointKind.Writer)
+                {
+                    WriterLost?.Invoke(removed);
+                }
+                else
+                {
+                    ReaderLost?.Invoke(removed);
+                }
             }
-            else
-            {
-                ReaderLost?.Invoke(removed);
-            }
+            return true;
         }
-        return true;
+        finally
+        {
+            ExternalLockExit?.Invoke();
+        }
     }
 
     /// <summary>登録されている Writer 数。</summary>

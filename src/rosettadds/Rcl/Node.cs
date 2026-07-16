@@ -239,20 +239,17 @@ public sealed class Node : IDisposable
     private void UnregisterAllLocalEndpoints()
     {
         var endpoints = _userEndpoints.Snapshot();
-        lock (Context.GraphLock)
-        {
-            foreach (var writer in endpoints.Writers)
-                _userEndpoints.UnregisterWriter(writer.Guid, writer);
-            foreach (var reader in endpoints.Readers)
-            {
-                var readerGuid = new Guid(Context.GuidPrefix, reader.ReaderEntityId);
-                _userEndpoints.UnregisterReader(readerGuid, reader);
-            }
-        }
         foreach (var writer in endpoints.Writers)
+        {
+            UnregisterLocalWriter(writer.Guid, writer);
             writer.Dispose();
+        }
         foreach (var reader in endpoints.Readers)
+        {
+            var readerGuid = new Guid(Context.GuidPrefix, reader.ReaderEntityId);
+            UnregisterLocalReader(readerGuid, reader);
             reader.Dispose();
+        }
     }
 
     private void UnregisterLocalWriter(Guid endpointGuid, StatefulWriter writerToRemove)

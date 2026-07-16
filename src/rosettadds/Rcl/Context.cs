@@ -59,6 +59,8 @@ public sealed class Context : IDisposable
         _receiver = new ParticipantRtpsReceiver(GuidPrefix, _options.Logger);
 
         _discoveryDb = new DiscoveryDb(_options.DiscoveryLimits);
+        _discoveryDb.ExternalLockEnter = () => Monitor.Enter(_graphLock);
+        _discoveryDb.ExternalLockExit = () => Monitor.Exit(_graphLock);
         _leaseExpiryMonitor = new LeaseExpiryMonitor(_discoveryDb, _options, _options.Logger);
 
         _spdpReader = new SpdpBuiltinParticipantReader(
