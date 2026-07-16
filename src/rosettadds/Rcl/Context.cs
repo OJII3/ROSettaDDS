@@ -166,6 +166,7 @@ public sealed class Context : IDisposable
     internal Action? GraphSnapshotEnterLockCallback { get; set; }
     internal Action? GraphSnapshotPauseCallback { get; set; }
     internal Action? GraphSnapshotBetweenLocalCollectionsCallback { get; set; }
+    internal Action? GraphLockMutationAcquiredCallback { get; set; }
     internal int PublishedSubscriptionStateCount => _sedpSubscriptionsWriter.PublishedCount;
 
     // ----- SEDP 広告の Node 向け delegate -----
@@ -350,20 +351,16 @@ public sealed class Context : IDisposable
         {
             GraphSnapshotEnterLockCallback?.Invoke();
             GraphSnapshotPauseCallback?.Invoke();
-            GraphSnapshotBetweenLocalCollectionsCallback?.Invoke();
             if (_disposed) return (new List<DiscoveredEndpointData>(), new HashSet<Guid>());
 
             var localWriters = new List<DiscoveredEndpointData>();
             var localReaders = new List<DiscoveredEndpointData>();
-            var localGuids = new HashSet<Guid>();
 
             foreach (var node in _nodes)
             {
                 var local = node.LocalEndpointSnapshot();
                 localWriters.AddRange(local.Writers);
                 localReaders.AddRange(local.Readers);
-                foreach (var w in local.Writers) localGuids.Add(w.EndpointGuid);
-                foreach (var r in local.Readers) localGuids.Add(r.EndpointGuid);
             }
 
             var remote = _discoveryDb.CreateEndpointSnapshot();
@@ -382,6 +379,13 @@ public sealed class Context : IDisposable
                 if (topicCmp != 0) return topicCmp;
                 return CompareGuid(a.EndpointGuid, b.EndpointGuid);
             });
+
+            // 全 endpoint metadata 収集完了 → local GUID 収集直前
+            GraphSnapshotBetweenLocalCollectionsCallback?.Invoke();
+
+            var localGuids = new HashSet<Guid>();
+            foreach (var w in localWriters) localGuids.Add(w.EndpointGuid);
+            foreach (var r in localReaders) localGuids.Add(r.EndpointGuid);
 
             return (all, localGuids);
         }
