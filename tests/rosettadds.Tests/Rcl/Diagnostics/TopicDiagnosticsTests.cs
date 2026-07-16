@@ -356,12 +356,11 @@ public class TopicDiagnosticsTests
         var mutationReachedLock = new ManualResetEventSlim();
         var mutationCompleted = new ManualResetEventSlim();
 
-        // ExternalLockEnter に到達したら signal するラッパー
         var origEnter = context.DiscoveryDb.ExternalLockEnter;
         context.DiscoveryDb.ExternalLockEnter = () =>
         {
             mutationReachedLock.Set();
-            origEnter?.Invoke(); // ここで _graphLock 待ち
+            origEnter?.Invoke();
         };
 
         var mutationThread = new Thread(() =>
@@ -372,22 +371,20 @@ public class TopicDiagnosticsTests
             mutationCompleted.Set();
         });
 
-        // test thread が GraphLock を保持 → mutation が ExternalLockEnter でブロック
         lock (context.GraphLock)
         {
             mutationThread.Start();
-            mutationReachedLock.Wait(TimeSpan.FromSeconds(5));
+            Assert.True(mutationReachedLock.Wait(TimeSpan.FromSeconds(5)),
+                "mutation must reach ExternalLockEnter");
 
-            mutationCompleted.Wait(TimeSpan.FromMilliseconds(200))
-                .Should().BeFalse("mutation must be blocked by GraphLock");
+            Assert.False(mutationCompleted.Wait(TimeSpan.FromMilliseconds(200)),
+                "mutation must be blocked by GraphLock");
         }
 
-        // GraphLock 解放 → mutation 完了
-        mutationCompleted.Wait(TimeSpan.FromSeconds(5))
-            .Should().BeTrue("mutation must complete after GraphLock released");
+        Assert.True(mutationCompleted.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must complete after GraphLock released");
 
         context.CreateGraphSnapshot().Endpoints.Should().Contain(e => e.TopicName == "rt/locked");
-
         context.DiscoveryDb.ExternalLockEnter = origEnter;
     }
 
@@ -400,19 +397,14 @@ public class TopicDiagnosticsTests
         var prefix = Prefix(21);
         context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
 
-        using var snapshotPause = new ManualResetEventSlim();
-        context.GraphSnapshotEnterLock = new ManualResetEventSlim();
-        context.GraphSnapshotPause = snapshotPause;
+        // テスト側が ManualResetEventSlim を所有し、Action callback 経由で注入する
+        var snapshotInLock = new ManualResetEventSlim();
+        var snapshotContinue = new ManualResetEventSlim();
+        context.GraphSnapshotEnterLockCallback = () => snapshotInLock.Set();
+        context.GraphSnapshotPauseCallback = () => snapshotContinue.Wait();
 
         var mutationCompleted = new ManualResetEventSlim();
 
-        var origEnter = context.DiscoveryDb.ExternalLockEnter;
-        context.DiscoveryDb.ExternalLockEnter = () =>
-        {
-            origEnter?.Invoke();
-        };
-
-        // snapshot thread: CreateGraphSnapshot を実行
         var snapshotDone = new ManualResetEventSlim();
         var snapshotThread = new Thread(() =>
         {
@@ -421,11 +413,9 @@ public class TopicDiagnosticsTests
         });
         snapshotThread.Start();
 
-        // snapshot が _graphLock を取得するまで待ち (EnterLock Set)、
-        // その直後の Pause.Wait() でブロックされる
-        context.GraphSnapshotEnterLock.Wait(TimeSpan.FromSeconds(5));
+        Assert.True(snapshotInLock.Wait(TimeSpan.FromSeconds(5)),
+            "snapshot must acquire GraphLock and enter lock callback");
 
-        // snapshot が _graphLock を保持 → mutation は ExternalLockEnter でブロック
         var mutationThread = new Thread(() =>
         {
             context.DiscoveryDb.UpsertEndpoint(
@@ -435,21 +425,19 @@ public class TopicDiagnosticsTests
         });
         mutationThread.Start();
 
-        mutationCompleted.Wait(TimeSpan.FromMilliseconds(300))
-            .Should().BeFalse("mutation must be blocked while snapshot holds GraphLock");
+        Assert.False(mutationCompleted.Wait(TimeSpan.FromMilliseconds(300)),
+            "mutation must be blocked while snapshot holds GraphLock");
 
-        // Pause 解除 → snapshot が _graphLock を解放 → mutation が進行
-        snapshotPause.Set();
-        snapshotDone.Wait(TimeSpan.FromSeconds(5));
-
-        mutationCompleted.Wait(TimeSpan.FromSeconds(5))
-            .Should().BeTrue("mutation must complete after snapshot releases GraphLock");
+        snapshotContinue.Set();
+        Assert.True(snapshotDone.Wait(TimeSpan.FromSeconds(5)),
+            "snapshot must complete after pause released");
+        Assert.True(mutationCompleted.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must complete after snapshot releases GraphLock");
 
         context.CreateGraphSnapshot().Endpoints.Should().Contain(e => e.TopicName == "rt/blocked");
 
-        context.DiscoveryDb.ExternalLockEnter = origEnter;
-        context.GraphSnapshotEnterLock = null;
-        context.GraphSnapshotPause = null;
+        context.GraphSnapshotEnterLockCallback = null;
+        context.GraphSnapshotPauseCallback = null;
     }
 
     // ======== service topic (rq/rr) が内部基盤に含まれることの確認 ========
