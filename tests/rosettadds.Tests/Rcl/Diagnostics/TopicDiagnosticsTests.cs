@@ -397,13 +397,31 @@ public class TopicDiagnosticsTests
         var prefix = Prefix(21);
         context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
 
-        // テスト側が ManualResetEventSlim を所有し、Action callback 経由で注入する
         var snapshotInLock = new ManualResetEventSlim();
         var snapshotContinue = new ManualResetEventSlim();
         context.GraphSnapshotEnterLockCallback = () => snapshotInLock.Set();
-        context.GraphSnapshotPauseCallback = () => snapshotContinue.Wait();
+        context.GraphSnapshotPauseCallback = () =>
+        {
+            try
+            {
+                Assert.True(snapshotContinue.Wait(TimeSpan.FromSeconds(5)),
+                    "snapshot pause timed out");
+            }
+            finally
+            {
+                snapshotContinue.Set();
+            }
+        };
 
+        var mutationReachedLock = new ManualResetEventSlim();
         var mutationCompleted = new ManualResetEventSlim();
+
+        var origEnter = context.DiscoveryDb.ExternalLockEnter;
+        context.DiscoveryDb.ExternalLockEnter = () =>
+        {
+            mutationReachedLock.Set();
+            origEnter?.Invoke();
+        };
 
         var snapshotDone = new ManualResetEventSlim();
         var snapshotThread = new Thread(() =>
@@ -425,6 +443,9 @@ public class TopicDiagnosticsTests
         });
         mutationThread.Start();
 
+        Assert.True(mutationReachedLock.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must reach ExternalLockEnter");
+
         Assert.False(mutationCompleted.Wait(TimeSpan.FromMilliseconds(300)),
             "mutation must be blocked while snapshot holds GraphLock");
 
@@ -438,6 +459,7 @@ public class TopicDiagnosticsTests
 
         context.GraphSnapshotEnterLockCallback = null;
         context.GraphSnapshotPauseCallback = null;
+        context.DiscoveryDb.ExternalLockEnter = origEnter;
     }
 
     // ======== service topic (rq/rr) が内部基盤に含まれることの確認 ========

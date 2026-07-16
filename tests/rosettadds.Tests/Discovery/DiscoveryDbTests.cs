@@ -257,4 +257,113 @@ public class DiscoveryDbTests
         db.Snapshot()[0].Data.LeaseDuration.ToTimeSpan()
             .Should().BeCloseTo(TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(1));
     }
+
+    [Fact]
+    public void UpsertEndpointのExternalLockEnter中はCreateEndpointSnapshotに未反映()
+    {
+        var db = new DiscoveryDb();
+        var now = DateTime.UtcNow;
+        var prefix = Prefix(30);
+        var participantGuid = new Guid(prefix, EntityId.Participant);
+        var writerGuid = new Guid(prefix, new EntityId(0x10u, EntityKind.UserDefinedWriterNoKey));
+
+        db.UpsertParticipant(Participant(prefix), now);
+
+        var enteredMutation = new ManualResetEventSlim();
+        var continueMutation = new ManualResetEventSlim();
+        var mutationCompleted = new ManualResetEventSlim();
+
+        db.ExternalLockEnter = () =>
+        {
+            enteredMutation.Set();
+            Assert.True(continueMutation.Wait(TimeSpan.FromSeconds(5)),
+                "mutation must be allowed to proceed within timeout");
+        };
+
+        var mutationThread = new Thread(() =>
+        {
+            db.UpsertEndpoint(
+                new DiscoveredEndpointData
+                {
+                    Kind = EndpointKind.Writer,
+                    EndpointGuid = writerGuid,
+                    ParticipantGuid = participantGuid,
+                    TopicName = "rt/race",
+                    TypeName = "std_msgs::msg::dds_::String_",
+                },
+                DateTime.UtcNow);
+            mutationCompleted.Set();
+        });
+        mutationThread.Start();
+
+        Assert.True(enteredMutation.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must reach ExternalLockEnter");
+
+        var snapBefore = db.CreateEndpointSnapshot();
+        snapBefore.Writers.Should().BeEmpty();
+
+        continueMutation.Set();
+        Assert.True(mutationCompleted.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must complete after ExternalLockEnter released");
+
+        var snapAfter = db.CreateEndpointSnapshot();
+        snapAfter.Writers.Should().ContainSingle(w => w.EndpointGuid.Equals(writerGuid));
+
+        db.ExternalLockEnter = null;
+    }
+
+    [Fact]
+    public void TryRemoveEndpointのExternalLockEnter中はCreateEndpointSnapshotに削除が未反映()
+    {
+        var db = new DiscoveryDb();
+        var now = DateTime.UtcNow;
+        var prefix = Prefix(31);
+        var participantGuid = new Guid(prefix, EntityId.Participant);
+        var writerGuid = new Guid(prefix, new EntityId(0x10u, EntityKind.UserDefinedWriterNoKey));
+
+        db.UpsertParticipant(Participant(prefix), now);
+        db.UpsertEndpoint(
+            new DiscoveredEndpointData
+            {
+                Kind = EndpointKind.Writer,
+                EndpointGuid = writerGuid,
+                ParticipantGuid = participantGuid,
+                TopicName = "rt/remove_race",
+                TypeName = "std_msgs::msg::dds_::String_",
+            },
+            now);
+
+        var enteredMutation = new ManualResetEventSlim();
+        var continueMutation = new ManualResetEventSlim();
+        var mutationCompleted = new ManualResetEventSlim();
+
+        db.ExternalLockEnter = () =>
+        {
+            enteredMutation.Set();
+            Assert.True(continueMutation.Wait(TimeSpan.FromSeconds(5)),
+                "mutation must be allowed to proceed within timeout");
+        };
+
+        var mutationThread = new Thread(() =>
+        {
+            db.TryRemoveEndpoint(EndpointKind.Writer, writerGuid);
+            mutationCompleted.Set();
+        });
+        mutationThread.Start();
+
+        Assert.True(enteredMutation.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must reach ExternalLockEnter");
+
+        var snapBefore = db.CreateEndpointSnapshot();
+        snapBefore.Writers.Should().ContainSingle(w => w.EndpointGuid.Equals(writerGuid));
+
+        continueMutation.Set();
+        Assert.True(mutationCompleted.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must complete after ExternalLockEnter released");
+
+        var snapAfter = db.CreateEndpointSnapshot();
+        snapAfter.Writers.Should().BeEmpty();
+
+        db.ExternalLockEnter = null;
+    }
 }
