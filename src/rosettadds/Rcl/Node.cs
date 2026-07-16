@@ -5,6 +5,7 @@ using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Dds;
 using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
+using ROSettaDDS.Rcl.Diagnostics;
 using ROSettaDDS.Rcl.Naming;
 using ROSettaDDS.Rtps;
 using ROSettaDDS.Rtps.Writer;
@@ -63,6 +64,7 @@ public sealed class Node : IDisposable
     public string Name { get; }
     public Context Context { get; }
     public NodeOptions Options => _options;
+    internal bool IsDisposed => _disposed;
     private ILogger Logger => _options.Logger ?? Context.Logger;
 
     public Publisher<T> CreatePublisher<T>(string topicName, ICdrSerializer<T> serializer, string? typeName = null)
@@ -157,6 +159,12 @@ public sealed class Node : IDisposable
 
         return new ServiceClient<TRequest, TResponse>(
             requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits);
+    }
+
+    public TopicDiagnostics CreateTopicDiagnostics()
+    {
+        ThrowIfDisposed();
+        return new TopicDiagnostics(this);
     }
 
     /// <summary>この Node の全 local endpoint metadata を値コピーで返す。</summary>

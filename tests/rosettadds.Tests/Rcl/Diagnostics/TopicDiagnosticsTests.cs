@@ -5,6 +5,7 @@ using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Msgs.Std;
 using ROSettaDDS.Rcl;
+using ROSettaDDS.Rcl.Diagnostics;
 using ROSettaDDS.Rcl.Naming;
 
 using Guid = ROSettaDDS.Common.Guid;
@@ -515,5 +516,372 @@ public class TopicDiagnosticsTests
 
         var act = () => context.CreateGraphSnapshot();
         act.Should().Throw<ObjectDisposedException>();
+    }
+
+    // ======== Task 2: Topic Diagnostics DTO and API ========
+
+    private static TopicDiagnostics CreateDiagnostics(Node node) => node.CreateTopicDiagnostics();
+
+    [Fact]
+    public void CreateTopicDiagnostics_がインスタンスを返す()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "diag_node");
+        using var diag = CreateDiagnostics(node);
+        diag.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void GetTopics_は空のときに空リストを返す()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "empty_node");
+        using var diag = CreateDiagnostics(node);
+        var topics = diag.GetTopics();
+        topics.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GetTopics_はrt_topicのみを含みrq_rrを除外する()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "filter_node");
+
+        var prefix = Prefix(30);
+        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x10, "rt/chatter"), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x11, "rq/some_service"), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x12, "rr/some_service"), DateTime.UtcNow);
+
+        using var diag = CreateDiagnostics(node);
+        var topics = diag.GetTopics();
+        topics.Should().ContainSingle();
+        topics[0].TopicName.Should().Be("/chatter");
+    }
+
+    [Fact]
+    public void GetTopics_はtopic名の先頭_スラッシュを付与する()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "slash_node");
+        using var pub = node.CreatePublisher<StringMessage>(
+            "foo/bar", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        using var diag = CreateDiagnostics(node);
+        var topics = diag.GetTopics();
+        topics.Should().ContainSingle();
+        topics[0].TopicName.Should().Be("/foo/bar");
+    }
+
+    [Fact]
+    public void GetTopics_は型名をdemangleしてRosTypeNameとして保持する()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "type_node");
+
+        var prefix = Prefix(31);
+        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x10, "rt/typed",
+                "std_msgs::msg::dds_::String_"), DateTime.UtcNow);
+
+        using var diag = CreateDiagnostics(node);
+        var topics = diag.GetTopics();
+        var info = diag.GetTopicInfo("/typed");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().ContainSingle();
+        info.Endpoints[0].RosTypeName.Should().Be("std_msgs/msg/String");
+        info.Endpoints[0].DdsTypeName.Should().Be("std_msgs::msg::dds_::String_");
+    }
+
+    [Fact]
+    public void GetTopics_は空DDS型でRosTypeNameがnullになる()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "empty_type_node");
+
+        var prefix = Prefix(32);
+        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x10, "rt/empty_type", ""), DateTime.UtcNow);
+
+        using var diag = CreateDiagnostics(node);
+        var info = diag.GetTopicInfo("/empty_type");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().ContainSingle();
+        info.Endpoints[0].RosTypeName.Should().BeNull();
+        info.Endpoints[0].DdsTypeName.Should().Be("");
+    }
+
+    [Fact]
+    public void GetTopics_は非ROS型名をそのまま表示する()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "nonros_node");
+
+        var prefix = Prefix(33);
+        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x10, "rt/nonros", "Custom::MyType"), DateTime.UtcNow);
+
+        using var diag = CreateDiagnostics(node);
+        var info = diag.GetTopicInfo("/nonros");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().ContainSingle();
+        // 非ROS形式はdemangleせずそのまま
+        info.Endpoints[0].RosTypeName.Should().Be("Custom::MyType");
+    }
+
+    [Fact]
+    public void GetTopics_は複数型を保持する()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "multi_type_node");
+
+        var prefix = Prefix(34);
+        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x10, "rt/multi",
+                "std_msgs::msg::dds_::String_"), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x11, "rt/multi",
+                "std_msgs::msg::dds_::Int32_"), DateTime.UtcNow);
+
+        using var diag = CreateDiagnostics(node);
+        var info = diag.GetTopicInfo("/multi");
+        info.Should().NotBeNull();
+        info!.RosTypeNames.Should().HaveCount(2);
+        info.RosTypeNames.Should().Contain("std_msgs/msg/String");
+        info.RosTypeNames.Should().Contain("std_msgs/msg/Int32");
+    }
+
+    [Fact]
+    public void GetTopics_はtopic名とGUIDのordinal順に並ぶ()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "sort_node");
+
+        var prefix = Prefix(35);
+        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x30, "rt/zzz"), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x10, "rt/aaa"), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Reader, 0x20, "rt/aaa"), DateTime.UtcNow);
+
+        using var diag = CreateDiagnostics(node);
+        var topics = diag.GetTopics();
+        topics.Should().HaveCount(2);
+        topics[0].TopicName.Should().Be("/aaa");
+        topics[1].TopicName.Should().Be("/zzz");
+    }
+
+    [Fact]
+    public void GetTopics_は取得後の内部更新で変化しない()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "immutable_node");
+
+        var prefix = Prefix(36);
+        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x10, "rt/first"), DateTime.UtcNow);
+
+        using var diag = CreateDiagnostics(node);
+        var topics1 = diag.GetTopics();
+        topics1.Should().ContainSingle(t => t.TopicName == "/first");
+
+        // 後から追加しても前のスナップショットは変わらない
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(prefix, EndpointKind.Writer, 0x11, "rt/second"), DateTime.UtcNow);
+
+        topics1.Should().ContainSingle(t => t.TopicName == "/first");
+    }
+
+    [Fact]
+    public void GetTopicInfo_は既知topicの詳細を返す()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "detail_node");
+        using var pub = node.CreatePublisher<StringMessage>(
+            "detail_topic", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        using var diag = CreateDiagnostics(node);
+        var info = diag.GetTopicInfo("/detail_topic");
+        info.Should().NotBeNull();
+        info!.TopicName.Should().Be("/detail_topic");
+    }
+
+    [Fact]
+    public void GetTopicInfo_はpublisher_subscriber数を正しく返す()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "count_node");
+        using var pub = node.CreatePublisher<StringMessage>(
+            "count_topic", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+        using var sub = node.CreateSubscription<StringMessage>(
+            "count_topic", StringMessageSerializer.Instance, (_) => { });
+
+        using var diag = CreateDiagnostics(node);
+        var info = diag.GetTopicInfo("/count_topic");
+        info.Should().NotBeNull();
+        info!.PublisherCount.Should().Be(1);
+        info.SubscriberCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void GetTopicInfo_はendpointのlocal_remoteを正しく判定する()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "locrem_node");
+        using var pub = node.CreatePublisher<StringMessage>(
+            "locrem_topic", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var remotePrefix = Prefix(37);
+        context.DiscoveryDb.UpsertParticipant(Participant(remotePrefix), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(remotePrefix, EndpointKind.Writer, 0x10, "rt/locrem_topic"), DateTime.UtcNow);
+
+        using var diag = CreateDiagnostics(node);
+        var info = diag.GetTopicInfo("/locrem_topic");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().HaveCount(2);
+        info.Endpoints.Should().ContainSingle(e => e.IsLocal);
+        info.Endpoints.Should().ContainSingle(e => !e.IsLocal);
+    }
+
+    [Fact]
+    public void GetTopicInfo_はendpointのReliability_Durabilityを保持する()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "qos_node");
+
+        var prefix = Prefix(38);
+        context.DiscoveryDb.UpsertParticipant(Participant(prefix), DateTime.UtcNow);
+        var ep = Endpoint(prefix, EndpointKind.Writer, 0x10, "rt/qos_topic");
+        ep.Reliability = ReliabilityQos.Reliable;
+        ep.Durability = DurabilityQos.TransientLocal;
+        context.DiscoveryDb.UpsertEndpoint(ep, DateTime.UtcNow);
+
+        using var diag = CreateDiagnostics(node);
+        var info = diag.GetTopicInfo("/qos_topic");
+        info.Should().NotBeNull();
+        var endpoint = info!.Endpoints.Should().ContainSingle().Subject;
+        endpoint.Reliability.Should().Be(ReliabilityQos.Reliable);
+        endpoint.Durability.Should().Be(DurabilityQos.TransientLocal);
+    }
+
+    [Fact]
+    public void GetTopicInfo_は未発見topicにnullを返す()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "null_node");
+        using var diag = CreateDiagnostics(node);
+        diag.GetTopicInfo("/nonexistent").Should().BeNull();
+    }
+
+    [Fact]
+    public void GetTopicInfo_はnull引数でArgumentException()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "arg_node");
+        using var diag = CreateDiagnostics(node);
+        var act = () => diag.GetTopicInfo(null!);
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void GetTopicInfo_は空文字引数でArgumentException()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "arg_node2");
+        using var diag = CreateDiagnostics(node);
+        var act = () => diag.GetTopicInfo("");
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Dispose後のGetTopicsはObjectDisposedExceptionを投げる()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "disp_node");
+        var diag = CreateDiagnostics(node);
+        diag.Dispose();
+        var act = () => diag.GetTopics();
+        act.Should().Throw<ObjectDisposedException>();
+    }
+
+    [Fact]
+    public void Dispose後のGetTopicInfoはObjectDisposedExceptionを投げる()
+    {
+        using var context = CreateContext();
+        using var node = new Node(context, "disp_node2");
+        var diag = CreateDiagnostics(node);
+        diag.Dispose();
+        var act = () => diag.GetTopicInfo("/test");
+        act.Should().Throw<ObjectDisposedException>();
+    }
+
+    [Fact]
+    public void CreateTopicDiagnostics_はNode_Dispose後はObjectDisposedException()
+    {
+        using var context = CreateContext();
+        var node = new Node(context, "predisp_node");
+        node.Dispose();
+        var act = () => node.CreateTopicDiagnostics();
+        act.Should().Throw<ObjectDisposedException>();
+    }
+
+    [Fact]
+    public void TopicInfo_はimmutableなDTOである()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "immut_dto");
+        using var pub = node.CreatePublisher<StringMessage>(
+            "immut_topic", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        using var diag = CreateDiagnostics(node);
+        var topics = diag.GetTopics();
+        var info = topics[0];
+
+        // TopicInfo は sealed class で setter を持たない
+        info.TopicName.Should().Be("/immut_topic");
+        info.PublisherCount.Should().Be(1);
+        info.SubscriberCount.Should().Be(0);
+        info.RosTypeNames.Should().HaveCount(1);
+        info.Endpoints.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void GetTopics_はlocalとremoteを同一topicに集約する()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "agg_node");
+        using var pub = node.CreatePublisher<StringMessage>(
+            "agg_topic", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var remotePrefix = Prefix(39);
+        context.DiscoveryDb.UpsertParticipant(Participant(remotePrefix), DateTime.UtcNow);
+        context.DiscoveryDb.UpsertEndpoint(
+            Endpoint(remotePrefix, EndpointKind.Reader, 0x10, "rt/agg_topic"), DateTime.UtcNow);
+
+        using var diag = CreateDiagnostics(node);
+        var topics = diag.GetTopics();
+        topics.Should().ContainSingle(t => t.TopicName == "/agg_topic");
+        var info = diag.GetTopicInfo("/agg_topic");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().HaveCount(2);
+        info.PublisherCount.Should().Be(1);
+        info.SubscriberCount.Should().Be(1);
     }
 }

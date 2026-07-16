@@ -156,6 +156,7 @@ public sealed class Context : IDisposable
 
     internal ParticipantTransportSet Transports => _transports;
     internal ParticipantRtpsReceiver Receiver => _receiver;
+    internal bool IsDisposed => _disposed;
     internal CancellationToken LeaseExpiryCancellationToken => _leaseExpiryMonitor.CancellationToken;
     internal UserEntityIdAllocator UserEntityIds => _userEntityIds;
     internal object GraphLock => _graphLock;

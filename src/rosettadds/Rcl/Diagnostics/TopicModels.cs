@@ -1,0 +1,64 @@
+using System.Collections.Generic;
+using ROSettaDDS.Common;
+using ROSettaDDS.Dds.QoS;
+using ROSettaDDS.Discovery;
+
+using Guid = ROSettaDDS.Common.Guid;
+
+namespace ROSettaDDS.Rcl.Diagnostics
+{
+    public sealed class TopicEndpointInfo
+    {
+        public Guid EndpointGuid { get; }
+        public EndpointKind Kind { get; }
+        public bool IsLocal { get; }
+        public string TopicName { get; }
+        public string DdsTypeName { get; }
+        public string? RosTypeName { get; }
+        public ReliabilityQos Reliability { get; }
+        public DurabilityQos Durability { get; }
+
+        internal TopicEndpointInfo(
+            Guid endpointGuid,
+            EndpointKind kind,
+            bool isLocal,
+            string topicName,
+            string ddsTypeName,
+            string? rosTypeName,
+            ReliabilityQos reliability,
+            DurabilityQos durability)
+        {
+            EndpointGuid = endpointGuid;
+            Kind = kind;
+            IsLocal = isLocal;
+            TopicName = topicName;
+            DdsTypeName = ddsTypeName;
+            RosTypeName = rosTypeName;
+            Reliability = reliability;
+            Durability = durability;
+        }
+    }
+
+    public sealed class TopicInfo
+    {
+        public string TopicName { get; }
+        public IReadOnlyList<string> RosTypeNames { get; }
+        public int PublisherCount { get; }
+        public int SubscriberCount { get; }
+        public IReadOnlyList<TopicEndpointInfo> Endpoints { get; }
+
+        internal TopicInfo(
+            string topicName,
+            IReadOnlyList<string> rosTypeNames,
+            int publisherCount,
+            int subscriberCount,
+            IReadOnlyList<TopicEndpointInfo> endpoints)
+        {
+            TopicName = topicName;
+            RosTypeNames = rosTypeNames;
+            PublisherCount = publisherCount;
+            SubscriberCount = subscriberCount;
+            Endpoints = endpoints;
+        }
+    }
+}
