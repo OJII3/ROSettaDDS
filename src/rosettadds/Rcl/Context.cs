@@ -36,6 +36,7 @@ public sealed class Context : IDisposable
     private readonly UserEntityIdAllocator _userEntityIds = new();
     private readonly List<Node> _nodes = new();
     private readonly object _nodesLock = new();
+    private readonly object _graphLock = new();
 
     private bool _started;
     private bool _disposed;
@@ -302,6 +303,56 @@ public sealed class Context : IDisposable
         {
             return _nodes.ToArray();
         }
+    }
+
+    /// <summary>
+    /// Context graph lock 下で全 Node の local endpoint と DiscoveryDb の remote endpoint を
+    /// 値コピーし、GUID 重複を除外して topic 名・GUID ordinal 順に並べたスナップショットを返す。
+    /// </summary>
+    internal GraphSnapshot CreateGraphSnapshot()
+    {
+        ThrowIfDisposed();
+        lock (_graphLock)
+        {
+            var localWriters = new List<DiscoveredEndpointData>();
+            var localReaders = new List<DiscoveredEndpointData>();
+
+            foreach (var node in SnapshotNodes())
+            {
+                var local = node.LocalEndpointSnapshot();
+                localWriters.AddRange(local.Writers);
+                localReaders.AddRange(local.Readers);
+            }
+
+            var remote = _discoveryDb.CreateEndpointSnapshot();
+
+            var seen = new HashSet<Guid>();
+            var all = new List<DiscoveredEndpointData>();
+
+            foreach (var w in localWriters) { if (seen.Add(w.EndpointGuid)) all.Add(w); }
+            foreach (var w in remote.Writers) { if (seen.Add(w.EndpointGuid)) all.Add(w); }
+            foreach (var r in localReaders) { if (seen.Add(r.EndpointGuid)) all.Add(r); }
+            foreach (var r in remote.Readers) { if (seen.Add(r.EndpointGuid)) all.Add(r); }
+
+            all.Sort(static (a, b) =>
+            {
+                int topicCmp = string.CompareOrdinal(a.TopicName, b.TopicName);
+                if (topicCmp != 0) return topicCmp;
+                return CompareGuid(a.EndpointGuid, b.EndpointGuid);
+            });
+
+            return new GraphSnapshot(all.AsReadOnly());
+        }
+    }
+
+    private static int CompareGuid(Guid a, Guid b)
+    {
+        Span<byte> aBytes = stackalloc byte[GuidPrefix.Size];
+        Span<byte> bBytes = stackalloc byte[GuidPrefix.Size];
+        a.Prefix.CopyTo(aBytes);
+        b.Prefix.CopyTo(bBytes);
+        int cmp = aBytes.SequenceCompareTo(bBytes);
+        return cmp != 0 ? cmp : a.EntityId.Value.CompareTo(b.EntityId.Value);
     }
 
     private void ThrowIfDisposed()

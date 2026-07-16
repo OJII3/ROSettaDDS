@@ -163,6 +163,82 @@ public class DiscoveryDbTests
     }
 
     [Fact]
+    public void CreateEndpointSnapshot_はwriter_readerを値コピーし変更が影響しない()
+    {
+        var db = new DiscoveryDb();
+        var now = DateTime.UtcNow;
+        var prefix = GuidPrefix.Create(VendorId.ROSettaDDS, 0x01, 0x02, 0x03);
+        var participantGuid = new Guid(prefix, EntityId.Participant);
+        var writerGuid = new Guid(prefix, new EntityId(0x10u, EntityKind.UserDefinedWriterNoKey));
+        var readerGuid = new Guid(prefix, new EntityId(0x11u, EntityKind.UserDefinedReaderNoKey));
+
+        db.UpsertParticipant(new ParticipantData
+        {
+            Guid = participantGuid,
+            LeaseDuration = Duration.Infinite,
+        }, now);
+        db.UpsertEndpoint(new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Writer,
+            EndpointGuid = writerGuid,
+            ParticipantGuid = participantGuid,
+            TopicName = "rt/chatter",
+            TypeName = "std_msgs::msg::dds_::String_",
+        }, now);
+        db.UpsertEndpoint(new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Reader,
+            EndpointGuid = readerGuid,
+            ParticipantGuid = participantGuid,
+            TopicName = "rt/chatter",
+            TypeName = "std_msgs::msg::dds_::String_",
+        }, now);
+
+        var snapshot = db.CreateEndpointSnapshot();
+
+        snapshot.Writers.Should().HaveCount(1);
+        snapshot.Readers.Should().HaveCount(1);
+
+        // 各 snapshot 取得で独立したクローンが生成される
+        snapshot.Writers[0].TopicName = "rt/modified";
+
+        var snapshot2 = db.CreateEndpointSnapshot();
+        snapshot2.Writers[0].TopicName.Should().Be("rt/chatter");
+    }
+
+    [Fact]
+    public void CreateEndpointSnapshot_は同じロック区間で一貫した集合を返す()
+    {
+        var db = new DiscoveryDb();
+        var now = DateTime.UtcNow;
+        var prefix = GuidPrefix.Create(VendorId.ROSettaDDS, 0x01, 0x02, 0x03);
+        var participantGuid = new Guid(prefix, EntityId.Participant);
+
+        db.UpsertParticipant(new ParticipantData
+        {
+            Guid = participantGuid,
+            LeaseDuration = Duration.Infinite,
+        }, now);
+
+        var writerGuid = new Guid(prefix, new EntityId(0x10u, EntityKind.UserDefinedWriterNoKey));
+        db.UpsertEndpoint(new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Writer,
+            EndpointGuid = writerGuid,
+            ParticipantGuid = participantGuid,
+            TopicName = "rt/foo",
+            TypeName = "std_msgs::msg::dds_::String_",
+        }, now);
+
+        // Expire と CreateEndpointSnapshot の競合: 追加前または削除後の一貫した状態になる
+        db.ExpireOldParticipants(now + TimeSpan.FromDays(1));
+        var snapshot = db.CreateEndpointSnapshot();
+
+        snapshot.Writers.Should().BeEmpty();
+        snapshot.Readers.Should().BeEmpty();
+    }
+
+    [Fact]
     public void remote_participant_lease_durationは保持前にclampされる()
     {
         var db = new DiscoveryDb(new DiscoveryLimits(

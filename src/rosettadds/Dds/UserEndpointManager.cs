@@ -155,6 +155,9 @@ internal sealed class UserEndpointManager
 
     public EndpointSnapshot Snapshot() => _registry.Snapshot();
 
+    /// <summary>現在の全 local endpoint metadata を値コピーで返す。</summary>
+    internal EndpointDiscoverySnapshot LocalEndpointSnapshot() => _registry.LocalEndpointSnapshot();
+
     public EndpointDiscoverySnapshot UpdateLocalLocators(
         IReadOnlyList<Locator> unicastLocators,
         Locator multicastLocator)

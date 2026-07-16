@@ -1,4 +1,5 @@
 using ROSettaDDS.Common;
+using ROSettaDDS.Dds;
 using System.Text;
 
 using Guid = ROSettaDDS.Common.Guid;
@@ -282,6 +283,24 @@ public sealed class DiscoveryDb
     public IReadOnlyList<RemoteEndpoint> ReaderSnapshot()
     {
         lock (_lock) { return _readers.Values.ToArray(); }
+    }
+
+    /// <summary>
+    /// Writer/Reader のメタデータを同じロック区間で値コピーしたスナップショットを返す。
+    /// 取得後の DiscoveredEndpointData を変更しても内部状態に影響しない。
+    /// </summary>
+    internal EndpointDiscoverySnapshot CreateEndpointSnapshot()
+    {
+        lock (_lock)
+        {
+            var writers = _writers.Values
+                .Select(static w => w.Data.Clone())
+                .ToArray();
+            var readers = _readers.Values
+                .Select(static r => r.Data.Clone())
+                .ToArray();
+            return new EndpointDiscoverySnapshot(writers, readers);
+        }
     }
 
     private void RemoveEndpointsForParticipant(

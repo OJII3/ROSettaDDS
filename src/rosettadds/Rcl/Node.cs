@@ -159,6 +159,18 @@ public sealed class Node : IDisposable
             requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits);
     }
 
+    /// <summary>この Node の全 local endpoint metadata を値コピーで返す。</summary>
+    internal EndpointDiscoverySnapshot LocalEndpointSnapshot()
+    {
+        if (_disposed)
+        {
+            return new EndpointDiscoverySnapshot(
+                Array.Empty<DiscoveredEndpointData>(),
+                Array.Empty<DiscoveredEndpointData>());
+        }
+        return _userEndpoints.LocalEndpointSnapshot();
+    }
+
     internal EndpointDiscoverySnapshot RefreshLocalEndpointLocators(
         IReadOnlyList<Locator> unicastLocators,
         Locator multicastLocator)
