@@ -307,6 +307,7 @@ public class DiscoveryDbTests
         Assert.True(snapshotHoldsLock.Wait(TimeSpan.FromSeconds(5)),
             "snapshot must acquire _lock");
 
+        Exception? mutationError = null;
         var mutationThread = new Thread(() =>
         {
             try
@@ -321,6 +322,10 @@ public class DiscoveryDbTests
                         TypeName = "std_msgs::msg::dds_::String_",
                     },
                     DateTime.UtcNow);
+            }
+            catch (Exception ex)
+            {
+                mutationError = ex;
             }
             finally
             {
@@ -348,6 +353,10 @@ public class DiscoveryDbTests
             "mutation must complete after snapshot releases _lock");
         Assert.True(mutationAcquiredLock.Wait(TimeSpan.FromSeconds(5)),
             "mutation must acquire _lock after snapshot releases it");
+
+        mutationThread.Join();
+        if (mutationError is not null)
+            throw new Exception("mutation thread failed", mutationError);
 
         db.SnapshotLockAcquiredCallback = null;
         db.MutationLockAcquiredCallback = null;
@@ -413,11 +422,16 @@ public class DiscoveryDbTests
         Assert.True(snapshotHoldsLock.Wait(TimeSpan.FromSeconds(5)),
             "snapshot must acquire _lock");
 
+        Exception? mutationError = null;
         var mutationThread = new Thread(() =>
         {
             try
             {
                 db.TryRemoveEndpoint(EndpointKind.Writer, writerGuid);
+            }
+            catch (Exception ex)
+            {
+                mutationError = ex;
             }
             finally
             {
@@ -445,6 +459,10 @@ public class DiscoveryDbTests
             "mutation must complete after snapshot releases _lock");
         Assert.True(mutationAcquiredLock.Wait(TimeSpan.FromSeconds(5)),
             "mutation must acquire _lock after snapshot releases it");
+
+        mutationThread.Join();
+        if (mutationError is not null)
+            throw new Exception("mutation thread failed", mutationError);
 
         db.SnapshotLockAcquiredCallback = null;
         db.MutationLockAcquiredCallback = null;

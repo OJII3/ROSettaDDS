@@ -438,6 +438,7 @@ public class TopicDiagnosticsTests
         Assert.True(snapshotInLock.Wait(TimeSpan.FromSeconds(5)),
             "snapshot must acquire GraphLock and enter lock callback");
 
+        Exception? mutationError = null;
         var mutationThread = new Thread(() =>
         {
             try
@@ -445,6 +446,10 @@ public class TopicDiagnosticsTests
                 context.DiscoveryDb.UpsertEndpoint(
                     Endpoint(prefix, EndpointKind.Writer, 0x21, "rt/blocked"),
                     DateTime.UtcNow);
+            }
+            catch (Exception ex)
+            {
+                mutationError = ex;
             }
             finally
             {
@@ -467,6 +472,10 @@ public class TopicDiagnosticsTests
 
         if (snapshotError is not null)
             throw new Exception("snapshot thread failed", snapshotError);
+
+        mutationThread.Join();
+        if (mutationError is not null)
+            throw new Exception("mutation thread failed", mutationError);
 
         context.CreateGraphSnapshot().Endpoints.Should().Contain(e => e.TopicName == "rt/blocked");
 
