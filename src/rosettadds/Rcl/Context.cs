@@ -165,7 +165,7 @@ public sealed class Context : IDisposable
     // テスト用 hook (null のままでは本番動作に影響しない)
     internal Action? GraphSnapshotEnterLockCallback { get; set; }
     internal Action? GraphSnapshotPauseCallback { get; set; }
-    internal Action? GraphLockContentionCallback { get; set; }
+    internal Action? GraphSnapshotBetweenLocalCollectionsCallback { get; set; }
     internal int PublishedSubscriptionStateCount => _sedpSubscriptionsWriter.PublishedCount;
 
     // ----- SEDP 広告の Node 向け delegate -----
@@ -350,6 +350,7 @@ public sealed class Context : IDisposable
         {
             GraphSnapshotEnterLockCallback?.Invoke();
             GraphSnapshotPauseCallback?.Invoke();
+            GraphSnapshotBetweenLocalCollectionsCallback?.Invoke();
             if (_disposed) return (new List<DiscoveredEndpointData>(), new HashSet<Guid>());
 
             var localWriters = new List<DiscoveredEndpointData>();
