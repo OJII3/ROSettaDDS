@@ -160,6 +160,10 @@ public sealed class Context : IDisposable
     internal UserEntityIdAllocator UserEntityIds => _userEntityIds;
     internal object GraphLock => _graphLock;
     internal int PublishedPublicationStateCount => _sedpPublicationsWriter.PublishedCount;
+
+    // テスト用 hook (null のままでは本番動作に影響しない)
+    internal ManualResetEventSlim? GraphSnapshotEnterLock { get; set; }
+    internal ManualResetEventSlim? GraphSnapshotPause { get; set; }
     internal int PublishedSubscriptionStateCount => _sedpSubscriptionsWriter.PublishedCount;
 
     // ----- SEDP 広告の Node 向け delegate -----
@@ -325,6 +329,8 @@ public sealed class Context : IDisposable
         lock (_nodesLock)
         lock (_graphLock)
         {
+            GraphSnapshotEnterLock?.Set();
+            GraphSnapshotPause?.Wait();
             if (_disposed) return GraphSnapshot.Empty;
 
             var localWriters = new List<DiscoveredEndpointData>();
