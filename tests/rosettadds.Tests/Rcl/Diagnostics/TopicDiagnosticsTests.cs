@@ -1008,4 +1008,149 @@ public class TopicDiagnosticsTests
         info.Should().NotBeNull();
         info!.TopicName.Should().Be("/foo/bar");
     }
+
+    // ======== Task2 レビュー残件 ========
+
+    [Fact]
+    public void CreatePublisherは先頭slash付き_user_topicでGetTopicsが正しいtopic名を返す()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "slash_pub");
+        using var pub = node.CreatePublisher<StringMessage>(
+            "/foo/bar", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        using var diag = node.CreateTopicDiagnostics();
+        var topics = diag.GetTopics();
+        topics.Should().ContainSingle();
+        topics[0].TopicName.Should().Be("/foo/bar");
+
+        var info = diag.GetTopicInfo("/foo/bar");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void CreateSubscriptionは先頭slash付き_user_topicでGetTopicsが正しいtopic名を返す()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "slash_sub");
+        using var sub = node.CreateSubscription<StringMessage>(
+            "/foo/bar", StringMessageSerializer.Instance, (_) => { });
+
+        using var diag = node.CreateTopicDiagnostics();
+        var topics = diag.GetTopics();
+        topics.Should().ContainSingle();
+        topics[0].TopicName.Should().Be("/foo/bar");
+
+        var info = diag.GetTopicInfo("/foo/bar");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void CreatePublisherは最小slash_topicでGetTopicsがempty_suffix境界を扱う()
+    {
+        // "/" → MangleTopic → "rt/" → DemangleTopic → "" → display "/"
+        using var context = CreateContext();
+        context.Start();
+        using var node = new Node(context, "empty_sfx");
+        using var pub = node.CreatePublisher<StringMessage>(
+            "/", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        using var diag = node.CreateTopicDiagnostics();
+        var topics = diag.GetTopics();
+        topics.Should().ContainSingle();
+        topics[0].TopicName.Should().Be("/");
+
+        var info = diag.GetTopicInfo("/");
+        info.Should().NotBeNull();
+        info!.Endpoints.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void CreateGraphSnapshotWithLocalInfoは競合下でlocal判定とendpoint集合が同一snapshotである()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node1 = new Node(context, "n1");
+        using var node2 = new Node(context, "n2");
+        using var pub1 = node1.CreatePublisher<StringMessage>(
+            "steady", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var lockAcquired = new ManualResetEventSlim();
+        var releaseLock = new ManualResetEventSlim();
+        context.GraphSnapshotEnterLockCallback = () => lockAcquired.Set();
+        context.GraphSnapshotPauseCallback = () =>
+        {
+            if (!releaseLock.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("snapshot pause timed out");
+        };
+
+        GraphSnapshot? snap = null;
+        HashSet<Guid>? localGuids = null;
+        Exception? snapError = null;
+        var snapDone = new ManualResetEventSlim();
+        var snapThread = new Thread(() =>
+        {
+            try
+            {
+                (snap, localGuids) = context.CreateGraphSnapshotWithLocalInfo();
+            }
+            catch (Exception ex) { snapError = ex; }
+            finally { snapDone.Set(); }
+        });
+        snapThread.Start();
+
+        Assert.True(lockAcquired.Wait(TimeSpan.FromSeconds(5)),
+            "snapshot must acquire GraphLock");
+
+        // 別Nodeのlocal endpoint mutation は同一 GraphLock 下でブロックされる
+        Publisher<StringMessage>? concurrentPub = null;
+        var mutDone = new ManualResetEventSlim();
+        Exception? mutError = null;
+        var mutThread = new Thread(() =>
+        {
+            try
+            {
+                concurrentPub = node2.CreatePublisher<StringMessage>(
+                    "concurrent", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+            }
+            catch (Exception ex) { mutError = ex; }
+            finally { mutDone.Set(); }
+        });
+        mutThread.Start();
+
+        Assert.False(mutDone.Wait(TimeSpan.FromMilliseconds(500)),
+            "local endpoint mutation on another Node must be blocked by GraphLock");
+
+        releaseLock.Set();
+        Assert.True(snapDone.Wait(TimeSpan.FromSeconds(5)), "snapshot must complete");
+        Assert.True(mutDone.Wait(TimeSpan.FromSeconds(5)), "mutation must complete");
+
+        if (snapError is not null) throw new Exception("snapshot failed", snapError);
+        if (mutError is not null) throw new Exception("mutation failed", mutError);
+
+        // snapshot は mutation 前の一貫した状態を持つ
+        var steadyTopic = TopicNameMangler.MangleTopic("steady");
+        var concurrentTopic = TopicNameMangler.MangleTopic("concurrent");
+
+        snap.Should().NotBeNull();
+        var snapshot = snap!.Value;
+        snapshot.Endpoints.Should().ContainSingle(e => e.TopicName == steadyTopic);
+        snapshot.Endpoints.Should().NotContain(e => e.TopicName == concurrentTopic);
+
+        // 全 endpoint が localGuids に含まれる（同一snapshotの証）
+        snapshot.Endpoints.Should().OnlyContain(e => localGuids!.Contains(e.EndpointGuid));
+
+        // mutation 後の状態を確認
+        concurrentPub.Should().NotBeNull();
+        var snap2 = context.CreateGraphSnapshot();
+        snap2.Endpoints.Should().Contain(e => e.TopicName == concurrentTopic);
+
+        concurrentPub!.Dispose();
+        context.GraphSnapshotEnterLockCallback = null;
+        context.GraphSnapshotPauseCallback = null;
+    }
 }
