@@ -1091,11 +1091,12 @@ public class TopicDiagnosticsTests
         };
         context.GraphLockMutationCallback = lockObj =>
         {
-            mutAttempted.Set();
-            if (!Monitor.TryEnter(lockObj, 0))
-                Interlocked.Exchange(ref contentionObserved, 1);
+            var contended = !Monitor.TryEnter(lockObj, 0);
+            if (contended)
+                Volatile.Write(ref contentionObserved, 1);
             else
                 Monitor.Exit(lockObj);
+            mutAttempted.Set();
         };
 
         GraphSnapshot? snap = null;
@@ -1193,11 +1194,12 @@ public class TopicDiagnosticsTests
 
         context.GraphLockMutationCallback = lockObj =>
         {
-            mutAttempted.Set();
-            if (!Monitor.TryEnter(lockObj, 0))
-                Interlocked.Exchange(ref contentionObserved, 1);
+            var contended = !Monitor.TryEnter(lockObj, 0);
+            if (contended)
+                Volatile.Write(ref contentionObserved, 1);
             else
                 Monitor.Exit(lockObj);
+            mutAttempted.Set();
         };
 
         var lockAcquired = new ManualResetEventSlim();
