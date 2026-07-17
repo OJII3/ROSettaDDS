@@ -117,7 +117,8 @@ public sealed class Node : IDisposable
             cdrReadLimits: Context.Options.CdrReadLimits);
 
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
-        lock (Context.GraphLock) { _userEndpoints.RegisterReader(endpointData, reader); }
+        lock (Context.GraphLock) { _userEndpoints.RegisterReaderMetadata(endpointData, reader); }
+        _userEndpoints.CompleteReaderRegistration(endpointData, reader);
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddSubscriptionAsync(endpointData, token),
             "Node failed to advertise local reader endpoint");
@@ -205,7 +206,8 @@ public sealed class Node : IDisposable
         var writer = endpoint.Writer;
         var endpointData = endpoint.EndpointData;
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
-        lock (Context.GraphLock) { _userEndpoints.RegisterWriter(endpointData, writer); }
+        lock (Context.GraphLock) { _userEndpoints.RegisterWriterMetadata(endpointData, writer); }
+        _userEndpoints.CompleteWriterRegistration(endpointData, writer);
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddPublicationAsync(endpointData, token),
             "Node failed to advertise local writer endpoint");
@@ -222,7 +224,8 @@ public sealed class Node : IDisposable
         var endpointData = endpoint.EndpointData;
 
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
-        lock (Context.GraphLock) { _userEndpoints.RegisterReader(endpointData, reader); }
+        lock (Context.GraphLock) { _userEndpoints.RegisterReaderMetadata(endpointData, reader); }
+        _userEndpoints.CompleteReaderRegistration(endpointData, reader);
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddSubscriptionAsync(endpointData, token),
             "Node failed to advertise local service reply reader endpoint");
@@ -267,7 +270,8 @@ public sealed class Node : IDisposable
     {
         UserEndpointManager.UnregisterResult result;
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
-        lock (Context.GraphLock) { result = _userEndpoints.UnregisterWriter(endpointGuid, writerToRemove); }
+        lock (Context.GraphLock) { result = _userEndpoints.UnregisterWriterMetadata(endpointGuid, writerToRemove); }
+        _userEndpoints.CompleteWriterUnregistration(endpointGuid, writerToRemove, result);
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterPublicationAsync(result.Endpoint!));
@@ -278,7 +282,8 @@ public sealed class Node : IDisposable
     {
         UserEndpointManager.UnregisterResult result;
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
-        lock (Context.GraphLock) { result = _userEndpoints.UnregisterReader(endpointGuid, readerToRemove); }
+        lock (Context.GraphLock) { result = _userEndpoints.UnregisterReaderMetadata(endpointGuid, readerToRemove); }
+        _userEndpoints.CompleteReaderUnregistration(endpointGuid, readerToRemove, result);
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterSubscriptionAsync(result.Endpoint!));

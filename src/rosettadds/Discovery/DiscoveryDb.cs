@@ -122,19 +122,19 @@ public sealed class DiscoveryDb
                     isNew = true;
                 }
             }
-
-            if (isNew)
-            {
-                ParticipantDiscovered?.Invoke(participant);
-            }
-            else
-            {
-                ParticipantUpdated?.Invoke(participant);
-            }
         }
         finally
         {
             ExternalLockExit?.Invoke();
+        }
+
+        if (isNew)
+        {
+            ParticipantDiscovered?.Invoke(participant);
+        }
+        else
+        {
+            ParticipantUpdated?.Invoke(participant);
         }
     }
 
@@ -160,19 +160,20 @@ public sealed class DiscoveryDb
                     }
                 }
             }
-            if (expired is null)
-            {
-                return;
-            }
-            PublishLostEndpoints(lostWriters, lostReaders);
-            foreach (var p in expired)
-            {
-                ParticipantLost?.Invoke(p);
-            }
         }
         finally
         {
             ExternalLockExit?.Invoke();
+        }
+
+        if (expired is null)
+        {
+            return;
+        }
+        PublishLostEndpoints(lostWriters, lostReaders);
+        foreach (var p in expired)
+        {
+            ParticipantLost?.Invoke(p);
         }
     }
 
@@ -193,17 +194,18 @@ public sealed class DiscoveryDb
                 }
                 RemoveEndpointsForParticipant(prefix, ref lostWriters, ref lostReaders);
             }
-            PublishLostEndpoints(lostWriters, lostReaders);
-            if (removed is not null)
-            {
-                ParticipantLost?.Invoke(removed);
-            }
-            return true;
         }
         finally
         {
             ExternalLockExit?.Invoke();
         }
+
+        PublishLostEndpoints(lostWriters, lostReaders);
+        if (removed is not null)
+        {
+            ParticipantLost?.Invoke(removed);
+        }
+        return true;
     }
 
     /// <summary>
@@ -253,26 +255,26 @@ public sealed class DiscoveryDb
                     isNew = true;
                 }
             }
-
-            if (isNew)
-            {
-                if (data.Kind == EndpointKind.Writer)
-                {
-                    WriterDiscovered?.Invoke(endpoint);
-                }
-                else
-                {
-                    ReaderDiscovered?.Invoke(endpoint);
-                }
-            }
-            else
-            {
-                EndpointUpdated?.Invoke(endpoint);
-            }
         }
         finally
         {
             ExternalLockExit?.Invoke();
+        }
+
+        if (isNew)
+        {
+            if (data.Kind == EndpointKind.Writer)
+            {
+                WriterDiscovered?.Invoke(endpoint);
+            }
+            else
+            {
+                ReaderDiscovered?.Invoke(endpoint);
+            }
+        }
+        else
+        {
+            EndpointUpdated?.Invoke(endpoint);
         }
     }
 
@@ -296,24 +298,24 @@ public sealed class DiscoveryDb
                     return false;
                 }
             }
-
-            if (removed is not null)
-            {
-                if (kind == EndpointKind.Writer)
-                {
-                    WriterLost?.Invoke(removed);
-                }
-                else
-                {
-                    ReaderLost?.Invoke(removed);
-                }
-            }
-            return true;
         }
         finally
         {
             ExternalLockExit?.Invoke();
         }
+
+        if (removed is not null)
+        {
+            if (kind == EndpointKind.Writer)
+            {
+                WriterLost?.Invoke(removed);
+            }
+            else
+            {
+                ReaderLost?.Invoke(removed);
+            }
+        }
+        return true;
     }
 
     /// <summary>登録されている Writer 数。</summary>
