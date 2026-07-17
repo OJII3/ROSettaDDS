@@ -1,6 +1,17 @@
+using System.Net;
+using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Dds;
+using ROSettaDDS.Dds.QoS;
+using ROSettaDDS.Discovery;
 using ROSettaDDS.Msgs.Std;
 using ROSettaDDS.Rcl;
+using ROSettaDDS.Rcl.Naming;
+using ROSettaDDS.Rtps;
+using ROSettaDDS.Rtps.HistoryCache;
+using ROSettaDDS.Rtps.Writer;
+using ROSettaDDS.Transport;
+using Guid = ROSettaDDS.Common.Guid;
 using Xunit;
 
 namespace ROSettaDDS.Tests.Rcl;
@@ -117,4 +128,125 @@ public class NodeTests
         Assert.Contains(typeof(Node).Name, ex.ObjectName, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CreatePublisher_phase2_match_failure_rolls_back()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        using var node = new Node(ctx, "pub_test");
+
+        using var sub = node.CreateSubscription<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, _ => { });
+
+        var reader = node.UserEndpoints.Snapshot().Readers[0];
+        reader.Dispose();
+
+        var ex = Assert.Throws<ObjectDisposedException>(() =>
+            node.CreatePublisher<StringMessage>("chatter", StringMessageSerializer.Instance));
+
+        var snapshot = node.UserEndpoints.Snapshot();
+        snapshot.Writers.Should().BeEmpty();
+        snapshot.Readers.Should().Contain(reader);
+
+        using var pub2 = node.CreatePublisher<StringMessage>(
+            "other", StringMessageSerializer.Instance);
+        Assert.NotNull(pub2);
+    }
+
+    [Fact]
+    public void CreateSubscription_phase2_match_failure_rolls_back()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        using var node = new Node(ctx, "sub_test");
+
+        using var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var writer = node.UserEndpoints.Snapshot().Writers[0];
+        writer.Dispose();
+
+        var ex = Assert.Throws<ObjectDisposedException>(() =>
+            node.CreateSubscription<StringMessage>("chatter", StringMessageSerializer.Instance, _ => { }));
+
+        var snapshot = node.UserEndpoints.Snapshot();
+        snapshot.Readers.Should().BeEmpty();
+        snapshot.Writers.Should().Contain(writer);
+
+        using var sub2 = node.CreateSubscription<StringMessage>(
+            "other", StringMessageSerializer.Instance, _ => { });
+        Assert.NotNull(sub2);
+    }
+
+    [Fact]
+    public void CreateServiceClient_reply_reader_phase2_match_failure_rolls_back()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        using var node = new Node(ctx, "svc_test");
+
+        var svcName = $"test_{System.Guid.NewGuid():N}";
+        var replyTopic = TopicNameMangler.MangleServiceReply(svcName);
+
+        var writerGuid = new Guid(ctx.GuidPrefix, ctx.UserEntityIds.AllocateWriter());
+        var transport = new SilentTransport();
+        var history = new WriterHistoryCache(writerGuid);
+        var replyWriter = new StatefulWriter(
+            transport,
+            Locator.FromUdpV4(IPAddress.Loopback, 7401),
+            ProtocolVersion.Current,
+            VendorId.ROSettaDDS,
+            ctx.GuidPrefix,
+            writerGuid.EntityId,
+            TimeSpan.FromSeconds(1),
+            history,
+            NullLogger.Instance);
+
+        var endpointData = new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Writer,
+            EndpointGuid = writerGuid,
+            ParticipantGuid = ctx.Guid,
+            TopicName = replyTopic,
+            TypeName = "std_msgs::msg::dds_::String_",
+            Reliability = ReliabilityQos.Reliable,
+            Durability = DurabilityQos.Volatile,
+        };
+        endpointData.UnicastLocators.Add(Locator.FromUdpV4(IPAddress.Loopback, 7411));
+
+        node.UserEndpoints.RegisterWriterMetadata(endpointData, replyWriter);
+        replyWriter.Dispose();
+
+        var descriptor = new ServiceDescriptor<StringMessage, StringMessage>(
+            requestDdsTypeName: "std_msgs::msg::dds_::String_",
+            responseDdsTypeName: "std_msgs::msg::dds_::String_",
+            requestSerializer: StringMessageSerializer.Instance,
+            responseSerializer: StringMessageSerializer.Instance);
+
+        var ex = Assert.Throws<ObjectDisposedException>(() =>
+            node.CreateServiceClient(descriptor, svcName));
+
+        var snapshot = node.UserEndpoints.Snapshot();
+        snapshot.Readers.Should().BeEmpty();
+
+        bool anyReader = snapshot.Readers.Length > 0;
+        string msg = anyReader
+            ? $"Found unexpected reader(s); writers={snapshot.Writers.Length}"
+            : "";
+        Assert.False(anyReader, msg);
+
+        using var sub2 = node.CreateSubscription<StringMessage>(
+            "other", StringMessageSerializer.Instance, _ => { });
+        Assert.NotNull(sub2);
+    }
+
+    private sealed class SilentTransport : IRtpsTransport
+    {
+        public Locator LocalLocator => Locator.FromUdpV4(IPAddress.Loopback, 7411);
+        public event Action<ReadOnlyMemory<byte>, Locator>? Received { add { } remove { } }
+        public ValueTask SendAsync(ReadOnlyMemory<byte> packet, Locator destination, CancellationToken cancellationToken = default) => default;
+        public void Start() { }
+        public void Stop() { }
+        public void Dispose() { }
+    }
 }

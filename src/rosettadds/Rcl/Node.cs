@@ -66,6 +66,7 @@ public sealed class Node : IDisposable
     public Context Context { get; }
     public NodeOptions Options => _options;
     internal bool IsDisposed => _disposed;
+    internal UserEndpointManager UserEndpoints => _userEndpoints;
     private ILogger Logger => _options.Logger ?? Context.Logger;
 
     public Publisher<T> CreatePublisher<T>(string topicName, ICdrSerializer<T> serializer, string? typeName = null)
