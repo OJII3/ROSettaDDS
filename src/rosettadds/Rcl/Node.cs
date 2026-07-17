@@ -185,6 +185,78 @@ public sealed class Node : IDisposable
             handlerContext: handlerContext,
             reliability: reliability);
 
+    internal RawSubscription CreateRawReader(
+        string ddsTopic,
+        string ddsTypeName,
+        Action<ReadOnlyMemory<byte>, GuidPrefix> callback,
+        ReliabilityQos reliability,
+        DurabilityQos durability)
+    {
+        ThrowIfDisposed();
+        if (string.IsNullOrEmpty(ddsTopic)) throw new ArgumentException("Value cannot be null or empty.", nameof(ddsTopic));
+        if (string.IsNullOrEmpty(ddsTypeName)) throw new ArgumentException("Value cannot be null or empty.", nameof(ddsTypeName));
+        if (callback is null) throw new ArgumentNullException(nameof(callback));
+
+        var endpoint = _endpointFactory.CreateRawReader(ddsTopic, ddsTypeName, reliability, durability);
+        var reader = endpoint.Reader;
+        var endpointGuid = endpoint.EndpointGuid;
+        var endpointData = endpoint.EndpointData;
+
+        var rawSub = new RawSubscription(
+            ddsTopic,
+            endpointGuid,
+            reader,
+            callback,
+            UnregisterLocalReader);
+
+        Interlocked.Increment(ref _pendingRegistrations);
+        try
+        {
+            Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
+            lock (Context.GraphLock) { _userEndpoints.RegisterReaderMetadata(endpointData, reader); }
+            BeforeDisposedCheckCallback?.Invoke();
+            if (_disposed)
+            {
+                lock (Context.GraphLock) { _userEndpoints.UnregisterReaderMetadata(endpointGuid, reader); }
+                reader.Dispose();
+                throw new ObjectDisposedException(GetType().Name);
+            }
+            try
+            {
+                _userEndpoints.CompleteReaderRegistration(endpointData, reader);
+            }
+            catch
+            {
+                UserEndpointManager.UnregisterResult rollbackResult;
+                try
+                {
+                    lock (Context.GraphLock)
+                    {
+                        rollbackResult = _userEndpoints.UnregisterReaderMetadata(endpointGuid, reader);
+                    }
+                    if (rollbackResult.Endpoint is not null)
+                    {
+                        _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader, rollbackResult);
+                    }
+                }
+                catch
+                {
+                }
+                reader.Dispose();
+                throw;
+            }
+            _ = _sedpAdvertiser.RunAsync(
+                token => Context.AddSubscriptionAsync(endpointData, token),
+                "Node failed to advertise raw reader endpoint");
+
+            return rawSub;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _pendingRegistrations);
+        }
+    }
+
     public ServiceClient<TRequest, TResponse> CreateServiceClient<TRequest, TResponse>(
         ServiceDescriptor<TRequest, TResponse> descriptor,
         string serviceName)
