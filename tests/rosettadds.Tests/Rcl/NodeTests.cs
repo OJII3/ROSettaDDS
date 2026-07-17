@@ -114,18 +114,55 @@ public class NodeTests
     }
 
     [Fact]
-    public void Dispose後のCreatePublisherはrollbackしてObjectDisposedExceptionを投げ元例外を温存する()
+    public void CreatePublisher_Phase1後_Disposeが割り込むとrollbackして待機完了する()
     {
         using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
         ctx.Start();
         var node = new Node(ctx, "talker");
+
+        var afterPhase1 = new ManualResetEventSlim();
+        var disposeFlagSet = new ManualResetEventSlim();
+        Exception? createError = null;
+
+        node.BeforeDisposedCheckCallback = () =>
+        {
+            afterPhase1.Set();
+            disposeFlagSet.Wait();
+        };
+
+        var createThread = new Thread(() =>
+        {
+            try
+            {
+                node.CreatePublisher<StringMessage>(
+                    "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+            }
+            catch (Exception ex)
+            {
+                createError = ex;
+            }
+        });
+        createThread.Start();
+
+        Assert.True(afterPhase1.Wait(TimeSpan.FromSeconds(5)),
+            "phase 1 (metadata registration) must complete");
+
+        // Simulate Dispose racing in after phase 1, before disposed check
+        node.ForceDisposeFlag();
+        disposeFlagSet.Set();
+
+        Assert.True(createThread.Join(TimeSpan.FromSeconds(5)),
+            "CreatePublisher thread must complete after rollback");
+
+        Assert.NotNull(createError);
+        var odEx = Assert.IsType<ObjectDisposedException>(createError);
+        Assert.Contains(typeof(Node).Name, odEx.ObjectName, StringComparison.Ordinal);
+
+        // Verify Dispose completes cleanly (pendingRegistrations was decremented)
         node.Dispose();
+        Assert.True(node.IsDisposed);
 
-        var ex = Assert.Throws<ObjectDisposedException>(() =>
-            node.CreatePublisher<StringMessage>(
-                "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName));
-
-        Assert.Contains(typeof(Node).Name, ex.ObjectName, StringComparison.Ordinal);
+        node.BeforeDisposedCheckCallback = null;
     }
 
     [Fact]
@@ -138,15 +175,16 @@ public class NodeTests
         using var sub = node.CreateSubscription<StringMessage>(
             "chatter", StringMessageSerializer.Instance, _ => { });
 
-        var reader = node.UserEndpoints.Snapshot().Readers[0];
+        var reader = node.Snapshot().Readers[0];
         reader.Dispose();
 
         var ex = Assert.Throws<ObjectDisposedException>(() =>
             node.CreatePublisher<StringMessage>("chatter", StringMessageSerializer.Instance));
 
-        var snapshot = node.UserEndpoints.Snapshot();
+        var snapshot = node.Snapshot();
         snapshot.Writers.Should().BeEmpty();
         snapshot.Readers.Should().Contain(reader);
+        reader.MatchedWriterCount.Should().Be(0, "failed writer must be unmatched from existing reader");
 
         using var pub2 = node.CreatePublisher<StringMessage>(
             "other", StringMessageSerializer.Instance);
@@ -163,15 +201,16 @@ public class NodeTests
         using var pub = node.CreatePublisher<StringMessage>(
             "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
 
-        var writer = node.UserEndpoints.Snapshot().Writers[0];
+        var writer = node.Snapshot().Writers[0];
         writer.Dispose();
 
         var ex = Assert.Throws<ObjectDisposedException>(() =>
             node.CreateSubscription<StringMessage>("chatter", StringMessageSerializer.Instance, _ => { }));
 
-        var snapshot = node.UserEndpoints.Snapshot();
+        var snapshot = node.Snapshot();
         snapshot.Readers.Should().BeEmpty();
         snapshot.Writers.Should().Contain(writer);
+        writer.MatchedReaderCount.Should().Be(0, "failed reader must be unmatched from existing writer");
 
         using var sub2 = node.CreateSubscription<StringMessage>(
             "other", StringMessageSerializer.Instance, _ => { });
@@ -214,7 +253,7 @@ public class NodeTests
         };
         endpointData.UnicastLocators.Add(Locator.FromUdpV4(IPAddress.Loopback, 7411));
 
-        node.UserEndpoints.RegisterWriterMetadata(endpointData, replyWriter);
+        node.RegisterWriterMetadataForTest(endpointData, replyWriter);
         replyWriter.Dispose();
 
         var descriptor = new ServiceDescriptor<StringMessage, StringMessage>(
@@ -226,14 +265,10 @@ public class NodeTests
         var ex = Assert.Throws<ObjectDisposedException>(() =>
             node.CreateServiceClient(descriptor, svcName));
 
-        var snapshot = node.UserEndpoints.Snapshot();
+        var snapshot = node.Snapshot();
         snapshot.Readers.Should().BeEmpty();
-
-        bool anyReader = snapshot.Readers.Length > 0;
-        string msg = anyReader
-            ? $"Found unexpected reader(s); writers={snapshot.Writers.Length}"
-            : "";
-        Assert.False(anyReader, msg);
+        snapshot.Writers.Should().HaveCount(1,
+            "manually injected reply writer must remain; request publisher must be rolled back");
 
         using var sub2 = node.CreateSubscription<StringMessage>(
             "other", StringMessageSerializer.Instance, _ => { });

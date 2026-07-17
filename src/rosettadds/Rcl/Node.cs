@@ -27,6 +27,9 @@ public sealed class Node : IDisposable
     private volatile bool _disposed;
     private int _pendingRegistrations;
 
+    internal Action? BeforeDisposedCheckCallback { get; set; }
+    internal void ForceDisposeFlag() => _disposed = true;
+
     public Node(Context context, string name, NodeOptions? options = null)
     {
         if (context is null) throw new ArgumentNullException(nameof(context));
@@ -66,7 +69,9 @@ public sealed class Node : IDisposable
     public Context Context { get; }
     public NodeOptions Options => _options;
     internal bool IsDisposed => _disposed;
-    internal UserEndpointManager UserEndpoints => _userEndpoints;
+    internal EndpointSnapshot Snapshot() => _userEndpoints.Snapshot();
+    internal void RegisterWriterMetadataForTest(DiscoveredEndpointData endpointData, StatefulWriter writer)
+        => _userEndpoints.RegisterWriterMetadata(endpointData, writer);
     private ILogger Logger => _options.Logger ?? Context.Logger;
 
     public Publisher<T> CreatePublisher<T>(string topicName, ICdrSerializer<T> serializer, string? typeName = null)
@@ -123,6 +128,7 @@ public sealed class Node : IDisposable
         {
             Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
             lock (Context.GraphLock) { _userEndpoints.RegisterReaderMetadata(endpointData, reader); }
+            BeforeDisposedCheckCallback?.Invoke();
             if (_disposed)
             {
                 lock (Context.GraphLock) { _userEndpoints.UnregisterReaderMetadata(endpointGuid, reader); }
@@ -194,12 +200,20 @@ public sealed class Node : IDisposable
             typeName: descriptor.RequestDdsTypeName,
             userTopicName: serviceName);
 
-        var replyReader = CreateReliableReplyReaderInternal(
-            TopicNameMangler.MangleServiceReply(serviceName),
-            descriptor.ResponseDdsTypeName);
+        try
+        {
+            var replyReader = CreateReliableReplyReaderInternal(
+                TopicNameMangler.MangleServiceReply(serviceName),
+                descriptor.ResponseDdsTypeName);
 
-        return new ServiceClient<TRequest, TResponse>(
-            requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits);
+            return new ServiceClient<TRequest, TResponse>(
+                requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits);
+        }
+        catch
+        {
+            requestPublisher.Dispose();
+            throw;
+        }
     }
 
     public TopicDiagnostics CreateTopicDiagnostics()
@@ -250,6 +264,7 @@ public sealed class Node : IDisposable
             var writerGuid = endpointData.EndpointGuid;
             Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
             lock (Context.GraphLock) { _userEndpoints.RegisterWriterMetadata(endpointData, writer); }
+            BeforeDisposedCheckCallback?.Invoke();
             if (_disposed)
             {
                 lock (Context.GraphLock) { _userEndpoints.UnregisterWriterMetadata(writerGuid, writer); }
@@ -306,6 +321,7 @@ public sealed class Node : IDisposable
 
             Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
             lock (Context.GraphLock) { _userEndpoints.RegisterReaderMetadata(endpointData, reader); }
+            BeforeDisposedCheckCallback?.Invoke();
             if (_disposed)
             {
                 lock (Context.GraphLock) { _userEndpoints.UnregisterReaderMetadata(readerGuid, reader); }
