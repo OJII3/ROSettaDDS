@@ -28,7 +28,6 @@ public sealed class Node : IDisposable
     private int _pendingRegistrations;
 
     internal Action? BeforeDisposedCheckCallback { get; set; }
-    internal void ForceDisposeFlag() => _disposed = true;
 
     public Node(Context context, string name, NodeOptions? options = null)
     {

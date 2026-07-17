@@ -114,20 +114,23 @@ public class NodeTests
     }
 
     [Fact]
-    public void CreatePublisher_Phase1後_Disposeが割り込むとrollbackして待機完了する()
+    public void CreatePublisher_Phase1後_Disposeが割り込むとpending完了待ちしてcleanupする()
     {
         using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
         ctx.Start();
         var node = new Node(ctx, "talker");
 
-        var afterPhase1 = new ManualResetEventSlim();
-        var disposeFlagSet = new ManualResetEventSlim();
+        var phase1Done = new ManualResetEventSlim();
+        var resumeCreate = new ManualResetEventSlim();
+        var disposeStarted = new ManualResetEventSlim();
         Exception? createError = null;
+        Exception? disposeError = null;
+        var disposeCompleted = false;
 
         node.BeforeDisposedCheckCallback = () =>
         {
-            afterPhase1.Set();
-            disposeFlagSet.Wait();
+            phase1Done.Set();
+            resumeCreate.Wait();
         };
 
         var createThread = new Thread(() =>
@@ -144,23 +147,62 @@ public class NodeTests
         });
         createThread.Start();
 
-        Assert.True(afterPhase1.Wait(TimeSpan.FromSeconds(5)),
+        Assert.True(phase1Done.Wait(TimeSpan.FromSeconds(5)),
             "phase 1 (metadata registration) must complete");
 
-        // Simulate Dispose racing in after phase 1, before disposed check
-        node.ForceDisposeFlag();
-        disposeFlagSet.Set();
+        // 別スレッドから本物の Dispose() を呼ぶ
+        var disposeThread = new Thread(() =>
+        {
+            try
+            {
+                disposeStarted.Set();
+                node.Dispose();
+                disposeCompleted = true;
+            }
+            catch (Exception ex)
+            {
+                disposeError = ex;
+            }
+        });
+        disposeThread.Start();
 
+        Assert.True(disposeStarted.Wait(TimeSpan.FromSeconds(5)),
+            "Dispose thread must start");
+
+        // Dispose が _disposed フラグを立てて SpinWait に入るのを待つ
+        Assert.True(SpinWait.SpinUntil(() => node.IsDisposed, TimeSpan.FromSeconds(5)),
+            "Dispose must set disposed flag");
+
+        // pending registration が残っているため Dispose はまだ完了しない
+        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(500);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (disposeCompleted)
+            {
+                Assert.Fail("Dispose must block while pending registration is in progress");
+            }
+            Thread.Sleep(10);
+        }
+
+        // Create スレッドを再開 → rollback → pending 解放
+        resumeCreate.Set();
         Assert.True(createThread.Join(TimeSpan.FromSeconds(5)),
             "CreatePublisher thread must complete after rollback");
 
+        // Dispose スレッドが SpinWait を抜けて cleanup 完了する
+        Assert.True(disposeThread.Join(TimeSpan.FromSeconds(5)),
+            "Dispose thread must complete after pending registration finishes");
+
+        Assert.Null(disposeError);
         Assert.NotNull(createError);
         var odEx = Assert.IsType<ObjectDisposedException>(createError);
         Assert.Contains(typeof(Node).Name, odEx.ObjectName, StringComparison.Ordinal);
 
-        // Verify Dispose completes cleanly (pendingRegistrations was decremented)
-        node.Dispose();
+        // Node は完全に dispose され、Context からも解除されている
         Assert.True(node.IsDisposed);
+        Assert.Throws<ObjectDisposedException>(() =>
+            node.CreatePublisher<StringMessage>(
+                "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName));
 
         node.BeforeDisposedCheckCallback = null;
     }
