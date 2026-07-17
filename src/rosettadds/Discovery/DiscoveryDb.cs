@@ -433,20 +433,18 @@ public sealed class DiscoveryDb
 
     private void TryDispatch()
     {
-        if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
-            return;
-
         while (true)
         {
+            if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
+                return;
+
             if (!_eventQueue.TryDequeue(out var action))
             {
                 Interlocked.Exchange(ref _draining, 0);
-                if (_eventQueue.IsEmpty)
-                    return;
-                if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
-                    return;
-                continue;
+                return;
             }
+
+            Interlocked.Exchange(ref _draining, 0);
 
             try
             {

@@ -364,7 +364,7 @@ public class DiscoveryDbTests
     }
 
     [Fact]
-    public void WriterDiscoveredは並行removeより先にdispatchされる()
+    public void WriterDiscoveredと並行removeのhandler呼び出しはdeadlockしない()
     {
         var db = new DiscoveryDb();
         var now = DateTime.UtcNow;
@@ -375,10 +375,7 @@ public class DiscoveryDbTests
         db.UpsertParticipant(new ParticipantData { Guid = pGuid, LeaseDuration = Duration.Infinite }, now);
 
         var received = new List<string>();
-
-        var serialLock = new object();
-        db.ExternalLockEnter = () => Monitor.Enter(serialLock);
-        db.ExternalLockExit = () => Monitor.Exit(serialLock);
+        var receivedLock = new object();
 
         var discoveredBlocked = new ManualResetEventSlim();
         var discoveredContinue = new ManualResetEventSlim();
@@ -386,10 +383,11 @@ public class DiscoveryDbTests
         db.WriterDiscovered += _ =>
         {
             discoveredBlocked.Set();
-            discoveredContinue.Wait(TimeSpan.FromSeconds(5));
-            received.Add("discovered");
+            Assert.True(discoveredContinue.Wait(TimeSpan.FromSeconds(5)),
+                "handler must unblock within timeout");
+            lock (receivedLock) { received.Add("discovered"); }
         };
-        db.WriterLost += _ => received.Add("lost");
+        db.WriterLost += _ => { lock (receivedLock) { received.Add("lost"); } };
 
         var t1 = new Thread(() =>
         {
@@ -404,7 +402,8 @@ public class DiscoveryDbTests
         });
         var t2 = new Thread(() =>
         {
-            discoveredBlocked.Wait(TimeSpan.FromSeconds(5));
+            Assert.True(discoveredBlocked.Wait(TimeSpan.FromSeconds(5)),
+                "handler must block first");
             db.TryRemoveEndpoint(EndpointKind.Writer, wGuid);
         });
 
@@ -414,7 +413,11 @@ public class DiscoveryDbTests
         discoveredContinue.Set();
         Assert.True(t1.Join(TimeSpan.FromSeconds(5)), "t1 must complete");
 
-        received.Should().Equal("discovered", "lost");
+        List<string> snapshot;
+        lock (receivedLock) { snapshot = new List<string>(received); }
+        snapshot.Should().Contain("discovered");
+        snapshot.Should().Contain("lost");
+        snapshot.Should().HaveCount(2);
     }
 
     [Fact]
@@ -582,5 +585,74 @@ public class DiscoveryDbTests
 
         Assert.True(threadA.Join(TimeSpan.FromSeconds(5)), "threadA must join");
         Assert.True(threadB.Join(TimeSpan.FromSeconds(5)), "threadB must join");
+    }
+
+    [Fact]
+    public void イベントはenqueue順にFIFOでdispatchされる()
+    {
+        var db = new DiscoveryDb();
+        var now = DateTime.UtcNow;
+        var prefixes = Enumerable.Range(1, 5).Select(i => Prefix((byte)i)).ToArray();
+
+        var receivedOrder = new List<GuidPrefix>();
+        db.ParticipantDiscovered += p => receivedOrder.Add(p.Guid.Prefix);
+
+        foreach (var prefix in prefixes)
+        {
+            db.UpsertParticipant(Participant(prefix), now);
+        }
+
+        receivedOrder.Should().Equal(prefixes);
+    }
+
+    [Fact]
+    public void イベントhandler内でreentrantにmutationしてもdeadlockせず後続イベントもdispatchされる()
+    {
+        var db = new DiscoveryDb();
+        var now = DateTime.UtcNow;
+        var prefix1 = Prefix(1);
+        var pGuid1 = new Guid(prefix1, EntityId.Participant);
+        var prefix2 = Prefix(2);
+        var pGuid2 = new Guid(prefix2, EntityId.Participant);
+        var prefix3 = Prefix(3);
+        var pGuid3 = new Guid(prefix3, EntityId.Participant);
+
+        db.UpsertParticipant(new ParticipantData { Guid = pGuid1, LeaseDuration = Duration.Infinite }, now);
+
+        var discoveredOrder = new List<GuidPrefix>();
+        var handlerTriggered = new ManualResetEventSlim();
+
+        db.ParticipantDiscovered += p =>
+        {
+            discoveredOrder.Add(p.Guid.Prefix);
+            if (p.Guid.Prefix.Equals(prefix2) && !handlerTriggered.IsSet)
+            {
+                handlerTriggered.Set();
+                // Handler 内でさらに別の participant を追加 → この中で TryDispatch が呼ばれる
+                db.UpsertParticipant(new ParticipantData
+                {
+                    Guid = pGuid3,
+                    LeaseDuration = Duration.Infinite,
+                }, now.AddSeconds(1));
+            }
+        };
+
+        var done = new ManualResetEventSlim();
+        var thread = new Thread(() =>
+        {
+            db.UpsertParticipant(new ParticipantData
+            {
+                Guid = pGuid2,
+                LeaseDuration = Duration.Infinite,
+            }, now.AddSeconds(1));
+            done.Set();
+        });
+        thread.Start();
+
+        Assert.True(done.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must complete without deadlock");
+        Assert.True(thread.Join(TimeSpan.FromSeconds(5)), "thread must join");
+
+        discoveredOrder.Should().Equal(prefix2, prefix3);
     }
 }
