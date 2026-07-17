@@ -19,7 +19,7 @@ public sealed class DiscoveryDb
     private readonly Dictionary<Guid, RemoteEndpoint> _readers = new();
     private readonly DiscoveryLimits _limits;
     private readonly ConcurrentQueue<Action> _eventQueue = new();
-    private readonly object _dispatchLock = new();
+    private int _draining;
 
     public DiscoveryDb(DiscoveryLimits? limits = null)
     {
@@ -124,10 +124,11 @@ public sealed class DiscoveryDb
                     _participants[data.Guid.Prefix] = participant;
                     isNew = true;
                 }
+
+                EnqueueEvent(isNew
+                    ? () => ParticipantDiscovered?.Invoke(participant)
+                    : () => ParticipantUpdated?.Invoke(participant));
             }
-            EnqueueEvent(isNew
-                ? () => ParticipantDiscovered?.Invoke(participant)
-                : () => ParticipantUpdated?.Invoke(participant));
         }
         finally
         {
@@ -158,13 +159,14 @@ public sealed class DiscoveryDb
                         RemoveEndpointsForParticipant(key, ref lostWriters, ref lostReaders);
                     }
                 }
-            }
-            EnqueueLostEndpoints(lostWriters, lostReaders);
-            if (expired is not null)
-            {
-                foreach (var p in expired)
+
+                EnqueueLostEndpoints(lostWriters, lostReaders);
+                if (expired is not null)
                 {
-                    EnqueueEvent(() => ParticipantLost?.Invoke(p));
+                    foreach (var p in expired)
+                    {
+                        EnqueueEvent(() => ParticipantLost?.Invoke(p));
+                    }
                 }
             }
         }
@@ -192,11 +194,12 @@ public sealed class DiscoveryDb
                     return false;
                 }
                 RemoveEndpointsForParticipant(prefix, ref lostWriters, ref lostReaders);
-            }
-            EnqueueLostEndpoints(lostWriters, lostReaders);
-            if (removed is not null)
-            {
-                EnqueueEvent(() => ParticipantLost?.Invoke(removed));
+
+                EnqueueLostEndpoints(lostWriters, lostReaders);
+                if (removed is not null)
+                {
+                    EnqueueEvent(() => ParticipantLost?.Invoke(removed));
+                }
             }
         }
         finally
@@ -254,16 +257,17 @@ public sealed class DiscoveryDb
                     dict[data.EndpointGuid] = endpoint;
                     isNew = true;
                 }
-            }
-            if (isNew)
-            {
-                EnqueueEvent(data.Kind == EndpointKind.Writer
-                    ? () => WriterDiscovered?.Invoke(endpoint)
-                    : () => ReaderDiscovered?.Invoke(endpoint));
-            }
-            else
-            {
-                EnqueueEvent(() => EndpointUpdated?.Invoke(endpoint));
+
+                if (isNew)
+                {
+                    EnqueueEvent(data.Kind == EndpointKind.Writer
+                        ? () => WriterDiscovered?.Invoke(endpoint)
+                        : () => ReaderDiscovered?.Invoke(endpoint));
+                }
+                else
+                {
+                    EnqueueEvent(() => EndpointUpdated?.Invoke(endpoint));
+                }
             }
         }
         finally
@@ -293,12 +297,13 @@ public sealed class DiscoveryDb
                 {
                     return false;
                 }
-            }
-            if (removed is not null)
-            {
-                EnqueueEvent(kind == EndpointKind.Writer
-                    ? () => WriterLost?.Invoke(removed)
-                    : () => ReaderLost?.Invoke(removed));
+
+                if (removed is not null)
+                {
+                    EnqueueEvent(kind == EndpointKind.Writer
+                        ? () => WriterLost?.Invoke(removed)
+                        : () => ReaderLost?.Invoke(removed));
+                }
             }
         }
         finally
@@ -428,11 +433,27 @@ public sealed class DiscoveryDb
 
     private void TryDispatch()
     {
-        lock (_dispatchLock)
+        if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
+            return;
+
+        while (true)
         {
-            while (_eventQueue.TryDequeue(out var action))
+            if (!_eventQueue.TryDequeue(out var action))
+            {
+                Interlocked.Exchange(ref _draining, 0);
+                if (_eventQueue.IsEmpty)
+                    return;
+                if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
+                    return;
+                continue;
+            }
+
+            try
             {
                 action();
+            }
+            catch
+            {
             }
         }
     }

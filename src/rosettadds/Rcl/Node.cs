@@ -134,10 +134,20 @@ public sealed class Node : IDisposable
             }
             catch
             {
-                var rollbackResult = _userEndpoints.UnregisterReaderMetadata(endpointGuid, reader);
-                if (rollbackResult.Endpoint is not null)
+                UserEndpointManager.UnregisterResult rollbackResult;
+                try
                 {
-                    _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader, rollbackResult);
+                    lock (Context.GraphLock)
+                    {
+                        rollbackResult = _userEndpoints.UnregisterReaderMetadata(endpointGuid, reader);
+                    }
+                    if (rollbackResult.Endpoint is not null)
+                    {
+                        _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader, rollbackResult);
+                    }
+                }
+                catch
+                {
                 }
                 reader.Dispose();
                 throw;
@@ -251,10 +261,20 @@ public sealed class Node : IDisposable
             }
             catch
             {
-                var rollbackResult = _userEndpoints.UnregisterWriterMetadata(writerGuid, writer);
-                if (rollbackResult.Endpoint is not null)
+                UserEndpointManager.UnregisterResult rollbackResult;
+                try
                 {
-                    _userEndpoints.CompleteWriterUnregistration(writerGuid, writer, rollbackResult);
+                    lock (Context.GraphLock)
+                    {
+                        rollbackResult = _userEndpoints.UnregisterWriterMetadata(writerGuid, writer);
+                    }
+                    if (rollbackResult.Endpoint is not null)
+                    {
+                        _userEndpoints.CompleteWriterUnregistration(writerGuid, writer, rollbackResult);
+                    }
+                }
+                catch
+                {
                 }
                 writer.Dispose();
                 throw;
@@ -297,10 +317,20 @@ public sealed class Node : IDisposable
             }
             catch
             {
-                var rollbackResult = _userEndpoints.UnregisterReaderMetadata(readerGuid, reader);
-                if (rollbackResult.Endpoint is not null)
+                UserEndpointManager.UnregisterResult rollbackResult;
+                try
                 {
-                    _userEndpoints.CompleteReaderUnregistration(readerGuid, reader, rollbackResult);
+                    lock (Context.GraphLock)
+                    {
+                        rollbackResult = _userEndpoints.UnregisterReaderMetadata(readerGuid, reader);
+                    }
+                    if (rollbackResult.Endpoint is not null)
+                    {
+                        _userEndpoints.CompleteReaderUnregistration(readerGuid, reader, rollbackResult);
+                    }
+                }
+                catch
+                {
                 }
                 reader.Dispose();
                 throw;

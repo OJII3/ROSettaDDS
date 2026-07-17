@@ -354,7 +354,7 @@ public class DiscoveryDbTests
         Assert.True(mutationAcquiredLock.Wait(TimeSpan.FromSeconds(5)),
             "mutation must acquire _lock after snapshot releases it");
 
-        mutationThread.Join();
+        Assert.True(mutationThread.Join(TimeSpan.FromSeconds(5)), "mutation thread must join");
         if (mutationError is not null)
             throw new Exception("mutation thread failed", mutationError);
 
@@ -410,9 +410,9 @@ public class DiscoveryDbTests
 
         t1.Start();
         t2.Start();
-        t2.Join(TimeSpan.FromSeconds(5));
+        Assert.True(t2.Join(TimeSpan.FromSeconds(5)), "t2 must complete");
         discoveredContinue.Set();
-        t1.Join(TimeSpan.FromSeconds(5));
+        Assert.True(t1.Join(TimeSpan.FromSeconds(5)), "t1 must complete");
 
         received.Should().Equal("discovered", "lost");
     }
@@ -514,12 +514,73 @@ public class DiscoveryDbTests
         Assert.True(mutationAcquiredLock.Wait(TimeSpan.FromSeconds(5)),
             "mutation must acquire _lock after snapshot releases it");
 
-        mutationThread.Join();
+        Assert.True(mutationThread.Join(TimeSpan.FromSeconds(5)), "mutation thread must join");
         if (mutationError is not null)
             throw new Exception("mutation thread failed", mutationError);
 
         db.SnapshotLockAcquiredCallback = null;
         db.MutationLockAcquiredCallback = null;
         db.ExternalLockEnter = null;
+    }
+
+    [Fact]
+    public void イベントhandler内で他threadのmutationを待ってもdeadlockしない()
+    {
+        var db = new DiscoveryDb();
+        var now = DateTime.UtcNow;
+        var prefix = Prefix(1);
+        var pGuid = new Guid(prefix, EntityId.Participant);
+        var wGuid = new Guid(prefix, new EntityId(0x10, EntityKind.UserDefinedWriterNoKey));
+
+        db.UpsertParticipant(new ParticipantData { Guid = pGuid, LeaseDuration = Duration.Infinite }, now);
+
+        var handlerBlocked = new ManualResetEventSlim();
+        var handlerContinue = new ManualResetEventSlim();
+
+        db.WriterDiscovered += _ =>
+        {
+            handlerBlocked.Set();
+            Assert.True(handlerContinue.Wait(TimeSpan.FromSeconds(5)),
+                "handler must unblock within timeout (no deadlock)");
+        };
+
+        var mutationDone = new ManualResetEventSlim();
+
+        var threadA = new Thread(() =>
+        {
+            db.UpsertEndpoint(new DiscoveredEndpointData
+            {
+                Kind = EndpointKind.Writer,
+                EndpointGuid = wGuid,
+                ParticipantGuid = pGuid,
+                TopicName = "rt/t",
+                TypeName = "T",
+            }, DateTime.UtcNow);
+        });
+
+        var threadB = new Thread(() =>
+        {
+            Assert.True(handlerBlocked.Wait(TimeSpan.FromSeconds(5)),
+                "handler must block first");
+            // この mutation が deadlock せずに完了すること
+            var prefix2 = Prefix(2);
+            db.UpsertParticipant(new ParticipantData
+            {
+                Guid = new Guid(prefix2, EntityId.Participant),
+                LeaseDuration = Duration.Infinite,
+            }, DateTime.UtcNow);
+            mutationDone.Set();
+        });
+
+        threadA.Start();
+        threadB.Start();
+
+        Assert.True(mutationDone.Wait(TimeSpan.FromSeconds(5)),
+            "mutation in other thread must complete without deadlock");
+
+        handlerContinue.Set();
+
+        Assert.True(threadA.Join(TimeSpan.FromSeconds(5)), "threadA must join");
+        Assert.True(threadB.Join(TimeSpan.FromSeconds(5)), "threadB must join");
     }
 }
