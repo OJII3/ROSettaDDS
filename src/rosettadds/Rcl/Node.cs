@@ -28,7 +28,7 @@ public sealed class Node : IDisposable
     private int _pendingRegistrations;
 
     internal Action? BeforeDisposedCheckCallback { get; set; }
-    internal Action? PendingRegistrationsWaitLoopEntered { get; set; }
+    internal Action<int>? PendingRegistrationsWaitLoopEntered { get; set; }
 
     public Node(Context context, string name, NodeOptions? options = null)
     {
@@ -192,27 +192,35 @@ public sealed class Node : IDisposable
         if (descriptor is null) throw new ArgumentNullException(nameof(descriptor));
         if (string.IsNullOrEmpty(serviceName)) throw new ArgumentException("Value cannot be null or empty.", nameof(serviceName));
 
-        var requestPublisher = CreateWriterInternal(
-            TopicNameMangler.MangleServiceRequest(serviceName),
-            descriptor.RequestSerializer,
-            ReliabilityQos.Reliable,
-            DurabilityQos.Volatile,
-            typeName: descriptor.RequestDdsTypeName,
-            userTopicName: serviceName);
-
+        Interlocked.Increment(ref _pendingRegistrations);
         try
         {
-            var replyReader = CreateReliableReplyReaderInternal(
-                TopicNameMangler.MangleServiceReply(serviceName),
-                descriptor.ResponseDdsTypeName);
+            var requestPublisher = CreateWriterInternal(
+                TopicNameMangler.MangleServiceRequest(serviceName),
+                descriptor.RequestSerializer,
+                ReliabilityQos.Reliable,
+                DurabilityQos.Volatile,
+                typeName: descriptor.RequestDdsTypeName,
+                userTopicName: serviceName);
 
-            return new ServiceClient<TRequest, TResponse>(
-                requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits);
+            try
+            {
+                var replyReader = CreateReliableReplyReaderInternal(
+                    TopicNameMangler.MangleServiceReply(serviceName),
+                    descriptor.ResponseDdsTypeName);
+
+                return new ServiceClient<TRequest, TResponse>(
+                    requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits);
+            }
+            catch
+            {
+                requestPublisher.Dispose();
+                throw;
+            }
         }
-        catch
+        finally
         {
-            requestPublisher.Dispose();
-            throw;
+            Interlocked.Decrement(ref _pendingRegistrations);
         }
     }
 
@@ -367,10 +375,15 @@ public sealed class Node : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        PendingRegistrationsWaitLoopEntered?.Invoke();
         var sw = new SpinWait();
+        bool entered = false;
         while (Volatile.Read(ref _pendingRegistrations) > 0)
         {
+            if (!entered)
+            {
+                entered = true;
+                PendingRegistrationsWaitLoopEntered?.Invoke(Volatile.Read(ref _pendingRegistrations));
+            }
             sw.SpinOnce();
         }
         UnregisterAllLocalEndpoints();

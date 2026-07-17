@@ -133,7 +133,12 @@ public class NodeTests
         };
 
         var waitLoopEntered = new ManualResetEventSlim();
-        node.PendingRegistrationsWaitLoopEntered = () => waitLoopEntered.Set();
+        int? observedPendingCount = null;
+        node.PendingRegistrationsWaitLoopEntered = (pendingCount) =>
+        {
+            observedPendingCount = pendingCount;
+            waitLoopEntered.Set();
+        };
 
         var createThread = new Thread(() =>
         {
@@ -170,17 +175,12 @@ public class NodeTests
         Assert.True(waitLoopEntered.Wait(TimeSpan.FromSeconds(5)),
             "Dispose must enter pending registration wait loop");
         Assert.True(node.IsDisposed);
+        Assert.True(observedPendingCount.HasValue);
+        Assert.True(observedPendingCount!.Value > 0,
+            "callback must receive a pending count greater than 0");
 
         // pending registration が残っているため Dispose はまだ完了しない
-        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(500);
-        while (DateTime.UtcNow < deadline)
-        {
-            if (Volatile.Read(ref disposeCompleted) != 0)
-            {
-                Assert.Fail("Dispose must block while pending registration is in progress");
-            }
-            Thread.Sleep(10);
-        }
+        Assert.Equal(0, Volatile.Read(ref disposeCompleted));
 
         // Create スレッドを再開 → rollback → pending 解放
         resumeCreate.Set();
@@ -314,6 +314,97 @@ public class NodeTests
         using var sub2 = node.CreateSubscription<StringMessage>(
             "other", StringMessageSerializer.Instance, _ => { });
         Assert.NotNull(sub2);
+    }
+
+    [Fact]
+    public void CreateServiceClient_中で_Dispose_が割り込むとpending完了待ちしてrollbackする()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        var node = new Node(ctx, "svc_concurrent_test");
+
+        var phase1Done = new ManualResetEventSlim();
+        var resumeCreate = new ManualResetEventSlim();
+        Exception? createError = null;
+        Exception? disposeError = null;
+        int disposeCompleted = 0;
+
+        node.BeforeDisposedCheckCallback = () =>
+        {
+            phase1Done.Set();
+            resumeCreate.Wait();
+        };
+
+        var waitLoopEntered = new ManualResetEventSlim();
+        int? observedPendingCount = null;
+        node.PendingRegistrationsWaitLoopEntered = (pendingCount) =>
+        {
+            observedPendingCount = pendingCount;
+            waitLoopEntered.Set();
+        };
+
+        var svcName = $"test_{System.Guid.NewGuid():N}";
+        var descriptor = new ServiceDescriptor<StringMessage, StringMessage>(
+            requestDdsTypeName: StringMessage.DdsTypeName,
+            responseDdsTypeName: StringMessage.DdsTypeName,
+            requestSerializer: StringMessageSerializer.Instance,
+            responseSerializer: StringMessageSerializer.Instance);
+
+        var createThread = new Thread(() =>
+        {
+            try
+            {
+                using var client = node.CreateServiceClient(descriptor, svcName);
+            }
+            catch (Exception ex)
+            {
+                createError = ex;
+            }
+        });
+        createThread.Start();
+
+        Assert.True(phase1Done.Wait(TimeSpan.FromSeconds(5)),
+            "phase 1 (metadata registration) must complete");
+
+        var disposeThread = new Thread(() =>
+        {
+            try
+            {
+                node.Dispose();
+                Interlocked.Exchange(ref disposeCompleted, 1);
+            }
+            catch (Exception ex)
+            {
+                disposeError = ex;
+            }
+        });
+        disposeThread.Start();
+
+        Assert.True(waitLoopEntered.Wait(TimeSpan.FromSeconds(5)),
+            "Dispose must enter pending registration wait loop");
+        Assert.True(node.IsDisposed);
+        Assert.True(observedPendingCount.HasValue);
+        Assert.True(observedPendingCount!.Value > 0,
+            "callback must receive a pending count greater than 0");
+
+        Assert.Equal(0, Volatile.Read(ref disposeCompleted));
+
+        resumeCreate.Set();
+        Assert.True(createThread.Join(TimeSpan.FromSeconds(5)),
+            "CreateServiceClient thread must complete after rollback");
+
+        Assert.True(disposeThread.Join(TimeSpan.FromSeconds(5)),
+            "Dispose thread must complete after pending registration finishes");
+
+        Assert.Null(disposeError);
+        Assert.NotNull(createError);
+        var odEx = Assert.IsType<ObjectDisposedException>(createError);
+        Assert.Contains(typeof(Node).Name, odEx.ObjectName, StringComparison.Ordinal);
+
+        Assert.True(node.IsDisposed);
+
+        node.BeforeDisposedCheckCallback = null;
+        node.PendingRegistrationsWaitLoopEntered = null;
     }
 
     private sealed class SilentTransport : IRtpsTransport
