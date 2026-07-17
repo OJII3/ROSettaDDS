@@ -116,6 +116,7 @@ public sealed class Node : IDisposable
             Logger,
             cdrReadLimits: Context.Options.CdrReadLimits);
 
+        Context.GraphLockMutationAttemptCallback?.Invoke();
         lock (Context.GraphLock) { Context.GraphLockMutationAcquiredCallback?.Invoke(); _userEndpoints.RegisterReader(endpointData, reader); }
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddSubscriptionAsync(endpointData, token),
@@ -203,6 +204,7 @@ public sealed class Node : IDisposable
         var endpoint = _endpointFactory.CreateWriter(ddsTopic, serializer, reliability, durability, typeName);
         var writer = endpoint.Writer;
         var endpointData = endpoint.EndpointData;
+        Context.GraphLockMutationAttemptCallback?.Invoke();
         lock (Context.GraphLock) { Context.GraphLockMutationAcquiredCallback?.Invoke(); _userEndpoints.RegisterWriter(endpointData, writer); }
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddPublicationAsync(endpointData, token),
@@ -219,6 +221,7 @@ public sealed class Node : IDisposable
         var reader = endpoint.Reader;
         var endpointData = endpoint.EndpointData;
 
+        Context.GraphLockMutationAttemptCallback?.Invoke();
         lock (Context.GraphLock) { Context.GraphLockMutationAcquiredCallback?.Invoke(); _userEndpoints.RegisterReader(endpointData, reader); }
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddSubscriptionAsync(endpointData, token),
@@ -263,6 +266,7 @@ public sealed class Node : IDisposable
     private void UnregisterLocalWriter(Guid endpointGuid, StatefulWriter writerToRemove)
     {
         UserEndpointManager.UnregisterResult result;
+        Context.GraphLockMutationAttemptCallback?.Invoke();
         lock (Context.GraphLock) { Context.GraphLockMutationAcquiredCallback?.Invoke(); result = _userEndpoints.UnregisterWriter(endpointGuid, writerToRemove); }
         if (result.ShouldAdvertise)
         {
@@ -273,6 +277,7 @@ public sealed class Node : IDisposable
     private void UnregisterLocalReader(Guid endpointGuid, IUserReader readerToRemove)
     {
         UserEndpointManager.UnregisterResult result;
+        Context.GraphLockMutationAttemptCallback?.Invoke();
         lock (Context.GraphLock) { Context.GraphLockMutationAcquiredCallback?.Invoke(); result = _userEndpoints.UnregisterReader(endpointGuid, readerToRemove); }
         if (result.ShouldAdvertise)
         {

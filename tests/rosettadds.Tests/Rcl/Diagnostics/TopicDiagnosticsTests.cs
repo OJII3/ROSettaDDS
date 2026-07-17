@@ -1081,6 +1081,7 @@ public class TopicDiagnosticsTests
 
         var lockAcquired = new ManualResetEventSlim();
         var releaseLock = new ManualResetEventSlim();
+        var mutAttempted = new ManualResetEventSlim();
         var mutLockAcquired = new ManualResetEventSlim();
         context.GraphSnapshotEnterLockCallback = () => lockAcquired.Set();
         context.GraphSnapshotBetweenLocalCollectionsCallback = () =>
@@ -1088,6 +1089,7 @@ public class TopicDiagnosticsTests
             if (!releaseLock.Wait(TimeSpan.FromSeconds(5)))
                 throw new TimeoutException("snapshot between-collections timed out");
         };
+        context.GraphLockMutationAttemptCallback = () => mutAttempted.Set();
         context.GraphLockMutationAcquiredCallback = () => mutLockAcquired.Set();
 
         GraphSnapshot? snap = null;
@@ -1124,10 +1126,11 @@ public class TopicDiagnosticsTests
         });
         mutThread.Start();
 
-        // mutation が GraphLock の入口でブロックされていることを確認
-        Assert.False(mutDone.Wait(TimeSpan.FromMilliseconds(500)),
-            "mutation must be blocked by GraphLock held by snapshot");
-        // mutation は lock を獲得できないため lock-acquired callback も発火しない
+        // mutation が lock 文まで到達したことを確認
+        Assert.True(mutAttempted.Wait(TimeSpan.FromSeconds(5)),
+            "mutation must reach GraphLock statement");
+
+        // mutation は lock を獲得できないため lock-acquired callback は発火しない
         Assert.False(mutLockAcquired.Wait(TimeSpan.FromMilliseconds(500)),
             "mutation lock-acquired callback must NOT fire while snapshot holds the lock");
 
@@ -1165,6 +1168,7 @@ public class TopicDiagnosticsTests
         concurrentPub!.Dispose();
         context.GraphSnapshotEnterLockCallback = null;
         context.GraphSnapshotBetweenLocalCollectionsCallback = null;
+        context.GraphLockMutationAttemptCallback = null;
         context.GraphLockMutationAcquiredCallback = null;
     }
 }
