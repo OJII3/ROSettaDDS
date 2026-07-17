@@ -9,7 +9,8 @@ public sealed class RawSubscription : IDisposable
     private readonly IUserReader _reader;
     private readonly Action<ReadOnlyMemory<byte>, GuidPrefix> _callback;
     private readonly Action<Guid, IUserReader>? _unregisterEndpoint;
-    private bool _disposed;
+    private int _disposed;
+    private Task? _advertiseTask;
 
     public string TopicName { get; }
     public Guid Guid { get; }
@@ -38,9 +39,11 @@ public sealed class RawSubscription : IDisposable
 
     public int MatchedWriterCount => _reader.MatchedWriterCount;
 
+    internal void SetAdvertiseTask(Task task) => _advertiseTask = task;
+
     private void OnPayloadReceived(ReadOnlyMemory<byte> payload, GuidPrefix sourcePrefix)
     {
-        if (_disposed)
+        if (Volatile.Read(ref _disposed) != 0)
         {
             return;
         }
@@ -49,12 +52,19 @@ public sealed class RawSubscription : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
-        {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
-        }
-        _disposed = true;
+
         _reader.PayloadReceived -= OnPayloadReceived;
+
+        if (_advertiseTask is not null)
+        {
+            try { _advertiseTask.GetAwaiter().GetResult(); }
+            catch { }
+        }
+
+        _advertiseTask = null;
+        _reader.Stop();
         _unregisterEndpoint?.Invoke(Guid, _reader);
         _reader.Dispose();
     }

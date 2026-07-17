@@ -160,9 +160,10 @@ public sealed class Node : IDisposable
                 reader.Dispose();
                 throw;
             }
-            _ = _sedpAdvertiser.RunAsync(
+            var advertiseTask = _sedpAdvertiser.RunAsync(
                 token => Context.AddSubscriptionAsync(endpointData, token),
                 "Node failed to advertise local reader endpoint");
+            subscription.SetAdvertiseTask(advertiseTask);
 
             return subscription;
         }
@@ -245,9 +246,10 @@ public sealed class Node : IDisposable
                 reader.Dispose();
                 throw;
             }
-            _ = _sedpAdvertiser.RunAsync(
+            var advertiseTask = _sedpAdvertiser.RunAsync(
                 token => Context.AddSubscriptionAsync(endpointData, token),
                 "Node failed to advertise raw reader endpoint");
+            rawSub.SetAdvertiseTask(advertiseTask);
 
             return rawSub;
         }
