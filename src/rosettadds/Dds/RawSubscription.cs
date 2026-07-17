@@ -9,6 +9,7 @@ public sealed class RawSubscription : IDisposable
     private readonly IUserReader _reader;
     private readonly Action<ReadOnlyMemory<byte>, GuidPrefix> _callback;
     private readonly Action<Guid, IUserReader>? _unregisterEndpoint;
+    internal Action? BeforeUnregister { get; set; }
     private int _disposed;
     private Task? _advertiseTask;
 
@@ -64,6 +65,7 @@ public sealed class RawSubscription : IDisposable
         }
 
         _reader.Stop();
+        BeforeUnregister?.Invoke();
         _unregisterEndpoint?.Invoke(Guid, _reader);
         _reader.Dispose();
     }

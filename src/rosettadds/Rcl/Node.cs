@@ -33,6 +33,7 @@ public sealed class Node : IDisposable
     internal Action? BeforeDisposedCheckCallback { get; set; }
     internal Action<int>? PendingRegistrationsWaitLoopEntered { get; set; }
     internal Action? BeforeServiceReplyReaderCreateCallback { get; set; }
+    internal Action<string>? TestEventRecorder { get; set; }
 
     public Node(Context context, string name, NodeOptions? options = null)
     {
@@ -92,11 +93,9 @@ public sealed class Node : IDisposable
         ThrowIfDisposed();
         if (string.IsNullOrEmpty(topicName)) throw new ArgumentException("Value cannot be null or empty.", nameof(topicName));
         if (serializer is null) throw new ArgumentNullException(nameof(serializer));
-        var pub = CreateWriterInternal(
+        return CreateWriterInternal(
             TopicNameMangler.MangleTopic(topicName), serializer, reliability, durability,
             typeName, topicName);
-        lock (_wrappersLock) _trackedWrappers.Add(pub);
-        return pub;
     }
 
     public Subscription<T> CreateSubscription<T>(
@@ -376,6 +375,7 @@ public sealed class Node : IDisposable
 
             var pub = new Publisher<T>(userTopicName, writer, serializer, UnregisterLocalWriter);
             pub.Start();
+            lock (_wrappersLock) _trackedWrappers.Add(pub);
             return pub;
         }
         finally
@@ -488,6 +488,9 @@ public sealed class Node : IDisposable
 
     private void UnregisterLocalWriter(Guid endpointGuid, StatefulWriter writerToRemove)
     {
+        TestEventRecorder?.Invoke("BeforeReceiverUnregisterWriter");
+        _userReceiver.UnregisterWriter(writerToRemove.WriterEntityId);
+        TestEventRecorder?.Invoke("BeforeMetadataRemovalWriter");
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
         UserEndpointManager.UnregisterResult result;
         lock (Context.GraphLock)
@@ -495,16 +498,19 @@ public sealed class Node : IDisposable
             result = _userEndpoints.CompleteWriterUnregistration(endpointGuid, writerToRemove);
         }
         if (result.Endpoint is null) return;
-
-        _userReceiver.UnregisterWriter(writerToRemove.WriterEntityId);
+        TestEventRecorder?.Invoke("BeforeSedpUnregisterWriter");
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterPublicationAsync(result.Endpoint!));
         }
+        TestEventRecorder?.Invoke("AfterSedpUnregisterWriter");
     }
 
     private void UnregisterLocalReader(Guid endpointGuid, IUserReader readerToRemove)
     {
+        TestEventRecorder?.Invoke("BeforeReceiverUnregisterReader");
+        _userReceiver.UnregisterReader(readerToRemove.ReaderEntityId);
+        TestEventRecorder?.Invoke("BeforeMetadataRemovalReader");
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
         UserEndpointManager.UnregisterResult result;
         lock (Context.GraphLock)
@@ -512,12 +518,12 @@ public sealed class Node : IDisposable
             result = _userEndpoints.CompleteReaderUnregistration(endpointGuid, readerToRemove);
         }
         if (result.Endpoint is null) return;
-
-        _userReceiver.UnregisterReader(readerToRemove.ReaderEntityId);
+        TestEventRecorder?.Invoke("BeforeSedpUnregisterReader");
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterSubscriptionAsync(result.Endpoint!));
         }
+        TestEventRecorder?.Invoke("AfterSedpUnregisterReader");
     }
 
     private void OnRemoteReaderDiscovered(RemoteEndpoint remoteReader)

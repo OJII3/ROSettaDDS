@@ -20,6 +20,7 @@ public sealed class Subscription<T> : IDisposable
     private readonly SynchronizationContext? _handlerContext;
     private readonly ILogger _logger;
     private readonly CdrReadLimits _cdrReadLimits;
+    internal Action? BeforeUnregister { get; set; }
     private long _payloadsReceivedFromReader;
     private long _messagesDeserialized;
     private long _deserializeFailures;
@@ -162,6 +163,7 @@ public sealed class Subscription<T> : IDisposable
         }
 
         _reader.Stop();
+        BeforeUnregister?.Invoke();
         _unregisterEndpoint?.Invoke(Guid, _reader);
         _reader.Dispose();
     }

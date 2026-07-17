@@ -995,7 +995,93 @@ public class SubscriptionLifecycleTests
     }
 
     // ========================================================================
-    // 10. ServiceClient 二重/並行 Dispose
+    // 10. Event log: Stop → receiver → metadata → SEDP の相対順
+    // ========================================================================
+
+    [Fact]
+    public void Publisher_Dispose_event_logはStop_Receiver_Metadata_SEDPの順()
+    {
+        using var ctx = new Context(CreateOptions());
+        ctx.Start();
+        using var node = new Node(ctx, "pub_evt_log");
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance);
+        var eventLog = new List<string>();
+
+        node.TestEventRecorder = msg => eventLog.Add($"{DateTime.UtcNow.Ticks}:{msg}");
+        pub.BeforeUnregister = () => eventLog.Add($"{DateTime.UtcNow.Ticks}:Stop");
+
+        pub.Dispose();
+
+        var names = eventLog
+            .Select(e => e.Substring(e.LastIndexOf(':') + 1))
+            .ToList();
+        names.Should().ContainInOrder(
+            "Stop",
+            "BeforeReceiverUnregisterWriter",
+            "BeforeMetadataRemovalWriter",
+            "BeforeSedpUnregisterWriter",
+            "AfterSedpUnregisterWriter");
+    }
+
+    [Fact]
+    public void Subscription_Dispose_event_logはStop_Receiver_Metadata_SEDPの順()
+    {
+        using var ctx = new Context(CreateOptions());
+        ctx.Start();
+        using var node = new Node(ctx, "sub_evt_log");
+        var sub = node.CreateSubscription<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, _ => { });
+        var eventLog = new List<string>();
+
+        node.TestEventRecorder = msg => eventLog.Add($"{DateTime.UtcNow.Ticks}:{msg}");
+        sub.BeforeUnregister = () => eventLog.Add($"{DateTime.UtcNow.Ticks}:Stop");
+
+        sub.Dispose();
+
+        var names = eventLog
+            .Select(e => e.Substring(e.LastIndexOf(':') + 1))
+            .ToList();
+        names.Should().ContainInOrder(
+            "Stop",
+            "BeforeReceiverUnregisterReader",
+            "BeforeMetadataRemovalReader",
+            "BeforeSedpUnregisterReader",
+            "AfterSedpUnregisterReader");
+    }
+
+    [Fact]
+    public void RawReader_Dispose_event_logはStop_Receiver_Metadata_SEDPの順()
+    {
+        using var ctx = new Context(CreateOptions());
+        ctx.Start();
+        using var node = new Node(ctx, "raw_evt_log");
+        var raw = node.CreateRawReader(
+            "rt/raw_evt_log",
+            "test::msg::dds_::Msg_",
+            (_, _) => { },
+            ReliabilityQos.BestEffort,
+            DurabilityQos.Volatile);
+        var eventLog = new List<string>();
+
+        node.TestEventRecorder = msg => eventLog.Add($"{DateTime.UtcNow.Ticks}:{msg}");
+        raw.BeforeUnregister = () => eventLog.Add($"{DateTime.UtcNow.Ticks}:Stop");
+
+        raw.Dispose();
+
+        var names = eventLog
+            .Select(e => e.Substring(e.LastIndexOf(':') + 1))
+            .ToList();
+        names.Should().ContainInOrder(
+            "Stop",
+            "BeforeReceiverUnregisterReader",
+            "BeforeMetadataRemovalReader",
+            "BeforeSedpUnregisterReader",
+            "AfterSedpUnregisterReader");
+    }
+
+    // ========================================================================
+    // 11. ServiceClient 二重/並行 Dispose
     // ========================================================================
 
     [Fact]
