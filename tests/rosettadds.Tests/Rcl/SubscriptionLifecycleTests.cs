@@ -10,6 +10,7 @@ using ROSettaDDS.Rcl.Naming;
 using ROSettaDDS.Rtps;
 using ROSettaDDS.Rtps.Reader;
 using ROSettaDDS.Transport;
+using ROSettaDDS.Tests.Dds;
 using Guid = ROSettaDDS.Common.Guid;
 using Xunit;
 
@@ -202,64 +203,51 @@ public class SubscriptionLifecycleTests
     }
 
     [Fact]
-    public void RawSubscription_Dispose中callback同時実行で破損しない_Barrier決定的検証()
+    public void RawSubscription_Dispose中callback同時実行で破損しない_決定的検証()
     {
         var reader = new TestUserReader(new EntityId(2, EntityKind.UserDefinedReaderNoKey));
         var callbackStarted = new ManualResetEventSlim();
         var disposeDone = new ManualResetEventSlim();
-        var callbackCanProceed = new ManualResetEventSlim();
         int callbackInvokeCount = 0;
-        int callbackAfterDispose = 0;
 
         var raw = new RawSubscription("t", default, reader,
             (_, _) =>
             {
                 Interlocked.Increment(ref callbackInvokeCount);
                 callbackStarted.Set();
-                // Disposeがcallback中に入るのを待つ
                 if (!disposeDone.IsSet)
                     disposeDone.Wait();
-                // Dispose後もこのcallbackは実行中→正常完了
             },
             autoStart: false);
 
-        // callbackを1回発火 → callback中にDispose
         var callbackThread = new Thread(() => reader.SimulatePayload(new byte[] { 1 }, default));
         callbackThread.Start();
 
         Assert.True(callbackStarted.Wait(TimeSpan.FromSeconds(5)),
             "callback must start before dispose");
 
-        // callback実行中にDispose
+        int beforeDispose = Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0);
+
         raw.Dispose();
         disposeDone.Set();
 
-        // Dispose後: さらにcallbackを発火しても_disposedチェックで通らないはず
         reader.SimulatePayload(new byte[] { 2 }, default);
-        Interlocked.Exchange(ref callbackAfterDispose, Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0));
 
         callbackThread.Join();
-        Assert.True(callbackThread.ThreadState == ThreadState.Stopped,
-            "callback thread must complete normally");
 
-        // Dispose後のcallback発火でcallbackInvokeCountが増えていないこと
-        Interlocked.CompareExchange(ref callbackAfterDispose, 0, 0).Should().BeLessThanOrEqualTo(
-            Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0),
-            "callbacks dispatched before Dispose may complete, but no new callbacks after Dispose");
-
-        // 正確に1回のcallbackのみ実行されている（callback中にDisposeしたため2回目は_disposedで弾かれる）
-        // 注: 1回目はcallback中にDisposeされたが完了する、2回目以降は_disposed=1で弾かれる
+        int afterDispose = Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0);
+        afterDispose.Should().Be(beforeDispose,
+            "no callbacks after Dispose completed");
     }
 
     [Fact]
-    public void Subscription_Dispose中callback同時実行で破損しない_Barrier決定的検証()
+    public void Subscription_Dispose中callback同時実行で破損しない_決定的検証()
     {
         var reader = new TestUserReader(new EntityId(3, EntityKind.UserDefinedReaderNoKey));
         var serializer = StringMessageSerializer.Instance;
         var callbackStarted = new ManualResetEventSlim();
         var disposeDone = new ManualResetEventSlim();
         int callbackInvokeCount = 0;
-        int callbackAfterDispose = 0;
 
         var sub = new Subscription<StringMessage>(
             "t", default, reader, serializer,
@@ -274,28 +262,24 @@ public class SubscriptionLifecycleTests
 
         var payload = SerializeStringMessage("race");
 
-        // callbackを1回発火
         var callbackThread = new Thread(() => reader.SimulatePayload(payload, default));
         callbackThread.Start();
 
         Assert.True(callbackStarted.Wait(TimeSpan.FromSeconds(5)),
             "callback must start before dispose");
 
-        // callback実行中にDispose
+        int beforeDispose = Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0);
+
         sub.Dispose();
         disposeDone.Set();
 
-        // Dispose後: さらにcallback発火しても_disposedで弾かれる
         reader.SimulatePayload(payload, default);
-        Interlocked.Exchange(ref callbackAfterDispose, Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0));
 
         callbackThread.Join();
-        Assert.True(callbackThread.ThreadState == ThreadState.Stopped,
-            "callback thread must complete normally");
 
-        Interlocked.CompareExchange(ref callbackAfterDispose, 0, 0).Should().BeLessThanOrEqualTo(
-            Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0),
-            "no new callbacks after Dispose");
+        int afterDispose = Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0);
+        afterDispose.Should().Be(beforeDispose,
+            "no callbacks after Dispose completed");
     }
 
     private static byte[] SerializeStringMessage(string text)
@@ -459,6 +443,8 @@ public class SubscriptionLifecycleTests
     public void CreateRawReaderはmetadataにreaderを登録しDisposeで削除する()
     {
         using var ctx = new Context(CreateOptions());
+        var fakeReceiver = new FakeEndpointReceiver();
+        ctx.ReceiverOverrideForTest = fakeReceiver;
         ctx.Start();
         using var node = new Node(ctx, "receiver_test");
 
@@ -469,16 +455,15 @@ public class SubscriptionLifecycleTests
             ReliabilityQos.BestEffort,
             DurabilityQos.Volatile);
 
-        // 作成後: metadataにreaderが存在
         var afterCreate = node.LocalEndpointSnapshot();
         afterCreate.Readers.Should().Contain(r => r.EndpointGuid.Equals(raw.Guid));
+        fakeReceiver.RegisteredReaders.Should().Contain(r => r.entityId == raw.ReaderEntityId);
 
-        // Dispose → wrapper経路でmetadata/receiver/SEDP unregister
         raw.Dispose();
 
-        // Dispose後: metadataから削除
         var afterDispose = node.LocalEndpointSnapshot();
         afterDispose.Readers.Should().NotContain(r => r.EndpointGuid.Equals(raw.Guid));
+        fakeReceiver.UnregisteredReaders.Should().Contain(raw.ReaderEntityId);
     }
 
     [Fact]

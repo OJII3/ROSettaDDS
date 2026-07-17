@@ -26,6 +26,8 @@ public sealed class Node : IDisposable
     private readonly DiscoveryDb _discovery;
     private volatile bool _disposed;
     private int _pendingRegistrations;
+    private readonly List<IDisposable> _trackedWrappers = new();
+    private readonly object _wrappersLock = new();
 
     internal Action? BeforeDisposedCheckCallback { get; set; }
     internal Action<int>? PendingRegistrationsWaitLoopEntered { get; set; }
@@ -48,7 +50,7 @@ public sealed class Node : IDisposable
 
         _userEndpoints = new UserEndpointManager(
             context.DiscoveryDb,
-            new ParticipantRtpsReceiverAdapter(context.Receiver),
+            context.ReceiverOverrideForTest ?? new ParticipantRtpsReceiverAdapter(context.Receiver),
             Logger);
 
         _sedpAdvertiser = new SedpEndpointAdvertiser(
@@ -165,6 +167,7 @@ public sealed class Node : IDisposable
                 "Node failed to advertise local reader endpoint");
             subscription.SetAdvertiseTask(advertiseTask);
 
+            lock (_wrappersLock) _trackedWrappers.Add(subscription);
             return subscription;
         }
         finally
@@ -251,6 +254,7 @@ public sealed class Node : IDisposable
                 "Node failed to advertise raw reader endpoint");
             rawSub.SetAdvertiseTask(advertiseTask);
 
+            lock (_wrappersLock) _trackedWrappers.Add(rawSub);
             return rawSub;
         }
         finally
@@ -465,6 +469,12 @@ public sealed class Node : IDisposable
             }
             sw.SpinOnce();
         }
+
+        IDisposable[] wrappers;
+        lock (_wrappersLock) wrappers = _trackedWrappers.ToArray();
+        foreach (var w in wrappers) w.Dispose();
+        lock (_wrappersLock) _trackedWrappers.Clear();
+
         UnregisterAllLocalEndpoints();
 
         if (_discovery is not null)
@@ -497,6 +507,7 @@ public sealed class Node : IDisposable
 
     private void UnregisterLocalWriter(Guid endpointGuid, StatefulWriter writerToRemove)
     {
+        Context.Receiver.UnregisterWriter(writerToRemove.WriterEntityId);
         UserEndpointManager.UnregisterResult result;
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
         lock (Context.GraphLock) { result = _userEndpoints.UnregisterWriterMetadata(endpointGuid, writerToRemove); }
@@ -509,6 +520,7 @@ public sealed class Node : IDisposable
 
     private void UnregisterLocalReader(Guid endpointGuid, IUserReader readerToRemove)
     {
+        Context.Receiver.UnregisterReader(readerToRemove.ReaderEntityId);
         UserEndpointManager.UnregisterResult result;
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
         lock (Context.GraphLock) { result = _userEndpoints.UnregisterReaderMetadata(endpointGuid, readerToRemove); }

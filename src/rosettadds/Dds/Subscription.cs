@@ -157,11 +157,10 @@ public sealed class Subscription<T> : IDisposable
 
         if (_advertiseTask is not null)
         {
-            try { _advertiseTask.GetAwaiter().GetResult(); }
+            try { _advertiseTask.ConfigureAwait(false).GetAwaiter().GetResult(); }
             catch { }
         }
 
-        _advertiseTask = null;
         _reader.Stop();
         _unregisterEndpoint?.Invoke(Guid, _reader);
         _reader.Dispose();

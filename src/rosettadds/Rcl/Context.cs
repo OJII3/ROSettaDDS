@@ -171,6 +171,9 @@ public sealed class Context : IDisposable
     /// <summary>テスト用: SEDP advertise (AddSubscriptionAsync / AddPublicationAsync) の直前に呼ばれる。</summary>
     internal Func<ValueTask>? SedpAdvertiseDelay { get; set; }
 
+    /// <summary>テスト用: Node が使う IEndpointReceiver の代替。</summary>
+    internal IEndpointReceiver? ReceiverOverrideForTest { get; set; }
+
     internal int PublishedSubscriptionStateCount => _sedpSubscriptionsWriter.PublishedCount;
 
     // ----- SEDP 広告の Node 向け delegate -----
