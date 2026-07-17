@@ -74,13 +74,13 @@ internal sealed class UserEndpointManager
     {
         if (writer is null) throw new ArgumentNullException(nameof(writer));
 
-        _receiver.UnregisterWriter(writer.WriterEntityId);
-
         var removed = _registry.RemoveLocalWriter(endpointGuid, writer);
         if (removed.Endpoint is null)
         {
             return UnregisterResult.NotFound;
         }
+
+        _receiver.UnregisterWriter(writer.WriterEntityId);
 
         var shouldAdvertise = _registry.ShouldAdvertiseForTopic(removed.Endpoint.TopicName, endpointGuid);
         var result = new UnregisterResult(removed.Endpoint, shouldAdvertise) { LocalReaders = removed.LocalReaders };
@@ -100,13 +100,13 @@ internal sealed class UserEndpointManager
     {
         if (reader is null) throw new ArgumentNullException(nameof(reader));
 
-        _receiver.UnregisterReader(reader.ReaderEntityId);
-
         var removed = _registry.RemoveLocalReader(endpointGuid, reader);
         if (removed.Endpoint is null)
         {
             return UnregisterResult.NotFound;
         }
+
+        _receiver.UnregisterReader(reader.ReaderEntityId);
 
         var shouldAdvertise = _registry.ShouldAdvertiseForTopic(removed.Endpoint.TopicName, endpointGuid);
         var result = new UnregisterResult(removed.Endpoint, shouldAdvertise) { LocalWriters = removed.LocalWriters };

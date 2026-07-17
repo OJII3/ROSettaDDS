@@ -462,4 +462,64 @@ public class UserEndpointManagerRefactoredTests
         receiver.UnregisteredReaders.Should().Contain(guid.EntityId);
         manager.Snapshot().Readers.Should().BeEmpty();
     }
+
+    // ========================================================================
+    // Idempotent Complete*Unregistration
+    // ========================================================================
+
+    [Fact]
+    public void CompleteWriterUnregistration_二回目はNotFoundを返しreceiverを呼ばない()
+    {
+        var receiver = new RecordingEndpointReceiver();
+        var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
+        var writer = CreateWriter("rt/idem_w", out var endpointData, out var writerGuid);
+        var eid = writer.WriterEntityId;
+
+        manager.RegisterWriter(endpointData, writer);
+
+        var first = manager.CompleteWriterUnregistration(writerGuid, writer);
+        first.Should().NotBe(UserEndpointManager.UnregisterResult.NotFound);
+        first.Endpoint.Should().NotBeNull();
+
+        var second = manager.CompleteWriterUnregistration(writerGuid, writer);
+        second.Should().Be(UserEndpointManager.UnregisterResult.NotFound);
+
+        receiver.GetUnregisterWriterCount(eid).Should().Be(1,
+            "receiver unregister must be called exactly once");
+        manager.Snapshot().Writers.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void CompleteReaderUnregistration_二回目はNotFoundを返しreceiverを呼ばない()
+    {
+        var receiver = new RecordingEndpointReceiver();
+        var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
+        var guid = new Guid(s_prefix, new EntityId(500, EntityKind.UserDefinedReaderNoKey));
+        var userReader = new BestEffortUserReader(
+            s_prefix, guid.EntityId, NullLogger.Instance, DataFragReassemblyOptions.Default);
+        var endpointData = new DiscoveredEndpointData
+        {
+            Kind = EndpointKind.Reader,
+            EndpointGuid = guid,
+            ParticipantGuid = new Guid(s_prefix, EntityId.Participant),
+            TopicName = "rt/idem_r",
+            TypeName = "TypeA",
+            Reliability = ReliabilityQos.BestEffort,
+            Durability = DurabilityQos.Volatile,
+        };
+        endpointData.UnicastLocators.Add(Locator.FromUdpV4(System.Net.IPAddress.Loopback, 7411));
+
+        manager.RegisterReader(endpointData, userReader);
+
+        var first = manager.CompleteReaderUnregistration(guid, userReader);
+        first.Should().NotBe(UserEndpointManager.UnregisterResult.NotFound);
+        first.Endpoint.Should().NotBeNull();
+
+        var second = manager.CompleteReaderUnregistration(guid, userReader);
+        second.Should().Be(UserEndpointManager.UnregisterResult.NotFound);
+
+        receiver.GetUnregisterReaderCount(guid.EntityId).Should().Be(1,
+            "receiver unregister must be called exactly once");
+        manager.Snapshot().Readers.Should().BeEmpty();
+    }
 }

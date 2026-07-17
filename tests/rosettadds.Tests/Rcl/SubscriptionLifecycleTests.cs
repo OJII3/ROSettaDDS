@@ -937,17 +937,251 @@ public class SubscriptionLifecycleTests
     private sealed class RecordingEndpointReceiver : IEndpointReceiver
     {
         public List<(string operation, EntityId entityId)> CallSequence { get; } = new();
+        public List<EntityId> UnregisteredWriters { get; } = new();
+        public List<EntityId> UnregisteredReaders { get; } = new();
 
         public void RegisterWriter(EntityId writerEntityId, StatefulWriter writer)
             => CallSequence.Add(("RegisterWriter", writerEntityId));
 
         public void UnregisterWriter(EntityId writerEntityId)
-            => CallSequence.Add(("UnregisterWriter", writerEntityId));
+        {
+            CallSequence.Add(("UnregisterWriter", writerEntityId));
+            UnregisteredWriters.Add(writerEntityId);
+        }
 
         public void RegisterReader(EntityId readerEntityId, IRtpsSubmessageHandler handler)
             => CallSequence.Add(("RegisterReader", readerEntityId));
 
         public void UnregisterReader(EntityId readerEntityId)
-            => CallSequence.Add(("UnregisterReader", readerEntityId));
+        {
+            CallSequence.Add(("UnregisterReader", readerEntityId));
+            UnregisteredReaders.Add(readerEntityId);
+        }
+    }
+
+    // ========================================================================
+    // 6. Publisher dispose order: Stop → receiver → metadata → SEDP
+    // ========================================================================
+
+    [Fact]
+    public void Publisher_DisposeはStopの後receiver_unregisterとmetadata_removalを実行する()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new RecordingEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        using var node = new Node(ctx, "pub_order_test");
+
+        var beforeSub = ctx.PublishedSubscriptionStateCount;
+        var beforePub = ctx.PublishedPublicationStateCount;
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance);
+        var eid = pub.Writer.WriterEntityId;
+        var guid = pub.Guid;
+
+        // 事前確認: metadata存在 + writer registered
+        node.LocalEndpointSnapshot().Writers.Should().Contain(w => w.EndpointGuid.Equals(guid));
+        receiver.UnregisteredWriters.Should().NotContain(eid);
+
+        pub.Dispose();
+
+        // metadata削除
+        node.LocalEndpointSnapshot().Writers.Should().NotContain(w => w.EndpointGuid.Equals(guid));
+
+        // receiver unregister: 正確に1回
+        receiver.UnregisteredWriters.Count(e => e == eid).Should().Be(1);
+
+        // SEDP unregister increment
+        ctx.PublishedPublicationStateCount.Should().BeGreaterThan(beforePub + 1,
+            "Publisher dispose must send SEDP unregister");
+        ctx.PublishedSubscriptionStateCount.Should().Be(beforeSub,
+            "Publisher dispose must not affect subscription SEDP");
+    }
+
+    [Fact]
+    public void Publisher_二重Disposeはreceiver_unregisterが1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new RecordingEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        using var node = new Node(ctx, "pub_double_test");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance);
+        var eid = pub.Writer.WriterEntityId;
+
+        pub.Dispose();
+        pub.Dispose();
+
+        receiver.UnregisteredWriters.Count(e => e == eid).Should().Be(1,
+            "double Dispose must call receiver UnregisterWriter exactly once");
+    }
+
+    [Fact]
+    public void Publisher_並行Disposeでreceiver_unregisterが1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new RecordingEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        using var node = new Node(ctx, "pub_conc_test");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance);
+        var eid = pub.Writer.WriterEntityId;
+        var barrier = new Barrier(5);
+
+        var threads = Enumerable.Range(0, 5).Select(_ => new Thread(() =>
+        {
+            barrier.SignalAndWait();
+            pub.Dispose();
+        })).ToArray();
+
+        foreach (var t in threads) t.Start();
+        foreach (var t in threads) t.Join();
+
+        receiver.UnregisteredWriters.Count(e => e == eid).Should().Be(1,
+            "concurrent Dispose must call receiver UnregisterWriter exactly once");
+    }
+
+    // ========================================================================
+    // 7. ServiceClient reply reader cleanup order
+    // ========================================================================
+
+    [Fact]
+    public void ServiceClient_Disposeでreply_readerのreceiver_unregisterとmetadata_removalを実行する()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new RecordingEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        using var node = new Node(ctx, "svc_reply_test");
+
+        var beforeSub = ctx.PublishedSubscriptionStateCount;
+        var beforePub = ctx.PublishedPublicationStateCount;
+
+        var descriptor = new ServiceDescriptor<StringMessage, StringMessage>(
+            "test_msgs::msg::dds_::String_Request_",
+            "test_msgs::msg::dds_::String_Response_",
+            StringMessageSerializer.Instance,
+            StringMessageSerializer.Instance);
+
+        using var client = node.CreateServiceClient(descriptor, "test_svc");
+
+        // Before: reply reader metadata and writer metadata exist
+        var snapshot = node.LocalEndpointSnapshot();
+        snapshot.Readers.Should().Contain(r =>
+            r.TopicName == "rr/test_svcReply" && r.Kind == EndpointKind.Reader);
+        snapshot.Writers.Should().Contain(w =>
+            w.TopicName == "rq/test_svcRequest" && w.Kind == EndpointKind.Writer);
+
+        client.Dispose();
+
+        // After: reply reader metadata removed, writer metadata removed
+        var afterSnapshot = node.LocalEndpointSnapshot();
+        afterSnapshot.Readers.Should().NotContain(r =>
+            r.TopicName == "rr/test_svcReply" && r.Kind == EndpointKind.Reader);
+
+        // SEDP: request publisher + reply reader 両方の unregister
+        ctx.PublishedPublicationStateCount.Should().BeGreaterThan(beforePub + 1,
+            "request writer unregister must send SEDP unregister to publications writer");
+        ctx.PublishedSubscriptionStateCount.Should().BeGreaterThan(beforeSub + 1,
+            "reply reader unregister must send SEDP unregister to subscriptions writer");
+    }
+
+    [Fact]
+    public void ServiceClient_Disposeでreply_readerのreceiver_unregisterが正確に1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new RecordingEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        using var node = new Node(ctx, "svc_reply_count");
+
+        var descriptor = new ServiceDescriptor<StringMessage, StringMessage>(
+            "test_msgs::msg::dds_::String_Request_",
+            "test_msgs::msg::dds_::String_Response_",
+            StringMessageSerializer.Instance,
+            StringMessageSerializer.Instance);
+
+        using var client = node.CreateServiceClient(descriptor, "count_svc");
+
+        // reply reader と request publisher の EntityId
+        var readerEid = client.ReplyReaderEntityIdForTest;
+
+        client.Dispose();
+
+        // Receiver unregister: reply reader が正確に1回
+        receiver.UnregisteredReaders.Count(e => e == readerEid).Should().Be(1,
+            "ServiceClient dispose must call UnregisterReader exactly once for reply reader");
+
+        // Request publisher の writer unregister も1回
+        var writerEid = client.RequestWriterGuid.EntityId;
+        receiver.UnregisteredWriters.Count(e => e == writerEid).Should().Be(1,
+            "ServiceClient dispose must call UnregisterWriter exactly once for request writer");
+    }
+
+    // ========================================================================
+    // 8. Subscription/RawSubscription 二重/並行Dispose (拡張)
+    // ========================================================================
+
+    [Fact]
+    public void Subscription_並行Disposeでreceiver_unregisterが1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new RecordingEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        using var node = new Node(ctx, "sub_conc_test");
+
+        var sub = node.CreateSubscription<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, _ => { });
+        var eid = sub.ReaderEntityId;
+        var barrier = new Barrier(5);
+
+        var threads = Enumerable.Range(0, 5).Select(_ => new Thread(() =>
+        {
+            barrier.SignalAndWait();
+            sub.Dispose();
+        })).ToArray();
+
+        foreach (var t in threads) t.Start();
+        foreach (var t in threads) t.Join();
+
+        receiver.UnregisteredReaders.Count(e => e == eid).Should().Be(1,
+            "concurrent Dispose must call receiver UnregisterReader exactly once");
+    }
+
+    [Fact]
+    public void RawReader_並行Disposeでreceiver_unregisterが1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new RecordingEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        using var node = new Node(ctx, "raw_conc_test");
+
+        var raw = node.CreateRawReader(
+            "rt/raw_conc_test",
+            "test::msg::dds_::Msg_",
+            (_, _) => { },
+            ReliabilityQos.BestEffort,
+            DurabilityQos.Volatile);
+        var eid = raw.ReaderEntityId;
+        var barrier = new Barrier(5);
+
+        var threads = Enumerable.Range(0, 5).Select(_ => new Thread(() =>
+        {
+            barrier.SignalAndWait();
+            raw.Dispose();
+        })).ToArray();
+
+        foreach (var t in threads) t.Start();
+        foreach (var t in threads) t.Join();
+
+        receiver.UnregisteredReaders.Count(e => e == eid).Should().Be(1,
+            "concurrent Dispose must call receiver UnregisterReader exactly once");
     }
 }

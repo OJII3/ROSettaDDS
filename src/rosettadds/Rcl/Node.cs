@@ -275,7 +275,8 @@ public sealed class Node : IDisposable
                     descriptor.ResponseDdsTypeName);
 
                 return new ServiceClient<TRequest, TResponse>(
-                    requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits);
+                    requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits,
+                    UnregisterLocalReader);
             }
             catch
             {

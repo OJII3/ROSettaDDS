@@ -21,7 +21,8 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
     private readonly ILogger _logger;
     private readonly CdrReadLimits _cdrReadLimits;
     private readonly ConcurrentDictionary<SampleIdentity, TaskCompletionSource<TResponse>> _pending = new();
-    private bool _disposed;
+    private readonly Action<Guid, IUserReader>? _unregisterReplyEndpoint;
+    private int _disposed;
 
     /// <summary>request writer の RTPS GUID。相関キーの writer 部に使う。</summary>
     public Guid RequestWriterGuid => _requestPublisher.Guid;
@@ -31,13 +32,15 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
         ReliableUserReader replyReader,
         ServiceDescriptor<TRequest, TResponse> descriptor,
         ILogger logger,
-        CdrReadLimits cdrReadLimits)
+        CdrReadLimits cdrReadLimits,
+        Action<Guid, IUserReader>? unregisterReplyEndpoint = null)
     {
         _requestPublisher = requestPublisher;
         _replyReader = replyReader;
         _descriptor = descriptor;
         _logger = logger;
         _cdrReadLimits = cdrReadLimits;
+        _unregisterReplyEndpoint = unregisterReplyEndpoint;
         _replyReader.SampleReceived += OnReplyReceived;
     }
 
@@ -141,25 +144,33 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
     /// <summary>テスト用: reply を直接注入して相関ロジックを検証する。</summary>
     internal void InjectReplyForTest(CacheChange change) => OnReplyReceived(change);
 
+    /// <summary>テスト用: reply reader の EntityId。</summary>
+    internal EntityId ReplyReaderEntityIdForTest => _replyReader.ReaderEntityId;
+
     /// <summary>テスト用: 未解決の保留リクエスト数。</summary>
     internal int PendingRequestCount => _pending.Count;
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         _replyReader.SampleReceived -= OnReplyReceived;
+
         foreach (var kv in _pending)
         {
             kv.Value.TrySetException(new ObjectDisposedException(nameof(ServiceClient<TRequest, TResponse>)));
         }
         _pending.Clear();
+
+        _replyReader.Stop();
+        _unregisterReplyEndpoint?.Invoke(_replyReader.Guid, _replyReader);
         _requestPublisher.Dispose();
         _replyReader.Dispose();
     }
 
     private void ThrowIfDisposed()
     {
-        if (_disposed) throw new ObjectDisposedException(GetType().Name);
+        if (Volatile.Read(ref _disposed) != 0) throw new ObjectDisposedException(GetType().Name);
     }
 }
