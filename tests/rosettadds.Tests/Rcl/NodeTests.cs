@@ -1,5 +1,6 @@
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
+using ROSettaDDS.Dds;
 using ROSettaDDS.Msgs.Std;
 using ROSettaDDS.Rcl;
 using Xunit;
