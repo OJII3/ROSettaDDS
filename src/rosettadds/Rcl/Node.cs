@@ -22,6 +22,7 @@ public sealed class Node : IDisposable
     private readonly NodeOptions _options;
     private readonly ParticipantEndpointFactory _endpointFactory;
     private readonly UserEndpointManager _userEndpoints;
+    private readonly IEndpointReceiver _userReceiver;
     private readonly SedpEndpointAdvertiser _sedpAdvertiser;
     private readonly DiscoveryDb _discovery;
     private volatile bool _disposed;
@@ -48,9 +49,10 @@ public sealed class Node : IDisposable
             context.Guid,
             context.UserEntityIds);
 
+        _userReceiver = context.ReceiverOverrideForTest ?? new ParticipantRtpsReceiverAdapter(context.Receiver);
         _userEndpoints = new UserEndpointManager(
             context.DiscoveryDb,
-            context.ReceiverOverrideForTest ?? new ParticipantRtpsReceiverAdapter(context.Receiver),
+            _userReceiver,
             Logger);
 
         _sedpAdvertiser = new SedpEndpointAdvertiser(
@@ -90,9 +92,11 @@ public sealed class Node : IDisposable
         ThrowIfDisposed();
         if (string.IsNullOrEmpty(topicName)) throw new ArgumentException("Value cannot be null or empty.", nameof(topicName));
         if (serializer is null) throw new ArgumentNullException(nameof(serializer));
-        return CreateWriterInternal(
+        var pub = CreateWriterInternal(
             TopicNameMangler.MangleTopic(topicName), serializer, reliability, durability,
             typeName, topicName);
+        lock (_wrappersLock) _trackedWrappers.Add(pub);
+        return pub;
     }
 
     public Subscription<T> CreateSubscription<T>(
@@ -144,6 +148,7 @@ public sealed class Node : IDisposable
             }
             catch
             {
+                _userReceiver.UnregisterReader(reader.ReaderEntityId);
                 try
                 {
                     lock (Context.GraphLock) { _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader); }
@@ -223,6 +228,7 @@ public sealed class Node : IDisposable
             }
             catch
             {
+                _userReceiver.UnregisterReader(reader.ReaderEntityId);
                 try
                 {
                     lock (Context.GraphLock) { _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader); }
@@ -274,9 +280,11 @@ public sealed class Node : IDisposable
                     TopicNameMangler.MangleServiceReply(serviceName),
                     descriptor.ResponseDdsTypeName);
 
-                return new ServiceClient<TRequest, TResponse>(
+                var client = new ServiceClient<TRequest, TResponse>(
                     requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits,
                     UnregisterLocalReader);
+                lock (_wrappersLock) _trackedWrappers.Add(client);
+                return client;
             }
             catch
             {
@@ -351,6 +359,7 @@ public sealed class Node : IDisposable
             }
             catch
             {
+                _userReceiver.UnregisterWriter(writer.WriterEntityId);
                 try
                 {
                     lock (Context.GraphLock) { _userEndpoints.CompleteWriterUnregistration(writerGuid, writer); }
@@ -400,6 +409,7 @@ public sealed class Node : IDisposable
             }
             catch
             {
+                _userReceiver.UnregisterReader(reader.ReaderEntityId);
                 try
                 {
                     lock (Context.GraphLock) { _userEndpoints.CompleteReaderUnregistration(readerGuid, reader); }
@@ -463,12 +473,14 @@ public sealed class Node : IDisposable
         var endpoints = _userEndpoints.Snapshot();
         foreach (var writer in endpoints.Writers)
         {
+            writer.Stop();
             UnregisterLocalWriter(writer.Guid, writer);
             writer.Dispose();
         }
         foreach (var reader in endpoints.Readers)
         {
             var readerGuid = new Guid(Context.GuidPrefix, reader.ReaderEntityId);
+            reader.Stop();
             UnregisterLocalReader(readerGuid, reader);
             reader.Dispose();
         }
@@ -482,6 +494,9 @@ public sealed class Node : IDisposable
         {
             result = _userEndpoints.CompleteWriterUnregistration(endpointGuid, writerToRemove);
         }
+        if (result.Endpoint is null) return;
+
+        _userReceiver.UnregisterWriter(writerToRemove.WriterEntityId);
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterPublicationAsync(result.Endpoint!));
@@ -496,6 +511,9 @@ public sealed class Node : IDisposable
         {
             result = _userEndpoints.CompleteReaderUnregistration(endpointGuid, readerToRemove);
         }
+        if (result.Endpoint is null) return;
+
+        _userReceiver.UnregisterReader(readerToRemove.ReaderEntityId);
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterSubscriptionAsync(result.Endpoint!));

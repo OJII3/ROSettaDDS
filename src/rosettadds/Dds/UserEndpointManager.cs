@@ -67,9 +67,8 @@ internal sealed class UserEndpointManager
         CompleteReaderRegistration(endpointData, reader);
     }
 
-    /// <summary>Writer の完全な unregister を実行する。
-    /// 順序: receiver unregister → metadata removal → unmatch local readers.
-    /// graph lock 下で呼び出すこと。</summary>
+    /// <summary>Writer metadata を registry から削除し、unmatch を実行する。
+    /// graph lock 下で呼び出すこと。receiver unregister は呼び出し元で行う。</summary>
     internal UnregisterResult CompleteWriterUnregistration(Guid endpointGuid, StatefulWriter writer)
     {
         if (writer is null) throw new ArgumentNullException(nameof(writer));
@@ -79,8 +78,6 @@ internal sealed class UserEndpointManager
         {
             return UnregisterResult.NotFound;
         }
-
-        _receiver.UnregisterWriter(writer.WriterEntityId);
 
         var shouldAdvertise = _registry.ShouldAdvertiseForTopic(removed.Endpoint.TopicName, endpointGuid);
         var result = new UnregisterResult(removed.Endpoint, shouldAdvertise) { LocalReaders = removed.LocalReaders };
@@ -93,9 +90,8 @@ internal sealed class UserEndpointManager
         return result;
     }
 
-    /// <summary>Reader の完全な unregister を実行する。
-    /// 順序: receiver unregister → metadata removal → unmatch local writers.
-    /// graph lock 下で呼び出すこと。</summary>
+    /// <summary>Reader metadata を registry から削除し、unmatch を実行する。
+    /// graph lock 下で呼び出すこと。receiver unregister は呼び出し元で行う。</summary>
     internal UnregisterResult CompleteReaderUnregistration(Guid endpointGuid, IUserReader reader)
     {
         if (reader is null) throw new ArgumentNullException(nameof(reader));
@@ -105,8 +101,6 @@ internal sealed class UserEndpointManager
         {
             return UnregisterResult.NotFound;
         }
-
-        _receiver.UnregisterReader(reader.ReaderEntityId);
 
         var shouldAdvertise = _registry.ShouldAdvertiseForTopic(removed.Endpoint.TopicName, endpointGuid);
         var result = new UnregisterResult(removed.Endpoint, shouldAdvertise) { LocalWriters = removed.LocalWriters };

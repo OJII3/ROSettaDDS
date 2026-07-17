@@ -275,22 +275,21 @@ public class UserEndpointManagerRefactoredTests
     }
 
     [Fact]
-    public void Normal_RegisterUnregister_writerは同じEntityIdでpairingする()
+    public void Normal_RegisterUnregister_writerはmetadataを抹消する()
     {
         var receiver = new FakeEndpointReceiver();
         var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
         var writer = CreateWriter("rt/pairing", out var endpointData, out var writerGuid);
-        var writerEntityId = writer.WriterEntityId;
 
         manager.RegisterWriter(endpointData, writer);
-        receiver.RegisteredWriters.Should().Contain(e => e.entityId == writerEntityId);
+        manager.Snapshot().Writers.Should().Contain(writer);
 
         manager.UnregisterWriter(writerGuid, writer);
-        receiver.UnregisteredWriters.Should().Contain(writerEntityId);
+        manager.Snapshot().Writers.Should().BeEmpty();
     }
 
     [Fact]
-    public void Normal_RegisterUnregister_readerは同じEntityIdでpairingする()
+    public void Normal_RegisterUnregister_readerはmetadataを抹消する()
     {
         var receiver = new FakeEndpointReceiver();
         var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
@@ -311,14 +310,14 @@ public class UserEndpointManagerRefactoredTests
         endpointData.UnicastLocators.Add(Locator.FromUdpV4(System.Net.IPAddress.Loopback, 7411));
 
         manager.RegisterReader(endpointData, userReader);
-        receiver.RegisteredReaders.Should().Contain(e => e.entityId == guid.EntityId);
+        manager.Snapshot().Readers.Should().Contain(userReader);
 
         manager.UnregisterReader(guid, userReader);
-        receiver.UnregisteredReaders.Should().Contain(guid.EntityId);
+        manager.Snapshot().Readers.Should().BeEmpty();
     }
 
     [Fact]
-    public void RecordingReceiver_WriterはUnregisterが正確に1回()
+    public void RecordingReceiver_Writerは二回目のUnregisterでNotFoundを返す()
     {
         var receiver = new RecordingEndpointReceiver();
         var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
@@ -326,14 +325,18 @@ public class UserEndpointManagerRefactoredTests
         var eid = writer.WriterEntityId;
 
         manager.RegisterWriter(endpointData, writer);
-        receiver.GetUnregisterWriterCount(eid).Should().Be(0);
 
-        manager.UnregisterWriter(writerGuid, writer);
-        receiver.GetUnregisterWriterCount(eid).Should().Be(1);
+        var first = manager.UnregisterWriter(writerGuid, writer);
+        first.Should().NotBe(UserEndpointManager.UnregisterResult.NotFound);
+
+        var second = manager.UnregisterWriter(writerGuid, writer);
+        second.Should().Be(UserEndpointManager.UnregisterResult.NotFound);
+
+        manager.Snapshot().Writers.Should().BeEmpty();
     }
 
     [Fact]
-    public void RecordingReceiver_ReaderはUnregisterが正確に1回()
+    public void RecordingReceiver_Readerは二回目のUnregisterでNotFoundを返す()
     {
         var receiver = new RecordingEndpointReceiver();
         var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
@@ -353,14 +356,18 @@ public class UserEndpointManagerRefactoredTests
         endpointData.UnicastLocators.Add(Locator.FromUdpV4(System.Net.IPAddress.Loopback, 7411));
 
         manager.RegisterReader(endpointData, userReader);
-        receiver.GetUnregisterReaderCount(guid.EntityId).Should().Be(0);
 
-        manager.UnregisterReader(guid, userReader);
-        receiver.GetUnregisterReaderCount(guid.EntityId).Should().Be(1);
+        var first = manager.UnregisterReader(guid, userReader);
+        first.Should().NotBe(UserEndpointManager.UnregisterResult.NotFound);
+
+        var second = manager.UnregisterReader(guid, userReader);
+        second.Should().Be(UserEndpointManager.UnregisterResult.NotFound);
+
+        manager.Snapshot().Readers.Should().BeEmpty();
     }
 
     [Fact]
-    public void RecordingReceiver_WriterはRegisterの後Unregisterが呼ばれる()
+    public void RecordingReceiver_WriterはRegisterのみreceiverを呼ぶ()
     {
         var receiver = new RecordingEndpointReceiver();
         var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
@@ -371,13 +378,12 @@ public class UserEndpointManagerRefactoredTests
         manager.UnregisterWriter(writerGuid, writer);
 
         var seq = receiver.CallSequence;
-        seq.Should().HaveCount(2);
+        seq.Should().HaveCount(1);
         seq[0].Should().Be(("RegisterWriter", eid));
-        seq[1].Should().Be(("UnregisterWriter", eid));
     }
 
     [Fact]
-    public void RecordingReceiver_ReaderはRegisterの後Unregisterが呼ばれる()
+    public void RecordingReceiver_ReaderはRegisterのみreceiverを呼ぶ()
     {
         var receiver = new RecordingEndpointReceiver();
         var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
@@ -400,13 +406,12 @@ public class UserEndpointManagerRefactoredTests
         manager.UnregisterReader(guid, userReader);
 
         var seq = receiver.CallSequence;
-        seq.Should().HaveCount(2);
+        seq.Should().HaveCount(1);
         seq[0].Should().Be(("RegisterReader", guid.EntityId));
-        seq[1].Should().Be(("UnregisterReader", guid.EntityId));
     }
 
     [Fact]
-    public void Phase2_writer_registration_failure_は_rollbackでUnregisterWriterを呼ぶ()
+    public void Phase2_writer_registration_failure_は_rollbackでmetadataを抹消する()
     {
         var receiver = new RecordingThrowingEndpointReceiver();
         var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
@@ -421,16 +426,18 @@ public class UserEndpointManagerRefactoredTests
         receiver.RegisteredWriters.Should().Contain(writerEntityId,
             "Phase 2 failure occurred after reaching receiver");
 
-        // Node の catch ブロックと同じ手動 rollback
+        // Node の catch ブロックと同じ手動 rollback (receiver unregister → metadata)
+        receiver.UnregisterWriter(writerEntityId);
         manager.CompleteWriterUnregistration(writerGuid, writer);
 
-        // 同じ EntityId が unregister されている
-        receiver.UnregisteredWriters.Should().Contain(writerEntityId);
+        // Complete*Unregistration は metadata 抹消のみ行う
+        receiver.UnregisteredWriters.Should().Contain(writerEntityId,
+            "receiver unregister must be called explicitly before Complete*Unregistration");
         manager.Snapshot().Writers.Should().BeEmpty();
     }
 
     [Fact]
-    public void Phase2_reader_registration_failure_は_rollbackでUnregisterReaderを呼ぶ()
+    public void Phase2_reader_registration_failure_は_rollbackでmetadataを抹消する()
     {
         var receiver = new RecordingThrowingEndpointReceiver();
         var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
@@ -457,9 +464,12 @@ public class UserEndpointManagerRefactoredTests
         receiver.RegisteredReaders.Should().Contain(guid.EntityId,
             "Phase 2 failure occurred after reaching receiver");
 
+        // Node の catch ブロックと同じ手動 rollback
+        receiver.UnregisterReader(guid.EntityId);
         manager.CompleteReaderUnregistration(guid, userReader);
 
-        receiver.UnregisteredReaders.Should().Contain(guid.EntityId);
+        receiver.UnregisteredReaders.Should().Contain(guid.EntityId,
+            "receiver unregister must be called explicitly before Complete*Unregistration");
         manager.Snapshot().Readers.Should().BeEmpty();
     }
 
@@ -473,7 +483,6 @@ public class UserEndpointManagerRefactoredTests
         var receiver = new RecordingEndpointReceiver();
         var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
         var writer = CreateWriter("rt/idem_w", out var endpointData, out var writerGuid);
-        var eid = writer.WriterEntityId;
 
         manager.RegisterWriter(endpointData, writer);
 
@@ -484,8 +493,8 @@ public class UserEndpointManagerRefactoredTests
         var second = manager.CompleteWriterUnregistration(writerGuid, writer);
         second.Should().Be(UserEndpointManager.UnregisterResult.NotFound);
 
-        receiver.GetUnregisterWriterCount(eid).Should().Be(1,
-            "receiver unregister must be called exactly once");
+        // Complete*Unregistration は receiver を呼ばない
+        receiver.UnregisteredWriters.Should().BeEmpty();
         manager.Snapshot().Writers.Should().BeEmpty();
     }
 
@@ -518,8 +527,8 @@ public class UserEndpointManagerRefactoredTests
         var second = manager.CompleteReaderUnregistration(guid, userReader);
         second.Should().Be(UserEndpointManager.UnregisterResult.NotFound);
 
-        receiver.GetUnregisterReaderCount(guid.EntityId).Should().Be(1,
-            "receiver unregister must be called exactly once");
+        // Complete*Unregistration は receiver を呼ばない
+        receiver.UnregisteredReaders.Should().BeEmpty();
         manager.Snapshot().Readers.Should().BeEmpty();
     }
 }
