@@ -1082,15 +1082,21 @@ public class TopicDiagnosticsTests
         var lockAcquired = new ManualResetEventSlim();
         var releaseLock = new ManualResetEventSlim();
         var mutAttempted = new ManualResetEventSlim();
-        var mutLockAcquired = new ManualResetEventSlim();
+        var contentionObserved = 0;
         context.GraphSnapshotEnterLockCallback = () => lockAcquired.Set();
         context.GraphSnapshotBetweenLocalCollectionsCallback = () =>
         {
             if (!releaseLock.Wait(TimeSpan.FromSeconds(5)))
                 throw new TimeoutException("snapshot between-collections timed out");
         };
-        context.GraphLockMutationAttemptCallback = () => mutAttempted.Set();
-        context.GraphLockMutationAcquiredCallback = () => mutLockAcquired.Set();
+        context.GraphLockMutationCallback = lockObj =>
+        {
+            mutAttempted.Set();
+            if (!Monitor.TryEnter(lockObj, 0))
+                Interlocked.Exchange(ref contentionObserved, 1);
+            else
+                Monitor.Exit(lockObj);
+        };
 
         GraphSnapshot? snap = null;
         HashSet<Guid>? localGuids = null;
@@ -1126,19 +1132,20 @@ public class TopicDiagnosticsTests
         });
         mutThread.Start();
 
-        // mutation が lock 文まで到達したことを確認
+        // mutation callback が発火したことを確認
         Assert.True(mutAttempted.Wait(TimeSpan.FromSeconds(5)),
-            "mutation must reach GraphLock statement");
+            "mutation callback must fire");
 
-        // mutation は lock を獲得できないため lock-acquired callback は発火しない
-        Assert.False(mutLockAcquired.Wait(TimeSpan.FromMilliseconds(500)),
-            "mutation lock-acquired callback must NOT fire while snapshot holds the lock");
+        // snapshot が GraphLock を保持しているため TryEnter は false になる
+        Assert.Equal(1, Volatile.Read(ref contentionObserved));
+
+        // mutation は lock を獲得できないためまだ完了しない
+        Assert.False(mutDone.Wait(TimeSpan.FromMilliseconds(500)),
+            "mutation must be blocked while snapshot holds the lock");
 
         releaseLock.Set();
         Assert.True(snapDone.Wait(TimeSpan.FromSeconds(5)), "snapshot must complete");
-        // snapshot が lock を解放 → mutation が lock を獲得 → lock-acquired callback 発火
-        Assert.True(mutLockAcquired.Wait(TimeSpan.FromSeconds(5)),
-            "mutation lock-acquired callback must fire after snapshot releases the lock");
+        // snapshot が lock を解放 → mutation が lock を獲得 → 完了
         Assert.True(mutDone.Wait(TimeSpan.FromSeconds(5)), "mutation must complete after lock release");
 
         if (snapError is not null) throw new Exception("snapshot failed", snapError);
@@ -1168,7 +1175,95 @@ public class TopicDiagnosticsTests
         concurrentPub!.Dispose();
         context.GraphSnapshotEnterLockCallback = null;
         context.GraphSnapshotBetweenLocalCollectionsCallback = null;
-        context.GraphLockMutationAttemptCallback = null;
-        context.GraphLockMutationAcquiredCallback = null;
+        context.GraphLockMutationCallback = null;
+    }
+
+    [Fact]
+    public void Task2_CreateGraphSnapshot中はCreateSubscriptionが_graphLock待ちでブロックされる()
+    {
+        using var context = CreateContext();
+        context.Start();
+        using var node1 = new Node(context, "n1");
+        using var node2 = new Node(context, "n2");
+        using var pub1 = node1.CreatePublisher<StringMessage>(
+            "steady", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var mutAttempted = new ManualResetEventSlim();
+        var contentionObserved = 0;
+
+        context.GraphLockMutationCallback = lockObj =>
+        {
+            mutAttempted.Set();
+            if (!Monitor.TryEnter(lockObj, 0))
+                Interlocked.Exchange(ref contentionObserved, 1);
+            else
+                Monitor.Exit(lockObj);
+        };
+
+        var lockAcquired = new ManualResetEventSlim();
+        var snapshotContinue = new ManualResetEventSlim();
+        context.GraphSnapshotEnterLockCallback = () => lockAcquired.Set();
+        context.GraphSnapshotPauseCallback = () =>
+        {
+            if (!snapshotContinue.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("snapshot pause timed out");
+        };
+
+        Exception? snapError = null;
+        var snapDone = new ManualResetEventSlim();
+        var snapThread = new Thread(() =>
+        {
+            try { context.CreateGraphSnapshot(); }
+            catch (Exception ex) { snapError = ex; }
+            finally { snapDone.Set(); }
+        });
+        snapThread.Start();
+
+        Assert.True(lockAcquired.Wait(TimeSpan.FromSeconds(5)),
+            "snapshot must acquire GraphLock");
+
+        // subscription mutation は同一 GraphLock 下でブロックされる
+        Subscription<StringMessage>? concurrentSub = null;
+        var mutDone = new ManualResetEventSlim();
+        Exception? mutError = null;
+        var mutThread = new Thread(() =>
+        {
+            try
+            {
+                concurrentSub = node2.CreateSubscription<StringMessage>(
+                    "concurrent", StringMessageSerializer.Instance, _ => { });
+            }
+            catch (Exception ex) { mutError = ex; }
+            finally { mutDone.Set(); }
+        });
+        mutThread.Start();
+
+        // callback が発火し、TryEnter で GraphLock が保持されていることを直接検証
+        Assert.True(mutAttempted.Wait(TimeSpan.FromSeconds(5)),
+            "mutation callback must fire");
+        Assert.Equal(1, Volatile.Read(ref contentionObserved));
+
+        // mutation は Acquired 未発火（lock 獲得できずブロック中）
+        Assert.False(mutDone.Wait(TimeSpan.FromMilliseconds(500)),
+            "mutation must be blocked while snapshot holds GraphLock");
+
+        // pause 解除 → mutation が lock 獲得 → 完了
+        snapshotContinue.Set();
+        Assert.True(snapDone.Wait(TimeSpan.FromSeconds(5)), "snapshot must complete");
+        Assert.True(mutDone.Wait(TimeSpan.FromSeconds(5)), "mutation must complete after lock release");
+
+        if (snapError is not null) throw new Exception("snapshot failed", snapError);
+        if (mutError is not null) throw new Exception("mutation failed", mutError);
+
+        // mutation 後の状態を確認
+        concurrentSub.Should().NotBeNull();
+        var snap2 = context.CreateGraphSnapshot();
+        var concurrentTopic = TopicNameMangler.MangleTopic("concurrent");
+        snap2.Endpoints.Should().Contain(e => e.TopicName == concurrentTopic);
+
+        concurrentSub!.Dispose();
+        context.GraphSnapshotEnterLockCallback = null;
+        context.GraphSnapshotPauseCallback = null;
+        context.GraphLockMutationCallback = null;
     }
 }

@@ -116,8 +116,8 @@ public sealed class Node : IDisposable
             Logger,
             cdrReadLimits: Context.Options.CdrReadLimits);
 
-        Context.GraphLockMutationAttemptCallback?.Invoke();
-        lock (Context.GraphLock) { Context.GraphLockMutationAcquiredCallback?.Invoke(); _userEndpoints.RegisterReader(endpointData, reader); }
+        Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
+        lock (Context.GraphLock) { _userEndpoints.RegisterReader(endpointData, reader); }
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddSubscriptionAsync(endpointData, token),
             "Node failed to advertise local reader endpoint");
@@ -204,8 +204,8 @@ public sealed class Node : IDisposable
         var endpoint = _endpointFactory.CreateWriter(ddsTopic, serializer, reliability, durability, typeName);
         var writer = endpoint.Writer;
         var endpointData = endpoint.EndpointData;
-        Context.GraphLockMutationAttemptCallback?.Invoke();
-        lock (Context.GraphLock) { Context.GraphLockMutationAcquiredCallback?.Invoke(); _userEndpoints.RegisterWriter(endpointData, writer); }
+        Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
+        lock (Context.GraphLock) { _userEndpoints.RegisterWriter(endpointData, writer); }
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddPublicationAsync(endpointData, token),
             "Node failed to advertise local writer endpoint");
@@ -221,8 +221,8 @@ public sealed class Node : IDisposable
         var reader = endpoint.Reader;
         var endpointData = endpoint.EndpointData;
 
-        Context.GraphLockMutationAttemptCallback?.Invoke();
-        lock (Context.GraphLock) { Context.GraphLockMutationAcquiredCallback?.Invoke(); _userEndpoints.RegisterReader(endpointData, reader); }
+        Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
+        lock (Context.GraphLock) { _userEndpoints.RegisterReader(endpointData, reader); }
         _ = _sedpAdvertiser.RunAsync(
             token => Context.AddSubscriptionAsync(endpointData, token),
             "Node failed to advertise local service reply reader endpoint");
@@ -266,8 +266,8 @@ public sealed class Node : IDisposable
     private void UnregisterLocalWriter(Guid endpointGuid, StatefulWriter writerToRemove)
     {
         UserEndpointManager.UnregisterResult result;
-        Context.GraphLockMutationAttemptCallback?.Invoke();
-        lock (Context.GraphLock) { Context.GraphLockMutationAcquiredCallback?.Invoke(); result = _userEndpoints.UnregisterWriter(endpointGuid, writerToRemove); }
+        Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
+        lock (Context.GraphLock) { result = _userEndpoints.UnregisterWriter(endpointGuid, writerToRemove); }
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterPublicationAsync(result.Endpoint!));
@@ -277,8 +277,8 @@ public sealed class Node : IDisposable
     private void UnregisterLocalReader(Guid endpointGuid, IUserReader readerToRemove)
     {
         UserEndpointManager.UnregisterResult result;
-        Context.GraphLockMutationAttemptCallback?.Invoke();
-        lock (Context.GraphLock) { Context.GraphLockMutationAcquiredCallback?.Invoke(); result = _userEndpoints.UnregisterReader(endpointGuid, readerToRemove); }
+        Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
+        lock (Context.GraphLock) { result = _userEndpoints.UnregisterReader(endpointGuid, readerToRemove); }
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterSubscriptionAsync(result.Endpoint!));

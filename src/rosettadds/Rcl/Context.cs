@@ -166,8 +166,7 @@ public sealed class Context : IDisposable
     internal Action? GraphSnapshotEnterLockCallback { get; set; }
     internal Action? GraphSnapshotPauseCallback { get; set; }
     internal Action? GraphSnapshotBetweenLocalCollectionsCallback { get; set; }
-    internal Action? GraphLockMutationAttemptCallback { get; set; }
-    internal Action? GraphLockMutationAcquiredCallback { get; set; }
+    internal Action<object>? GraphLockMutationCallback { get; set; }
     internal int PublishedSubscriptionStateCount => _sedpSubscriptionsWriter.PublishedCount;
 
     // ----- SEDP 広告の Node 向け delegate -----
