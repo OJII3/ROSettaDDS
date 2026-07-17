@@ -407,6 +407,96 @@ public class NodeTests
         node.PendingRegistrationsWaitLoopEntered = null;
     }
 
+    [Fact]
+    public void CreateServiceClient_outer_only_pending_で_Dispose_が割り込むと待機してrollbackする()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        var node = new Node(ctx, "svc_outer_test");
+
+        var pausePoint = new ManualResetEventSlim();
+        var resumeCreate = new ManualResetEventSlim();
+        Exception? createError = null;
+        Exception? disposeError = null;
+        int disposeCompleted = 0;
+
+        node.BeforeServiceReplyReaderCreateCallback = () =>
+        {
+            pausePoint.Set();
+            resumeCreate.Wait();
+        };
+
+        var waitLoopEntered = new ManualResetEventSlim();
+        int? observedPendingCount = null;
+        node.PendingRegistrationsWaitLoopEntered = (pendingCount) =>
+        {
+            observedPendingCount = pendingCount;
+            waitLoopEntered.Set();
+        };
+
+        var svcName = $"test_{System.Guid.NewGuid():N}";
+        var descriptor = new ServiceDescriptor<StringMessage, StringMessage>(
+            requestDdsTypeName: StringMessage.DdsTypeName,
+            responseDdsTypeName: StringMessage.DdsTypeName,
+            requestSerializer: StringMessageSerializer.Instance,
+            responseSerializer: StringMessageSerializer.Instance);
+
+        var createThread = new Thread(() =>
+        {
+            try
+            {
+                using var client = node.CreateServiceClient(descriptor, svcName);
+            }
+            catch (Exception ex)
+            {
+                createError = ex;
+            }
+        });
+        createThread.Start();
+
+        Assert.True(pausePoint.Wait(TimeSpan.FromSeconds(5)),
+            "BeforeServiceReplyReaderCreateCallback must fire");
+
+        var disposeThread = new Thread(() =>
+        {
+            try
+            {
+                node.Dispose();
+                Interlocked.Exchange(ref disposeCompleted, 1);
+            }
+            catch (Exception ex)
+            {
+                disposeError = ex;
+            }
+        });
+        disposeThread.Start();
+
+        Assert.True(waitLoopEntered.Wait(TimeSpan.FromSeconds(5)),
+            "Dispose must enter pending registration wait loop");
+        Assert.True(node.IsDisposed);
+        Assert.True(observedPendingCount.HasValue);
+        Assert.Equal(1, observedPendingCount!.Value);
+
+        Assert.Equal(0, Volatile.Read(ref disposeCompleted));
+
+        resumeCreate.Set();
+        Assert.True(createThread.Join(TimeSpan.FromSeconds(5)),
+            "CreateServiceClient thread must complete after rollback");
+
+        Assert.True(disposeThread.Join(TimeSpan.FromSeconds(5)),
+            "Dispose thread must complete after pending registration finishes");
+
+        Assert.Null(disposeError);
+        Assert.NotNull(createError);
+        var odEx = Assert.IsType<ObjectDisposedException>(createError);
+        Assert.Contains(typeof(Node).Name, odEx.ObjectName, StringComparison.Ordinal);
+
+        Assert.True(node.IsDisposed);
+
+        node.BeforeServiceReplyReaderCreateCallback = null;
+        node.PendingRegistrationsWaitLoopEntered = null;
+    }
+
     private sealed class SilentTransport : IRtpsTransport
     {
         public Locator LocalLocator => Locator.FromUdpV4(IPAddress.Loopback, 7411);

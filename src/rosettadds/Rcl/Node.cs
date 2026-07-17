@@ -29,6 +29,7 @@ public sealed class Node : IDisposable
 
     internal Action? BeforeDisposedCheckCallback { get; set; }
     internal Action<int>? PendingRegistrationsWaitLoopEntered { get; set; }
+    internal Action? BeforeServiceReplyReaderCreateCallback { get; set; }
 
     public Node(Context context, string name, NodeOptions? options = null)
     {
@@ -202,6 +203,8 @@ public sealed class Node : IDisposable
                 DurabilityQos.Volatile,
                 typeName: descriptor.RequestDdsTypeName,
                 userTopicName: serviceName);
+
+            BeforeServiceReplyReaderCreateCallback?.Invoke();
 
             try
             {
@@ -377,12 +380,14 @@ public sealed class Node : IDisposable
         _disposed = true;
         var sw = new SpinWait();
         bool entered = false;
-        while (Volatile.Read(ref _pendingRegistrations) > 0)
+        while (true)
         {
+            int pending = Volatile.Read(ref _pendingRegistrations);
+            if (pending <= 0) break;
             if (!entered)
             {
                 entered = true;
-                PendingRegistrationsWaitLoopEntered?.Invoke(Volatile.Read(ref _pendingRegistrations));
+                PendingRegistrationsWaitLoopEntered?.Invoke(pending);
             }
             sw.SpinOnce();
         }
