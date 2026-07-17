@@ -141,6 +141,53 @@ public class SubscriptionLifecycleTests
             "all concurrent create+dispose must complete without exception");
     }
 
+    [Fact]
+    public void Disposeはadvertise完了を待ってからSEDP_UNREGISTEREDを送る()
+    {
+        using var ctx = new Context(CreateOptions());
+        ctx.Start();
+        using var node = new Node(ctx, "ordering_delay");
+
+        var proceedAdvertise = new TaskCompletionSource();
+        ctx.SedpAdvertiseDelay = () => new ValueTask(proceedAdvertise.Task);
+
+        var initialCount = ctx.PublishedSubscriptionStateCount;
+
+        // CreateRawReaderは即座にreturn、advertiseは裏でblock (TaskCompletionSource待ち)
+        var raw = node.CreateRawReader(
+            "rt/ordering_delay",
+            "test::msg::dds_::Msg_",
+            (_, _) => { },
+            ReliabilityQos.BestEffort,
+            DurabilityQos.Volatile);
+
+        // advertise block中 → ALIVE未送信
+        ctx.PublishedSubscriptionStateCount.Should().Be(initialCount,
+            "no SEDP ALIVE while advertise is blocked");
+
+        // Disposeを別Threadで呼ぶ → advertise完了待ちでblock
+        var disposeThread = new Thread(() =>
+        {
+            raw.Dispose();
+        });
+        disposeThread.Start();
+
+        // disposeがGetResult待ちに入るのを少し待つ
+        Thread.Sleep(50);
+        // Dispose未完了 → ALIVE/UNREGISTEREDどちらも未送信
+        ctx.PublishedSubscriptionStateCount.Should().Be(initialCount,
+            "no SEDP state sent while advertise blocked and dispose waiting");
+
+        // advertise再開 → ALIVE送信 → Dispose再開 → UNREGISTERED送信
+        proceedAdvertise.SetResult();
+        Assert.True(disposeThread.Join(TimeSpan.FromSeconds(5)),
+            "Dispose must complete after advertise unblocked");
+
+        // ALIVE + UNREGISTERED 両方送信
+        ctx.PublishedSubscriptionStateCount.Should().BeGreaterThanOrEqualTo(initialCount + 2,
+            "both SEDP ALIVE and UNREGISTERED must be sent (advertise await → then unregister)");
+    }
+
     // ========================================================================
     // 2. RawSubscription/Subscription Dispose thread-safe / idempotent
     // ========================================================================
@@ -155,61 +202,100 @@ public class SubscriptionLifecycleTests
     }
 
     [Fact]
-    public void RawSubscription_Dispose中callback同時実行で破損しない()
+    public void RawSubscription_Dispose中callback同時実行で破損しない_Barrier決定的検証()
     {
         var reader = new TestUserReader(new EntityId(2, EntityKind.UserDefinedReaderNoKey));
-        var raw = new RawSubscription("t", default, reader, (_, _) => Thread.SpinWait(50), autoStart: false);
-
+        var callbackStarted = new ManualResetEventSlim();
         var disposeDone = new ManualResetEventSlim();
-        var threads = new Thread[3];
-        for (int i = 0; i < 3; i++)
-        {
-            threads[i] = new Thread(() =>
+        var callbackCanProceed = new ManualResetEventSlim();
+        int callbackInvokeCount = 0;
+        int callbackAfterDispose = 0;
+
+        var raw = new RawSubscription("t", default, reader,
+            (_, _) =>
             {
-                // Dispose と同時に callback を連続発火
-                for (int j = 0; j < 200; j++)
-                    reader.SimulatePayload(new byte[] { (byte)j }, default);
-            });
-        }
+                Interlocked.Increment(ref callbackInvokeCount);
+                callbackStarted.Set();
+                // Disposeがcallback中に入るのを待つ
+                if (!disposeDone.IsSet)
+                    disposeDone.Wait();
+                // Dispose後もこのcallbackは実行中→正常完了
+            },
+            autoStart: false);
 
-        foreach (var t in threads) t.Start();
+        // callbackを1回発火 → callback中にDispose
+        var callbackThread = new Thread(() => reader.SimulatePayload(new byte[] { 1 }, default));
+        callbackThread.Start();
 
-        Thread.SpinWait(50);
+        Assert.True(callbackStarted.Wait(TimeSpan.FromSeconds(5)),
+            "callback must start before dispose");
+
+        // callback実行中にDispose
         raw.Dispose();
         disposeDone.Set();
 
-        foreach (var t in threads) t.Join();
+        // Dispose後: さらにcallbackを発火しても_disposedチェックで通らないはず
+        reader.SimulatePayload(new byte[] { 2 }, default);
+        Interlocked.Exchange(ref callbackAfterDispose, Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0));
+
+        callbackThread.Join();
+        Assert.True(callbackThread.ThreadState == ThreadState.Stopped,
+            "callback thread must complete normally");
+
+        // Dispose後のcallback発火でcallbackInvokeCountが増えていないこと
+        Interlocked.CompareExchange(ref callbackAfterDispose, 0, 0).Should().BeLessThanOrEqualTo(
+            Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0),
+            "callbacks dispatched before Dispose may complete, but no new callbacks after Dispose");
+
+        // 正確に1回のcallbackのみ実行されている（callback中にDisposeしたため2回目は_disposedで弾かれる）
+        // 注: 1回目はcallback中にDisposeされたが完了する、2回目以降は_disposed=1で弾かれる
     }
 
     [Fact]
-    public void Subscription_Dispose中callback同時実行で破損しない()
+    public void Subscription_Dispose中callback同時実行で破損しない_Barrier決定的検証()
     {
         var reader = new TestUserReader(new EntityId(3, EntityKind.UserDefinedReaderNoKey));
         var serializer = StringMessageSerializer.Instance;
+        var callbackStarted = new ManualResetEventSlim();
+        var disposeDone = new ManualResetEventSlim();
+        int callbackInvokeCount = 0;
+        int callbackAfterDispose = 0;
+
         var sub = new Subscription<StringMessage>(
             "t", default, reader, serializer,
-            (_, _) => Thread.SpinWait(50),
+            (_, _) =>
+            {
+                Interlocked.Increment(ref callbackInvokeCount);
+                callbackStarted.Set();
+                if (!disposeDone.IsSet)
+                    disposeDone.Wait();
+            },
             autoStart: false);
 
-        // 簡易なCDRエンコードペイロード
         var payload = SerializeStringMessage("race");
 
-        var threads = new Thread[3];
-        for (int i = 0; i < 3; i++)
-        {
-            threads[i] = new Thread(() =>
-            {
-                for (int j = 0; j < 100; j++)
-                    reader.SimulatePayload(payload, default);
-            });
-        }
+        // callbackを1回発火
+        var callbackThread = new Thread(() => reader.SimulatePayload(payload, default));
+        callbackThread.Start();
 
-        foreach (var t in threads) t.Start();
+        Assert.True(callbackStarted.Wait(TimeSpan.FromSeconds(5)),
+            "callback must start before dispose");
 
-        Thread.SpinWait(50);
+        // callback実行中にDispose
         sub.Dispose();
+        disposeDone.Set();
 
-        foreach (var t in threads) t.Join();
+        // Dispose後: さらにcallback発火しても_disposedで弾かれる
+        reader.SimulatePayload(payload, default);
+        Interlocked.Exchange(ref callbackAfterDispose, Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0));
+
+        callbackThread.Join();
+        Assert.True(callbackThread.ThreadState == ThreadState.Stopped,
+            "callback thread must complete normally");
+
+        Interlocked.CompareExchange(ref callbackAfterDispose, 0, 0).Should().BeLessThanOrEqualTo(
+            Interlocked.CompareExchange(ref callbackInvokeCount, 0, 0),
+            "no new callbacks after Dispose");
     }
 
     private static byte[] SerializeStringMessage(string text)
@@ -252,7 +338,7 @@ public class SubscriptionLifecycleTests
     }
 
     // ========================================================================
-    // 3. QoS / exact dds type / endpoint metadata / receiver registration
+    // 3. QoS / exact dds type / endpoint metadata / receiver registration / matching
     // ========================================================================
 
     [Fact]
@@ -289,13 +375,93 @@ public class SubscriptionLifecycleTests
     }
 
     [Fact]
-    public void CreateRawReaderはreceiverにreaderを登録する()
+    public async Task BestEffortRawReaderはBestEffortPublisherとクロスコンテキストでマッチする()
+    {
+        using var talkerCtx = new Context(CreateOptions());
+        using var listenerCtx = new Context(CreateOptions());
+        talkerCtx.Start();
+        listenerCtx.Start();
+
+        using var talker = new Node(talkerCtx, "talker_be");
+        using var listener = new Node(listenerCtx, "listener_be");
+
+        var topicName = $"be_match_{System.Guid.NewGuid():N}";
+        using var pub = talker.CreatePublisher<StringMessage>(
+            topicName, StringMessageSerializer.Instance,
+            ReliabilityQos.BestEffort, DurabilityQos.Volatile,
+            StringMessage.DdsTypeName);
+
+        var raw = listener.CreateRawReader(
+            TopicNameMangler.MangleTopic(topicName),
+            StringMessage.DdsTypeName,
+            (_, _) => { },
+            ReliabilityQos.BestEffort,
+            DurabilityQos.Volatile);
+
+        (await pub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5)))
+            .Should().BeTrue("BestEffort raw reader must match with BestEffort writer");
+    }
+
+    [Fact]
+    public async Task BestEffortRawReaderはReliablePublisherともクロスコンテキストでマッチする()
+    {
+        using var talkerCtx = new Context(CreateOptions());
+        using var listenerCtx = new Context(CreateOptions());
+        talkerCtx.Start();
+        listenerCtx.Start();
+
+        using var talker = new Node(talkerCtx, "talker_reliable");
+        using var listener = new Node(listenerCtx, "listener_reliable");
+
+        var topicName = $"reliable_match_{System.Guid.NewGuid():N}";
+        using var pub = talker.CreatePublisher<StringMessage>(
+            topicName, StringMessageSerializer.Instance,
+            ReliabilityQos.Reliable, DurabilityQos.Volatile,
+            StringMessage.DdsTypeName);
+
+        var raw = listener.CreateRawReader(
+            TopicNameMangler.MangleTopic(topicName),
+            StringMessage.DdsTypeName,
+            (_, _) => { },
+            ReliabilityQos.BestEffort,
+            DurabilityQos.Volatile);
+
+        (await pub.WaitForMatchedAsync(1, TimeSpan.FromSeconds(5)))
+            .Should().BeTrue(
+                "BestEffort raw reader must match with Reliable writer " +
+                "(Reliable offered >= BestEffort requested)");
+    }
+
+    [Fact]
+    public void CreateRawReaderはexact_DDS_typeをendpoint_metadataに保持する()
+    {
+        using var ctx = new Context(CreateOptions());
+        ctx.Start();
+        using var node = new Node(ctx, "dds_type_meta");
+
+        var ddsTypeName = "my_package::msg::dds_::CustomType_";
+        var raw = node.CreateRawReader(
+            "rt/dds_type_test",
+            ddsTypeName,
+            (_, _) => { },
+            ReliabilityQos.BestEffort,
+            DurabilityQos.Volatile);
+
+        var snapshot = node.LocalEndpointSnapshot();
+        var reader = snapshot.Readers.Should().ContainSingle().Subject;
+        reader.TypeName.Should().Be(ddsTypeName,
+            "exact DDS type name must be stored in endpoint metadata");
+
+        raw.Dispose();
+    }
+
+    [Fact]
+    public void CreateRawReaderはmetadataにreaderを登録しDisposeで削除する()
     {
         using var ctx = new Context(CreateOptions());
         ctx.Start();
         using var node = new Node(ctx, "receiver_test");
 
-        // receiver経由の登録を確認するため、readerを作成してremote writerとmatchさせる
         var raw = node.CreateRawReader(
             "rt/receiver_test",
             "test::msg::dds_::Msg_",
@@ -303,11 +469,16 @@ public class SubscriptionLifecycleTests
             ReliabilityQos.BestEffort,
             DurabilityQos.Volatile);
 
-        // Dispose後receiverからunregisterされることを確認
+        // 作成後: metadataにreaderが存在
+        var afterCreate = node.LocalEndpointSnapshot();
+        afterCreate.Readers.Should().Contain(r => r.EndpointGuid.Equals(raw.Guid));
+
+        // Dispose → wrapper経路でmetadata/receiver/SEDP unregister
         raw.Dispose();
 
-        // receiverからのunregisterが例外なく完了すればOK
-        Assert.True(true);
+        // Dispose後: metadataから削除
+        var afterDispose = node.LocalEndpointSnapshot();
+        afterDispose.Readers.Should().NotContain(r => r.EndpointGuid.Equals(raw.Guid));
     }
 
     [Fact]

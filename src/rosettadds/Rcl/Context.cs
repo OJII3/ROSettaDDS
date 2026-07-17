@@ -167,15 +167,27 @@ public sealed class Context : IDisposable
     internal Action? GraphSnapshotPauseCallback { get; set; }
     internal Action? GraphSnapshotBetweenLocalCollectionsCallback { get; set; }
     internal Action<object>? GraphLockMutationCallback { get; set; }
+
+    /// <summary>テスト用: SEDP advertise (AddSubscriptionAsync / AddPublicationAsync) の直前に呼ばれる。</summary>
+    internal Func<ValueTask>? SedpAdvertiseDelay { get; set; }
+
     internal int PublishedSubscriptionStateCount => _sedpSubscriptionsWriter.PublishedCount;
 
     // ----- SEDP 広告の Node 向け delegate -----
 
-    internal ValueTask AddPublicationAsync(DiscoveredEndpointData endpointData, CancellationToken token)
-        => _sedpPublicationsWriter.AddEndpointAsync(endpointData, token);
+    internal async ValueTask AddPublicationAsync(DiscoveredEndpointData endpointData, CancellationToken token)
+    {
+        if (SedpAdvertiseDelay is not null)
+            await SedpAdvertiseDelay();
+        await _sedpPublicationsWriter.AddEndpointAsync(endpointData, token);
+    }
 
-    internal ValueTask AddSubscriptionAsync(DiscoveredEndpointData endpointData, CancellationToken token)
-        => _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token);
+    internal async ValueTask AddSubscriptionAsync(DiscoveredEndpointData endpointData, CancellationToken token)
+    {
+        if (SedpAdvertiseDelay is not null)
+            await SedpAdvertiseDelay();
+        await _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token);
+    }
 
     internal ValueTask UnregisterPublicationAsync(DiscoveredEndpointData endpoint)
         => _sedpPublicationsWriter.UnregisterEndpointAsync(endpoint);
