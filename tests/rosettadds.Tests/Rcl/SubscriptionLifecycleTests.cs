@@ -9,6 +9,7 @@ using ROSettaDDS.Rcl;
 using ROSettaDDS.Rcl.Naming;
 using ROSettaDDS.Rtps;
 using ROSettaDDS.Rtps.Reader;
+using ROSettaDDS.Rtps.Writer;
 using ROSettaDDS.Transport;
 using ROSettaDDS.Tests.Dds;
 using Guid = ROSettaDDS.Common.Guid;
@@ -528,6 +529,113 @@ public class SubscriptionLifecycleTests
     }
 
     [Fact]
+    public void Node_DisposeでRawReaderのUnregisterReaderが正確に1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new FakeEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        var node = new Node(ctx, "node_raw_count");
+
+        var raw = node.CreateRawReader(
+            "rt/node_raw_count",
+            "test::msg::dds_::Msg_",
+            (_, _) => { },
+            ReliabilityQos.BestEffort,
+            DurabilityQos.Volatile);
+
+        var eid = raw.ReaderEntityId;
+
+        node.Dispose();
+
+        receiver.UnregisteredReaders.Count(e => e == eid).Should().Be(1);
+    }
+
+    [Fact]
+    public void Node_DisposeでTypedSubscriptionのUnregisterReaderが正確に1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new FakeEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        var node = new Node(ctx, "node_sub_count");
+
+        var sub = node.CreateSubscription<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, _ => { });
+
+        var eid = sub.ReaderEntityId;
+
+        node.Dispose();
+
+        receiver.UnregisteredReaders.Count(e => e == eid).Should().Be(1);
+    }
+
+    [Fact]
+    public void Node_DisposeでPublisherのUnregisterWriterが正確に1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new FakeEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        var node = new Node(ctx, "node_pub_count");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance);
+
+        var eid = pub.Writer.WriterEntityId;
+
+        node.Dispose();
+
+        receiver.UnregisteredWriters.Count(e => e == eid).Should().Be(1);
+    }
+
+    [Fact]
+    public void Node_DisposeでRawReaderのRegisterの後Unregisterが呼ばれる()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new RecordingEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        var node = new Node(ctx, "node_raw_order");
+
+        var raw = node.CreateRawReader(
+            "rt/node_raw_order",
+            "test::msg::dds_::Msg_",
+            (_, _) => { },
+            ReliabilityQos.BestEffort,
+            DurabilityQos.Volatile);
+        var eid = raw.ReaderEntityId;
+
+        node.Dispose();
+
+        var seq = receiver.CallSequence;
+        seq.Should().ContainInOrder(
+            ("RegisterReader", eid),
+            ("UnregisterReader", eid));
+    }
+
+    [Fact]
+    public void Node_DisposeでPublisherのRegisterの後Unregisterが呼ばれる()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new RecordingEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        var node = new Node(ctx, "node_pub_order");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance);
+        var eid = pub.Writer.WriterEntityId;
+
+        node.Dispose();
+
+        var seq = receiver.CallSequence;
+        seq.Should().ContainInOrder(
+            ("RegisterWriter", eid),
+            ("UnregisterWriter", eid));
+    }
+
+    [Fact]
     public async Task CreateRawReader_Dispose後remote_writerとmatchしない()
     {
         using var talkerCtx = new Context(CreateOptions());
@@ -824,5 +932,22 @@ public class SubscriptionLifecycleTests
 
         public void SimulatePayload(ReadOnlyMemory<byte> payload, GuidPrefix sourcePrefix)
             => PayloadReceived?.Invoke(payload, sourcePrefix);
+    }
+
+    private sealed class RecordingEndpointReceiver : IEndpointReceiver
+    {
+        public List<(string operation, EntityId entityId)> CallSequence { get; } = new();
+
+        public void RegisterWriter(EntityId writerEntityId, StatefulWriter writer)
+            => CallSequence.Add(("RegisterWriter", writerEntityId));
+
+        public void UnregisterWriter(EntityId writerEntityId)
+            => CallSequence.Add(("UnregisterWriter", writerEntityId));
+
+        public void RegisterReader(EntityId readerEntityId, IRtpsSubmessageHandler handler)
+            => CallSequence.Add(("RegisterReader", readerEntityId));
+
+        public void UnregisterReader(EntityId readerEntityId)
+            => CallSequence.Add(("UnregisterReader", readerEntityId));
     }
 }

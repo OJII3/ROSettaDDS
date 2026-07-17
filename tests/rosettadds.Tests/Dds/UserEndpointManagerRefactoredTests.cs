@@ -270,11 +270,7 @@ public class UserEndpointManagerRefactoredTests
         Assert.Throws<InvalidOperationException>(() =>
             manager.CompleteWriterRegistration(endpointData, writer));
 
-        var result = manager.UnregisterWriterMetadata(writerGuid, writer);
-        if (result.Endpoint is not null)
-        {
-            manager.CompleteWriterUnregistration(writerGuid, writer, result);
-        }
+        manager.CompleteWriterUnregistration(writerGuid, writer);
         manager.Snapshot().Writers.Should().BeEmpty();
     }
 
@@ -426,11 +422,7 @@ public class UserEndpointManagerRefactoredTests
             "Phase 2 failure occurred after reaching receiver");
 
         // Node の catch ブロックと同じ手動 rollback
-        var result = manager.UnregisterWriterMetadata(writerGuid, writer);
-        if (result.Endpoint is not null)
-        {
-            manager.CompleteWriterUnregistration(writerGuid, writer, result);
-        }
+        manager.CompleteWriterUnregistration(writerGuid, writer);
 
         // 同じ EntityId が unregister されている
         receiver.UnregisteredWriters.Should().Contain(writerEntityId);
@@ -465,11 +457,7 @@ public class UserEndpointManagerRefactoredTests
         receiver.RegisteredReaders.Should().Contain(guid.EntityId,
             "Phase 2 failure occurred after reaching receiver");
 
-        var result = manager.UnregisterReaderMetadata(guid, userReader);
-        if (result.Endpoint is not null)
-        {
-            manager.CompleteReaderUnregistration(guid, userReader, result);
-        }
+        manager.CompleteReaderUnregistration(guid, userReader);
 
         receiver.UnregisteredReaders.Should().Contain(guid.EntityId);
         manager.Snapshot().Readers.Should().BeEmpty();

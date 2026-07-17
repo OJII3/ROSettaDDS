@@ -134,7 +134,7 @@ public sealed class Node : IDisposable
             BeforeDisposedCheckCallback?.Invoke();
             if (_disposed)
             {
-                lock (Context.GraphLock) { _userEndpoints.UnregisterReaderMetadata(endpointGuid, reader); }
+                lock (Context.GraphLock) { _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader); }
                 reader.Dispose();
                 throw new ObjectDisposedException(GetType().Name);
             }
@@ -144,17 +144,9 @@ public sealed class Node : IDisposable
             }
             catch
             {
-                UserEndpointManager.UnregisterResult rollbackResult;
                 try
                 {
-                    lock (Context.GraphLock)
-                    {
-                        rollbackResult = _userEndpoints.UnregisterReaderMetadata(endpointGuid, reader);
-                    }
-                    if (rollbackResult.Endpoint is not null)
-                    {
-                        _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader, rollbackResult);
-                    }
+                    lock (Context.GraphLock) { _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader); }
                 }
                 catch
                 {
@@ -221,7 +213,7 @@ public sealed class Node : IDisposable
             BeforeDisposedCheckCallback?.Invoke();
             if (_disposed)
             {
-                lock (Context.GraphLock) { _userEndpoints.UnregisterReaderMetadata(endpointGuid, reader); }
+                lock (Context.GraphLock) { _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader); }
                 reader.Dispose();
                 throw new ObjectDisposedException(GetType().Name);
             }
@@ -231,17 +223,9 @@ public sealed class Node : IDisposable
             }
             catch
             {
-                UserEndpointManager.UnregisterResult rollbackResult;
                 try
                 {
-                    lock (Context.GraphLock)
-                    {
-                        rollbackResult = _userEndpoints.UnregisterReaderMetadata(endpointGuid, reader);
-                    }
-                    if (rollbackResult.Endpoint is not null)
-                    {
-                        _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader, rollbackResult);
-                    }
+                    lock (Context.GraphLock) { _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader); }
                 }
                 catch
                 {
@@ -356,7 +340,7 @@ public sealed class Node : IDisposable
             BeforeDisposedCheckCallback?.Invoke();
             if (_disposed)
             {
-                lock (Context.GraphLock) { _userEndpoints.UnregisterWriterMetadata(writerGuid, writer); }
+                lock (Context.GraphLock) { _userEndpoints.CompleteWriterUnregistration(writerGuid, writer); }
                 writer.Dispose();
                 throw new ObjectDisposedException(GetType().Name);
             }
@@ -366,17 +350,9 @@ public sealed class Node : IDisposable
             }
             catch
             {
-                UserEndpointManager.UnregisterResult rollbackResult;
                 try
                 {
-                    lock (Context.GraphLock)
-                    {
-                        rollbackResult = _userEndpoints.UnregisterWriterMetadata(writerGuid, writer);
-                    }
-                    if (rollbackResult.Endpoint is not null)
-                    {
-                        _userEndpoints.CompleteWriterUnregistration(writerGuid, writer, rollbackResult);
-                    }
+                    lock (Context.GraphLock) { _userEndpoints.CompleteWriterUnregistration(writerGuid, writer); }
                 }
                 catch
                 {
@@ -413,7 +389,7 @@ public sealed class Node : IDisposable
             BeforeDisposedCheckCallback?.Invoke();
             if (_disposed)
             {
-                lock (Context.GraphLock) { _userEndpoints.UnregisterReaderMetadata(readerGuid, reader); }
+                lock (Context.GraphLock) { _userEndpoints.CompleteReaderUnregistration(readerGuid, reader); }
                 reader.Dispose();
                 throw new ObjectDisposedException(GetType().Name);
             }
@@ -423,17 +399,9 @@ public sealed class Node : IDisposable
             }
             catch
             {
-                UserEndpointManager.UnregisterResult rollbackResult;
                 try
                 {
-                    lock (Context.GraphLock)
-                    {
-                        rollbackResult = _userEndpoints.UnregisterReaderMetadata(readerGuid, reader);
-                    }
-                    if (rollbackResult.Endpoint is not null)
-                    {
-                        _userEndpoints.CompleteReaderUnregistration(readerGuid, reader, rollbackResult);
-                    }
+                    lock (Context.GraphLock) { _userEndpoints.CompleteReaderUnregistration(readerGuid, reader); }
                 }
                 catch
                 {
@@ -507,10 +475,12 @@ public sealed class Node : IDisposable
 
     private void UnregisterLocalWriter(Guid endpointGuid, StatefulWriter writerToRemove)
     {
-        UserEndpointManager.UnregisterResult result;
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
-        lock (Context.GraphLock) { result = _userEndpoints.UnregisterWriterMetadata(endpointGuid, writerToRemove); }
-        _userEndpoints.CompleteWriterUnregistration(endpointGuid, writerToRemove, result);
+        UserEndpointManager.UnregisterResult result;
+        lock (Context.GraphLock)
+        {
+            result = _userEndpoints.CompleteWriterUnregistration(endpointGuid, writerToRemove);
+        }
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterPublicationAsync(result.Endpoint!));
@@ -519,10 +489,12 @@ public sealed class Node : IDisposable
 
     private void UnregisterLocalReader(Guid endpointGuid, IUserReader readerToRemove)
     {
-        UserEndpointManager.UnregisterResult result;
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
-        lock (Context.GraphLock) { result = _userEndpoints.UnregisterReaderMetadata(endpointGuid, readerToRemove); }
-        _userEndpoints.CompleteReaderUnregistration(endpointGuid, readerToRemove, result);
+        UserEndpointManager.UnregisterResult result;
+        lock (Context.GraphLock)
+        {
+            result = _userEndpoints.CompleteReaderUnregistration(endpointGuid, readerToRemove);
+        }
         if (result.ShouldAdvertise)
         {
             _sedpAdvertiser.WaitForUnregister(Context.UnregisterSubscriptionAsync(result.Endpoint!));

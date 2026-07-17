@@ -67,10 +67,14 @@ internal sealed class UserEndpointManager
         CompleteReaderRegistration(endpointData, reader);
     }
 
-    /// <summary>Phase 1/2: graph lock 下で metadata registry のみ変更する。</summary>
-    internal UnregisterResult UnregisterWriterMetadata(Guid endpointGuid, StatefulWriter writer)
+    /// <summary>Writer の完全な unregister を実行する。
+    /// 順序: receiver unregister → metadata removal → unmatch local readers.
+    /// graph lock 下で呼び出すこと。</summary>
+    internal UnregisterResult CompleteWriterUnregistration(Guid endpointGuid, StatefulWriter writer)
     {
         if (writer is null) throw new ArgumentNullException(nameof(writer));
+
+        _receiver.UnregisterWriter(writer.WriterEntityId);
 
         var removed = _registry.RemoveLocalWriter(endpointGuid, writer);
         if (removed.Endpoint is null)
@@ -79,34 +83,24 @@ internal sealed class UserEndpointManager
         }
 
         var shouldAdvertise = _registry.ShouldAdvertiseForTopic(removed.Endpoint.TopicName, endpointGuid);
-        return new UnregisterResult(removed.Endpoint, shouldAdvertise) { LocalReaders = removed.LocalReaders };
-    }
+        var result = new UnregisterResult(removed.Endpoint, shouldAdvertise) { LocalReaders = removed.LocalReaders };
 
-    /// <summary>Phase 2/2: graph lock 解放後に receiver 登録解除・unmatch を実行する。</summary>
-    internal void CompleteWriterUnregistration(Guid endpointGuid, StatefulWriter writer, UnregisterResult result)
-    {
-        _receiver.UnregisterWriter(writer.WriterEntityId);
         foreach (var localReader in result.LocalReaders)
         {
             localReader.Reader.UnmatchWriter(endpointGuid);
         }
-    }
 
-    /// <summary>両 Phase を連続実行 (test / 単一lock不要な呼び出し元向け互換)。</summary>
-    internal UnregisterResult UnregisterWriter(Guid endpointGuid, StatefulWriter writer)
-    {
-        var result = UnregisterWriterMetadata(endpointGuid, writer);
-        if (result.Endpoint is not null)
-        {
-            CompleteWriterUnregistration(endpointGuid, writer, result);
-        }
         return result;
     }
 
-    /// <summary>Phase 1/2: graph lock 下で metadata registry のみ変更する。</summary>
-    internal UnregisterResult UnregisterReaderMetadata(Guid endpointGuid, IUserReader reader)
+    /// <summary>Reader の完全な unregister を実行する。
+    /// 順序: receiver unregister → metadata removal → unmatch local writers.
+    /// graph lock 下で呼び出すこと。</summary>
+    internal UnregisterResult CompleteReaderUnregistration(Guid endpointGuid, IUserReader reader)
     {
         if (reader is null) throw new ArgumentNullException(nameof(reader));
+
+        _receiver.UnregisterReader(reader.ReaderEntityId);
 
         var removed = _registry.RemoveLocalReader(endpointGuid, reader);
         if (removed.Endpoint is null)
@@ -115,29 +109,23 @@ internal sealed class UserEndpointManager
         }
 
         var shouldAdvertise = _registry.ShouldAdvertiseForTopic(removed.Endpoint.TopicName, endpointGuid);
-        return new UnregisterResult(removed.Endpoint, shouldAdvertise) { LocalWriters = removed.LocalWriters };
-    }
+        var result = new UnregisterResult(removed.Endpoint, shouldAdvertise) { LocalWriters = removed.LocalWriters };
 
-    /// <summary>Phase 2/2: graph lock 解放後に receiver 登録解除・unmatch を実行する。</summary>
-    internal void CompleteReaderUnregistration(Guid endpointGuid, IUserReader reader, UnregisterResult result)
-    {
-        _receiver.UnregisterReader(reader.ReaderEntityId);
         foreach (var localWriter in result.LocalWriters)
         {
             localWriter.Writer.UnmatchReader(endpointGuid);
         }
+
+        return result;
     }
 
     /// <summary>両 Phase を連続実行 (test / 単一lock不要な呼び出し元向け互換)。</summary>
+    internal UnregisterResult UnregisterWriter(Guid endpointGuid, StatefulWriter writer)
+        => CompleteWriterUnregistration(endpointGuid, writer);
+
+    /// <summary>両 Phase を連続実行 (test / 単一lock不要な呼び出し元向け互換)。</summary>
     internal UnregisterResult UnregisterReader(Guid endpointGuid, IUserReader reader)
-    {
-        var result = UnregisterReaderMetadata(endpointGuid, reader);
-        if (result.Endpoint is not null)
-        {
-            CompleteReaderUnregistration(endpointGuid, reader, result);
-        }
-        return result;
-    }
+        => CompleteReaderUnregistration(endpointGuid, reader);
 
     public EndpointSnapshot Snapshot() => _registry.Snapshot();
 
