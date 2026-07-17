@@ -122,16 +122,18 @@ public class NodeTests
 
         var phase1Done = new ManualResetEventSlim();
         var resumeCreate = new ManualResetEventSlim();
-        var disposeStarted = new ManualResetEventSlim();
         Exception? createError = null;
         Exception? disposeError = null;
-        var disposeCompleted = false;
+        int disposeCompleted = 0;
 
         node.BeforeDisposedCheckCallback = () =>
         {
             phase1Done.Set();
             resumeCreate.Wait();
         };
+
+        var waitLoopEntered = new ManualResetEventSlim();
+        node.PendingRegistrationsWaitLoopEntered = () => waitLoopEntered.Set();
 
         var createThread = new Thread(() =>
         {
@@ -155,9 +157,8 @@ public class NodeTests
         {
             try
             {
-                disposeStarted.Set();
                 node.Dispose();
-                disposeCompleted = true;
+                Interlocked.Exchange(ref disposeCompleted, 1);
             }
             catch (Exception ex)
             {
@@ -166,18 +167,15 @@ public class NodeTests
         });
         disposeThread.Start();
 
-        Assert.True(disposeStarted.Wait(TimeSpan.FromSeconds(5)),
-            "Dispose thread must start");
-
-        // Dispose が _disposed フラグを立てて SpinWait に入るのを待つ
-        Assert.True(SpinWait.SpinUntil(() => node.IsDisposed, TimeSpan.FromSeconds(5)),
-            "Dispose must set disposed flag");
+        Assert.True(waitLoopEntered.Wait(TimeSpan.FromSeconds(5)),
+            "Dispose must enter pending registration wait loop");
+        Assert.True(node.IsDisposed);
 
         // pending registration が残っているため Dispose はまだ完了しない
         var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(500);
         while (DateTime.UtcNow < deadline)
         {
-            if (disposeCompleted)
+            if (Volatile.Read(ref disposeCompleted) != 0)
             {
                 Assert.Fail("Dispose must block while pending registration is in progress");
             }
@@ -205,6 +203,7 @@ public class NodeTests
                 "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName));
 
         node.BeforeDisposedCheckCallback = null;
+        node.PendingRegistrationsWaitLoopEntered = null;
     }
 
     [Fact]

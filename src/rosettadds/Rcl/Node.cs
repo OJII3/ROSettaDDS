@@ -28,6 +28,7 @@ public sealed class Node : IDisposable
     private int _pendingRegistrations;
 
     internal Action? BeforeDisposedCheckCallback { get; set; }
+    internal Action? PendingRegistrationsWaitLoopEntered { get; set; }
 
     public Node(Context context, string name, NodeOptions? options = null)
     {
@@ -366,6 +367,7 @@ public sealed class Node : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        PendingRegistrationsWaitLoopEntered?.Invoke();
         var sw = new SpinWait();
         while (Volatile.Read(ref _pendingRegistrations) > 0)
         {
