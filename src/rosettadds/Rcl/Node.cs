@@ -128,7 +128,20 @@ public sealed class Node : IDisposable
                 reader.Dispose();
                 throw new ObjectDisposedException(GetType().Name);
             }
-            _userEndpoints.CompleteReaderRegistration(endpointData, reader);
+            try
+            {
+                _userEndpoints.CompleteReaderRegistration(endpointData, reader);
+            }
+            catch
+            {
+                var rollbackResult = _userEndpoints.UnregisterReaderMetadata(endpointGuid, reader);
+                if (rollbackResult.Endpoint is not null)
+                {
+                    _userEndpoints.CompleteReaderUnregistration(endpointGuid, reader, rollbackResult);
+                }
+                reader.Dispose();
+                throw;
+            }
             _ = _sedpAdvertiser.RunAsync(
                 token => Context.AddSubscriptionAsync(endpointData, token),
                 "Node failed to advertise local reader endpoint");
@@ -232,7 +245,20 @@ public sealed class Node : IDisposable
                 writer.Dispose();
                 throw new ObjectDisposedException(GetType().Name);
             }
-            _userEndpoints.CompleteWriterRegistration(endpointData, writer);
+            try
+            {
+                _userEndpoints.CompleteWriterRegistration(endpointData, writer);
+            }
+            catch
+            {
+                var rollbackResult = _userEndpoints.UnregisterWriterMetadata(writerGuid, writer);
+                if (rollbackResult.Endpoint is not null)
+                {
+                    _userEndpoints.CompleteWriterUnregistration(writerGuid, writer, rollbackResult);
+                }
+                writer.Dispose();
+                throw;
+            }
             _ = _sedpAdvertiser.RunAsync(
                 token => Context.AddPublicationAsync(endpointData, token),
                 "Node failed to advertise local writer endpoint");
@@ -265,7 +291,20 @@ public sealed class Node : IDisposable
                 reader.Dispose();
                 throw new ObjectDisposedException(GetType().Name);
             }
-            _userEndpoints.CompleteReaderRegistration(endpointData, reader);
+            try
+            {
+                _userEndpoints.CompleteReaderRegistration(endpointData, reader);
+            }
+            catch
+            {
+                var rollbackResult = _userEndpoints.UnregisterReaderMetadata(readerGuid, reader);
+                if (rollbackResult.Endpoint is not null)
+                {
+                    _userEndpoints.CompleteReaderUnregistration(readerGuid, reader, rollbackResult);
+                }
+                reader.Dispose();
+                throw;
+            }
             _ = _sedpAdvertiser.RunAsync(
                 token => Context.AddSubscriptionAsync(endpointData, token),
                 "Node failed to advertise local service reply reader endpoint");

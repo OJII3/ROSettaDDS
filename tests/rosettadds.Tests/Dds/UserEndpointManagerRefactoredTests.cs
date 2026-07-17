@@ -6,6 +6,7 @@ using ROSettaDDS.Dds.QoS;
 using ROSettaDDS.Discovery;
 using ROSettaDDS.Rtps;
 using ROSettaDDS.Rtps.HistoryCache;
+using ROSettaDDS.Rtps.Reader;
 using ROSettaDDS.Rtps.Writer;
 using ROSettaDDS.Transport;
 
@@ -17,6 +18,16 @@ public class UserEndpointManagerRefactoredTests
 {
     private static readonly GuidPrefix s_prefix = GuidPrefix.Create(VendorId.ROSettaDDS, 1, 2, 3);
     private static int s_writerCounter;
+
+    private sealed class ThrowingEndpointReceiver : IEndpointReceiver
+    {
+        public void RegisterWriter(EntityId writerEntityId, StatefulWriter writer)
+            => throw new InvalidOperationException("simulated writer registration failure");
+        public void UnregisterWriter(EntityId writerEntityId) { }
+        public void RegisterReader(EntityId readerEntityId, IRtpsSubmessageHandler handler)
+            => throw new InvalidOperationException("simulated reader registration failure");
+        public void UnregisterReader(EntityId readerEntityId) { }
+    }
 
     private sealed class RecordingTransport : IRtpsTransport
     {
@@ -185,6 +196,25 @@ public class UserEndpointManagerRefactoredTests
 
         result.Endpoint.Should().NotBeNull();
         result.ShouldAdvertise.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Phase2_例外時に_手動rollback_paternで解放できる()
+    {
+        var receiver = new ThrowingEndpointReceiver();
+        var manager = new UserEndpointManager(new DiscoveryDb(), receiver, NullLogger.Instance);
+        var writer = CreateWriter("rt/rollback", out var endpointData, out var writerGuid);
+
+        manager.RegisterWriterMetadata(endpointData, writer);
+        Assert.Throws<InvalidOperationException>(() =>
+            manager.CompleteWriterRegistration(endpointData, writer));
+
+        var result = manager.UnregisterWriterMetadata(writerGuid, writer);
+        if (result.Endpoint is not null)
+        {
+            manager.CompleteWriterUnregistration(writerGuid, writer, result);
+        }
+        manager.Snapshot().Writers.Should().BeEmpty();
     }
 
     [Fact]
