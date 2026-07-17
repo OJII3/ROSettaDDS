@@ -126,8 +126,8 @@ public sealed class DiscoveryDb
                 }
 
                 EnqueueEvent(isNew
-                    ? () => ParticipantDiscovered?.Invoke(participant)
-                    : () => ParticipantUpdated?.Invoke(participant));
+                    ? () => InvokeSafely(ParticipantDiscovered, participant)
+                    : () => InvokeSafely(ParticipantUpdated, participant));
             }
         }
         finally
@@ -165,7 +165,7 @@ public sealed class DiscoveryDb
                 {
                     foreach (var p in expired)
                     {
-                        EnqueueEvent(() => ParticipantLost?.Invoke(p));
+                        EnqueueEvent(() => InvokeSafely(ParticipantLost, p));
                     }
                 }
             }
@@ -198,7 +198,7 @@ public sealed class DiscoveryDb
                 EnqueueLostEndpoints(lostWriters, lostReaders);
                 if (removed is not null)
                 {
-                    EnqueueEvent(() => ParticipantLost?.Invoke(removed));
+                    EnqueueEvent(() => InvokeSafely(ParticipantLost, removed));
                 }
             }
         }
@@ -261,12 +261,12 @@ public sealed class DiscoveryDb
                 if (isNew)
                 {
                     EnqueueEvent(data.Kind == EndpointKind.Writer
-                        ? () => WriterDiscovered?.Invoke(endpoint)
-                        : () => ReaderDiscovered?.Invoke(endpoint));
+                        ? () => InvokeSafely(WriterDiscovered, endpoint)
+                        : () => InvokeSafely(ReaderDiscovered, endpoint));
                 }
                 else
                 {
-                    EnqueueEvent(() => EndpointUpdated?.Invoke(endpoint));
+                    EnqueueEvent(() => InvokeSafely(EndpointUpdated, endpoint));
                 }
             }
         }
@@ -301,8 +301,8 @@ public sealed class DiscoveryDb
                 if (removed is not null)
                 {
                     EnqueueEvent(kind == EndpointKind.Writer
-                        ? () => WriterLost?.Invoke(removed)
-                        : () => ReaderLost?.Invoke(removed));
+                        ? () => InvokeSafely(WriterLost, removed)
+                        : () => InvokeSafely(ReaderLost, removed));
                 }
             }
         }
@@ -435,20 +435,46 @@ public sealed class DiscoveryDb
     {
         while (true)
         {
-            if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0)
-                return;
-
-            if (!_eventQueue.TryDequeue(out var action))
+            Action? action;
+            lock (_lock)
             {
-                Interlocked.Exchange(ref _draining, 0);
-                return;
+                if (_draining != 0)
+                    return;
+                _draining = 1;
+                if (!_eventQueue.TryDequeue(out action))
+                {
+                    _draining = 0;
+                    return;
+                }
             }
 
-            Interlocked.Exchange(ref _draining, 0);
+            do
+            {
+                if (action is not null)
+                {
+                    try { action(); } catch { }
+                }
 
+                lock (_lock)
+                {
+                    if (_eventQueue.TryDequeue(out action))
+                        continue;
+                    _draining = 0;
+                    return;
+                }
+            } while (true);
+        }
+    }
+
+    private static void InvokeSafely<T>(Action<T>? handler, T arg)
+    {
+        if (handler is null)
+            return;
+        foreach (Delegate del in handler.GetInvocationList())
+        {
             try
             {
-                action();
+                ((Action<T>)del)(arg);
             }
             catch
             {
@@ -477,14 +503,14 @@ public sealed class DiscoveryDb
         {
             foreach (var writer in lostWriters)
             {
-                EnqueueEvent(() => WriterLost?.Invoke(writer));
+                EnqueueEvent(() => InvokeSafely(WriterLost, writer));
             }
         }
         if (lostReaders is not null)
         {
             foreach (var reader in lostReaders)
             {
-                EnqueueEvent(() => ReaderLost?.Invoke(reader));
+                EnqueueEvent(() => InvokeSafely(ReaderLost, reader));
             }
         }
     }

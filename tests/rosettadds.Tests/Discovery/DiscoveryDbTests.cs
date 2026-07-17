@@ -655,4 +655,99 @@ public class DiscoveryDbTests
 
         discoveredOrder.Should().Equal(prefix2, prefix3);
     }
+
+    [Fact]
+    public void 例外を投げるsubscriberがいる場合も他のsubscriberと後続イベントが実行される()
+    {
+        var db = new DiscoveryDb();
+        var now = DateTime.UtcNow;
+        var prefix1 = Prefix(1);
+        var prefix2 = Prefix(2);
+
+        var called = new List<string>();
+        var callLock = new object();
+
+        db.ParticipantDiscovered += p =>
+        {
+            lock (callLock) called.Add($"A:{p.Guid.Prefix}");
+            throw new InvalidOperationException("handler A throws on purpose");
+        };
+        db.ParticipantDiscovered += p =>
+        {
+            lock (callLock) called.Add($"B:{p.Guid.Prefix}");
+        };
+
+        db.UpsertParticipant(Participant(prefix1), now);
+        db.UpsertParticipant(Participant(prefix2), now);
+
+        // RED: 現状は A(exception) のみ呼ばれ B は失われる (count = 2)
+        // GREEN: 全 subscriber が個別 try/catch で呼ばれる (count = 4)
+        lock (callLock)
+        {
+            called.Should().HaveCount(4,
+                "both subscribers must be called for each event; expected 4 (A+B)×2, got {0}",
+                string.Join(", ", called.Select(s => $"\"{s}\"")));
+        }
+    }
+
+    [Fact]
+    public void 並列enqueueでもhandlerは直列実行されFIFO完了順になる()
+    {
+        var db = new DiscoveryDb();
+        var now = DateTime.UtcNow;
+
+        var finishOrder = new List<int>();
+        var finishLock = new object();
+        var handlerStarted = new ManualResetEventSlim();
+
+        db.ParticipantDiscovered += p =>
+        {
+            var id = int.Parse(p.Data.EntityName!);
+            if (id == 1)
+            {
+                handlerStarted.Set();
+                Thread.Sleep(500);
+            }
+            lock (finishLock) finishOrder.Add(id);
+        };
+
+        // Thread A: item 1 を enqueue → drain 開始 (handler が 500ms かかる)
+        var threadA = new Thread(() =>
+        {
+            db.UpsertParticipant(new ParticipantData
+            {
+                Guid = new Guid(Prefix(1), EntityId.Participant),
+                LeaseDuration = Duration.Infinite,
+                EntityName = "1",
+            }, now);
+        });
+        threadA.Start();
+
+        // Thread A の handler が sleep に入るのを待つ
+        Assert.True(handlerStarted.Wait(TimeSpan.FromSeconds(5)),
+            "handler for item 1 must start");
+
+        // この時点で Thread A の handler が 500ms sleep 中
+        // Thread B: item 2 を enqueue
+        var threadB = new Thread(() =>
+        {
+            db.UpsertParticipant(new ParticipantData
+            {
+                Guid = new Guid(Prefix(2), EntityId.Participant),
+                LeaseDuration = Duration.Infinite,
+                EntityName = "2",
+            }, now);
+        });
+        threadB.Start();
+
+        Assert.True(threadB.Join(TimeSpan.FromSeconds(10)), "threadB must complete");
+        Assert.True(threadA.Join(TimeSpan.FromSeconds(10)), "threadA must complete");
+
+        // RED: 現状は concurrent drain で item 2 の handler が先に完了し [2, 1] になる
+        // GREEN: _draining を invoke 中も保持することで直列実行され [1, 2] になる
+        lock (finishLock)
+        {
+            finishOrder.Should().Equal(1, 2);
+        }
+    }
 }

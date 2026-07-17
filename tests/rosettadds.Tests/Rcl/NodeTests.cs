@@ -1,6 +1,4 @@
-using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
-using ROSettaDDS.Dds;
 using ROSettaDDS.Msgs.Std;
 using ROSettaDDS.Rcl;
 using Xunit;
@@ -103,4 +101,20 @@ public class NodeTests
         Assert.False(received.IsEmpty);
         Assert.Equal("hello", received.First());
     }
+
+    [Fact]
+    public void Dispose後のCreatePublisherはrollbackしてObjectDisposedExceptionを投げ元例外を温存する()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        var node = new Node(ctx, "talker");
+        node.Dispose();
+
+        var ex = Assert.Throws<ObjectDisposedException>(() =>
+            node.CreatePublisher<StringMessage>(
+                "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName));
+
+        Assert.Contains(typeof(Node).Name, ex.ObjectName, StringComparison.Ordinal);
+    }
+
 }
