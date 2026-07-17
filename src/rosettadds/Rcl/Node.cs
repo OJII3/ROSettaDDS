@@ -507,7 +507,6 @@ public sealed class Node : IDisposable
 
     private void UnregisterLocalWriter(Guid endpointGuid, StatefulWriter writerToRemove)
     {
-        Context.Receiver.UnregisterWriter(writerToRemove.WriterEntityId);
         UserEndpointManager.UnregisterResult result;
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
         lock (Context.GraphLock) { result = _userEndpoints.UnregisterWriterMetadata(endpointGuid, writerToRemove); }
@@ -520,7 +519,6 @@ public sealed class Node : IDisposable
 
     private void UnregisterLocalReader(Guid endpointGuid, IUserReader readerToRemove)
     {
-        Context.Receiver.UnregisterReader(readerToRemove.ReaderEntityId);
         UserEndpointManager.UnregisterResult result;
         Context.GraphLockMutationCallback?.Invoke(Context.GraphLock);
         lock (Context.GraphLock) { result = _userEndpoints.UnregisterReaderMetadata(endpointGuid, readerToRemove); }

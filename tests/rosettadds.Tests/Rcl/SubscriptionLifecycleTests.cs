@@ -467,6 +467,67 @@ public class SubscriptionLifecycleTests
     }
 
     [Fact]
+    public void RawReader_Disposeはreceiver_UnregisterReaderが正確に1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new FakeEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        using var node = new Node(ctx, "raw_unreg_count");
+
+        var raw = node.CreateRawReader(
+            "rt/raw_unreg_count",
+            "test::msg::dds_::Msg_",
+            (_, _) => { },
+            ReliabilityQos.BestEffort,
+            DurabilityQos.Volatile);
+
+        receiver.RegisteredReaders.Should().Contain(r => r.entityId == raw.ReaderEntityId);
+
+        raw.Dispose();
+
+        receiver.UnregisteredReaders.Count(e => e == raw.ReaderEntityId).Should().Be(1);
+    }
+
+    [Fact]
+    public void TypedSubscription_Disposeはreceiver_UnregisterReaderが正確に1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new FakeEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        using var node = new Node(ctx, "sub_unreg_count");
+
+        var sub = node.CreateSubscription<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, _ => { });
+
+        receiver.RegisteredReaders.Should().Contain(r => r.entityId == sub.ReaderEntityId);
+
+        sub.Dispose();
+
+        receiver.UnregisteredReaders.Count(e => e == sub.ReaderEntityId).Should().Be(1);
+    }
+
+    [Fact]
+    public void Publisher_Disposeはreceiver_UnregisterWriterが正確に1回()
+    {
+        using var ctx = new Context(CreateOptions());
+        var receiver = new FakeEndpointReceiver();
+        ctx.ReceiverOverrideForTest = receiver;
+        ctx.Start();
+        using var node = new Node(ctx, "pub_unreg_count");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance);
+
+        receiver.RegisteredWriters.Should().Contain(e => e.entityId == pub.Writer.WriterEntityId);
+
+        pub.Dispose();
+
+        receiver.UnregisteredWriters.Count(e => e == pub.Writer.WriterEntityId).Should().Be(1);
+    }
+
+    [Fact]
     public async Task CreateRawReader_Dispose後remote_writerとmatchしない()
     {
         using var talkerCtx = new Context(CreateOptions());
