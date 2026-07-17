@@ -1,5 +1,6 @@
 using ROSettaDDS.Common;
 using ROSettaDDS.Dds;
+using System.Collections.Concurrent;
 using System.Text;
 
 using Guid = ROSettaDDS.Common.Guid;
@@ -17,6 +18,8 @@ public sealed class DiscoveryDb
     private readonly Dictionary<Guid, RemoteEndpoint> _writers = new();
     private readonly Dictionary<Guid, RemoteEndpoint> _readers = new();
     private readonly DiscoveryLimits _limits;
+    private readonly ConcurrentQueue<Action> _eventQueue = new();
+    private readonly object _dispatchLock = new();
 
     public DiscoveryDb(DiscoveryLimits? limits = null)
     {
@@ -122,20 +125,16 @@ public sealed class DiscoveryDb
                     isNew = true;
                 }
             }
+            EnqueueEvent(isNew
+                ? () => ParticipantDiscovered?.Invoke(participant)
+                : () => ParticipantUpdated?.Invoke(participant));
         }
         finally
         {
             ExternalLockExit?.Invoke();
         }
 
-        if (isNew)
-        {
-            ParticipantDiscovered?.Invoke(participant);
-        }
-        else
-        {
-            ParticipantUpdated?.Invoke(participant);
-        }
+        TryDispatch();
     }
 
     /// <summary>Lease 期限切れの Participant を削除し、それぞれ Lost イベントを発火する。</summary>
@@ -160,21 +159,21 @@ public sealed class DiscoveryDb
                     }
                 }
             }
+            EnqueueLostEndpoints(lostWriters, lostReaders);
+            if (expired is not null)
+            {
+                foreach (var p in expired)
+                {
+                    EnqueueEvent(() => ParticipantLost?.Invoke(p));
+                }
+            }
         }
         finally
         {
             ExternalLockExit?.Invoke();
         }
 
-        if (expired is null)
-        {
-            return;
-        }
-        PublishLostEndpoints(lostWriters, lostReaders);
-        foreach (var p in expired)
-        {
-            ParticipantLost?.Invoke(p);
-        }
+        TryDispatch();
     }
 
     /// <summary>明示的に Participant を削除する (テスト/シャットダウン用)。</summary>
@@ -194,17 +193,18 @@ public sealed class DiscoveryDb
                 }
                 RemoveEndpointsForParticipant(prefix, ref lostWriters, ref lostReaders);
             }
+            EnqueueLostEndpoints(lostWriters, lostReaders);
+            if (removed is not null)
+            {
+                EnqueueEvent(() => ParticipantLost?.Invoke(removed));
+            }
         }
         finally
         {
             ExternalLockExit?.Invoke();
         }
 
-        PublishLostEndpoints(lostWriters, lostReaders);
-        if (removed is not null)
-        {
-            ParticipantLost?.Invoke(removed);
-        }
+        TryDispatch();
         return true;
     }
 
@@ -255,27 +255,23 @@ public sealed class DiscoveryDb
                     isNew = true;
                 }
             }
+            if (isNew)
+            {
+                EnqueueEvent(data.Kind == EndpointKind.Writer
+                    ? () => WriterDiscovered?.Invoke(endpoint)
+                    : () => ReaderDiscovered?.Invoke(endpoint));
+            }
+            else
+            {
+                EnqueueEvent(() => EndpointUpdated?.Invoke(endpoint));
+            }
         }
         finally
         {
             ExternalLockExit?.Invoke();
         }
 
-        if (isNew)
-        {
-            if (data.Kind == EndpointKind.Writer)
-            {
-                WriterDiscovered?.Invoke(endpoint);
-            }
-            else
-            {
-                ReaderDiscovered?.Invoke(endpoint);
-            }
-        }
-        else
-        {
-            EndpointUpdated?.Invoke(endpoint);
-        }
+        TryDispatch();
     }
 
     public bool TryRemoveEndpoint(EndpointKind kind, Guid endpointGuid, GuidPrefix? ignorePrefix = null)
@@ -298,23 +294,19 @@ public sealed class DiscoveryDb
                     return false;
                 }
             }
+            if (removed is not null)
+            {
+                EnqueueEvent(kind == EndpointKind.Writer
+                    ? () => WriterLost?.Invoke(removed)
+                    : () => ReaderLost?.Invoke(removed));
+            }
         }
         finally
         {
             ExternalLockExit?.Invoke();
         }
 
-        if (removed is not null)
-        {
-            if (kind == EndpointKind.Writer)
-            {
-                WriterLost?.Invoke(removed);
-            }
-            else
-            {
-                ReaderLost?.Invoke(removed);
-            }
-        }
+        TryDispatch();
         return true;
     }
 
@@ -429,6 +421,22 @@ public sealed class DiscoveryDb
         return StringByteCount(data.EntityName) <= _limits.MaxEntityNameBytes;
     }
 
+    private void EnqueueEvent(Action fire)
+    {
+        _eventQueue.Enqueue(fire);
+    }
+
+    private void TryDispatch()
+    {
+        lock (_dispatchLock)
+        {
+            while (_eventQueue.TryDequeue(out var action))
+            {
+                action();
+            }
+        }
+    }
+
     private bool IsEndpointMetadataAccepted(DiscoveredEndpointData data)
     {
         int locatorCount = data.UnicastLocators.Count + data.MulticastLocators.Count;
@@ -442,7 +450,7 @@ public sealed class DiscoveryDb
     private static int StringByteCount(string? value)
         => string.IsNullOrEmpty(value) ? 0 : Encoding.UTF8.GetByteCount(value);
 
-    private void PublishLostEndpoints(
+    private void EnqueueLostEndpoints(
         IReadOnlyList<RemoteEndpoint>? lostWriters,
         IReadOnlyList<RemoteEndpoint>? lostReaders)
     {
@@ -450,14 +458,14 @@ public sealed class DiscoveryDb
         {
             foreach (var writer in lostWriters)
             {
-                WriterLost?.Invoke(writer);
+                EnqueueEvent(() => WriterLost?.Invoke(writer));
             }
         }
         if (lostReaders is not null)
         {
             foreach (var reader in lostReaders)
             {
-                ReaderLost?.Invoke(reader);
+                EnqueueEvent(() => ReaderLost?.Invoke(reader));
             }
         }
     }

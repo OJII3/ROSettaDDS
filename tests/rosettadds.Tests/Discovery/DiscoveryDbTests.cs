@@ -364,6 +364,60 @@ public class DiscoveryDbTests
     }
 
     [Fact]
+    public void WriterDiscoveredは並行removeより先にdispatchされる()
+    {
+        var db = new DiscoveryDb();
+        var now = DateTime.UtcNow;
+        var prefix = Prefix(1);
+        var pGuid = new Guid(prefix, EntityId.Participant);
+        var wGuid = new Guid(prefix, new EntityId(0x10, EntityKind.UserDefinedWriterNoKey));
+
+        db.UpsertParticipant(new ParticipantData { Guid = pGuid, LeaseDuration = Duration.Infinite }, now);
+
+        var received = new List<string>();
+
+        var serialLock = new object();
+        db.ExternalLockEnter = () => Monitor.Enter(serialLock);
+        db.ExternalLockExit = () => Monitor.Exit(serialLock);
+
+        var discoveredBlocked = new ManualResetEventSlim();
+        var discoveredContinue = new ManualResetEventSlim();
+
+        db.WriterDiscovered += _ =>
+        {
+            discoveredBlocked.Set();
+            discoveredContinue.Wait(TimeSpan.FromSeconds(5));
+            received.Add("discovered");
+        };
+        db.WriterLost += _ => received.Add("lost");
+
+        var t1 = new Thread(() =>
+        {
+            db.UpsertEndpoint(new DiscoveredEndpointData
+            {
+                Kind = EndpointKind.Writer,
+                EndpointGuid = wGuid,
+                ParticipantGuid = pGuid,
+                TopicName = "rt/test",
+                TypeName = "TypeA",
+            }, DateTime.UtcNow);
+        });
+        var t2 = new Thread(() =>
+        {
+            discoveredBlocked.Wait(TimeSpan.FromSeconds(5));
+            db.TryRemoveEndpoint(EndpointKind.Writer, wGuid);
+        });
+
+        t1.Start();
+        t2.Start();
+        t2.Join(TimeSpan.FromSeconds(5));
+        discoveredContinue.Set();
+        t1.Join(TimeSpan.FromSeconds(5));
+
+        received.Should().Equal("discovered", "lost");
+    }
+
+    [Fact]
     public void CreateEndpointSnapshot保持中はTryRemoveEndpointがDiscoveryDbの_lock待ちになる()
     {
         var db = new DiscoveryDb();
