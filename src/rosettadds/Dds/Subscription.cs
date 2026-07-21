@@ -20,11 +20,13 @@ public sealed class Subscription<T> : IDisposable
     private readonly SynchronizationContext? _handlerContext;
     private readonly ILogger _logger;
     private readonly CdrReadLimits _cdrReadLimits;
+    internal Action? BeforeUnregister { get; set; }
     private long _payloadsReceivedFromReader;
     private long _messagesDeserialized;
     private long _deserializeFailures;
     private long _handlerInvocations;
-    private bool _disposed;
+    private int _disposed;
+    private Task? _advertiseTask;
 
     public string TopicName { get; }
     public Guid Guid { get; }
@@ -68,6 +70,8 @@ public sealed class Subscription<T> : IDisposable
         }
     }
 
+    internal void SetAdvertiseTask(Task task) => _advertiseTask = task;
+
     private void OnPayloadReceived(ReadOnlyMemory<byte> payload, GuidPrefix sourcePrefix)
     {
         Interlocked.Increment(ref _payloadsReceivedFromReader);
@@ -101,7 +105,7 @@ public sealed class Subscription<T> : IDisposable
 
     private void InvokeHandler(T value, GuidPrefix sourcePrefix)
     {
-        if (_disposed)
+        if (Volatile.Read(ref _disposed) != 0)
         {
             return;
         }
@@ -147,19 +151,26 @@ public sealed class Subscription<T> : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
-        {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
-        }
-        _disposed = true;
+
         _reader.PayloadReceived -= OnPayloadReceived;
+
+        if (_advertiseTask is not null)
+        {
+            try { _advertiseTask.ConfigureAwait(false).GetAwaiter().GetResult(); }
+            catch { }
+        }
+
+        _reader.Stop();
+        BeforeUnregister?.Invoke();
         _unregisterEndpoint?.Invoke(Guid, _reader);
         _reader.Dispose();
     }
 
     private void ThrowIfDisposed()
     {
-        if (_disposed) throw new ObjectDisposedException(GetType().Name);
+        if (Volatile.Read(ref _disposed) != 0) throw new ObjectDisposedException(GetType().Name);
     }
 
     private sealed class HandlerCallback

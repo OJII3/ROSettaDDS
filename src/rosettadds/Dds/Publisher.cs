@@ -18,7 +18,8 @@ public sealed class Publisher<T> : IDisposable
     private readonly StatefulWriter _writer;
     private readonly ICdrSerializer<T> _serializer;
     private readonly Action<Guid, StatefulWriter>? _unregisterEndpoint;
-    private bool _disposed;
+    internal Action? BeforeUnregister { get; set; }
+    private int _disposed;
 
     public string TopicName { get; }
     public Guid Guid => _writer.Guid;
@@ -163,14 +164,15 @@ public sealed class Publisher<T> : IDisposable
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _writer.Stop();
+        BeforeUnregister?.Invoke();
         _unregisterEndpoint?.Invoke(Guid, _writer);
         _writer.Dispose();
     }
 
     private void ThrowIfDisposed()
     {
-        if (_disposed) throw new ObjectDisposedException(GetType().Name);
+        if (Volatile.Read(ref _disposed) != 0) throw new ObjectDisposedException(GetType().Name);
     }
 }
