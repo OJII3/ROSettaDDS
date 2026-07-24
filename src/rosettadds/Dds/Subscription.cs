@@ -28,6 +28,7 @@ public sealed class Subscription<T> : IDisposable
     private long _handlerInvocations;
     private int _disposed;
     private Task? _advertiseTask;
+    private readonly ManualResetEventSlim _disposeCompleted = new();
 
     public string TopicName { get; }
     public Guid Guid { get; }
@@ -153,21 +154,31 @@ public sealed class Subscription<T> : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
-
-        _reader.PayloadReceived -= OnPayloadReceived;
-
-        if (_advertiseTask is not null)
         {
-            try { _advertiseTask.ConfigureAwait(false).GetAwaiter().GetResult(); }
-            catch { }
+            _disposeCompleted.Wait();
+            return;
         }
 
-        _reader.Stop();
-        BeforeUnregister?.Invoke();
-        _unregisterEndpoint?.Invoke(Guid, _reader);
-        _reader.Dispose();
-        RemoveFromTracker?.Invoke();
+        try
+        {
+            _reader.PayloadReceived -= OnPayloadReceived;
+
+            if (_advertiseTask is not null)
+            {
+                try { _advertiseTask.ConfigureAwait(false).GetAwaiter().GetResult(); }
+                catch { }
+            }
+
+            _reader.Stop();
+            BeforeUnregister?.Invoke();
+            _unregisterEndpoint?.Invoke(Guid, _reader);
+            _reader.Dispose();
+            RemoveFromTracker?.Invoke();
+        }
+        finally
+        {
+            _disposeCompleted.Set();
+        }
     }
 
     private void ThrowIfDisposed()

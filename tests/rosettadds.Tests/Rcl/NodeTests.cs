@@ -643,6 +643,112 @@ public class NodeTests
         Assert.Equal(0, client.PendingRequestCount);
     }
 
+    [Fact]
+    public async Task Publisher_DisposeとNode_Disposeの競合時advertise順序がALIVEからUNREGISTERED()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        var node = new Node(ctx, "race_test");
+
+        var recordedEvents = new ConcurrentQueue<string>();
+        node.TestEventRecorder = ev => recordedEvents.Enqueue(ev);
+
+        using var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var race1 = Task.Run(() => pub.Dispose());
+        var race2 = Task.Run(() => node.Dispose());
+
+        await Task.WhenAll(race1, race2);
+        Assert.True(node.IsDisposed);
+
+        var eventsArray = recordedEvents.ToArray();
+        var beforeUnregIdx = Array.IndexOf(eventsArray, "BeforeReceiverUnregisterWriter");
+        var beforeSedpIdx = Array.IndexOf(eventsArray, "BeforeSedpUnregisterWriter");
+        var afterSedpIdx = Array.IndexOf(eventsArray, "AfterSedpUnregisterWriter");
+
+        Assert.True(beforeUnregIdx >= 0,
+            $"BeforeReceiverUnregisterWriter not found in [{string.Join(", ", eventsArray)}]");
+        Assert.True(beforeSedpIdx >= 0,
+            $"BeforeSedpUnregisterWriter not found in [{string.Join(", ", eventsArray)}]");
+        Assert.True(afterSedpIdx >= 0,
+            $"AfterSedpUnregisterWriter not found in [{string.Join(", ", eventsArray)}]");
+        Assert.True(beforeUnregIdx < beforeSedpIdx,
+            $"receiver unregister must precede SEDP unregister; order: {string.Join(" -> ", eventsArray)}");
+    }
+
+    [Fact]
+    public async Task ServiceClient_CallAsyncとDisposeの競合でpending管理が安全()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        using var node = new Node(ctx, "svc_race_test");
+
+        var svcName = $"test_{System.Guid.NewGuid():N}";
+        var descriptor = new ServiceDescriptor<StringMessage, StringMessage>(
+            requestDdsTypeName: StringMessage.DdsTypeName,
+            responseDdsTypeName: StringMessage.DdsTypeName,
+            requestSerializer: StringMessageSerializer.Instance,
+            responseSerializer: StringMessageSerializer.Instance);
+
+        var client = node.CreateServiceClient(descriptor, svcName);
+
+        // CallAsync を大量に並行実行しながら Dispose を呼ぶ
+        var callTasks = Enumerable.Range(0, 20).Select(_ =>
+            client.CallAsync(new StringMessage("test"), TimeSpan.FromMilliseconds(10))
+                .ContinueWith(t => { /* 例外は無視 - race の安全確認のみ */ }));
+
+        var disposeTask = Task.Run(() => client.Dispose());
+
+        await Task.WhenAll(
+            Task.WhenAll(callTasks).ContinueWith(_ => { }),
+            disposeTask);
+
+        // Dispose 後は pending が空
+        Assert.Equal(0, client.PendingRequestCount);
+        // Dispose 後の CallAsync は ObjectDisposedException
+        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+            client.CallAsync(new StringMessage("after"), TimeSpan.FromMilliseconds(1)));
+    }
+
+    [Fact]
+    public void SynchronousDisposeがNonPumpingSyncContext上でも完了する()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.SedpAdvertiseDelay = () => new ValueTask(Task.Delay(50));
+        ctx.Start();
+        var node = new Node(ctx, "syncctx_test");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var disposeDone = new ManualResetEventSlim();
+        var disposeThread = new Thread(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new NonPumpingSynchronizationContext());
+            try
+            {
+                pub.Dispose();
+                node.Dispose();
+            }
+            finally
+            {
+                disposeDone.Set();
+            }
+        });
+        disposeThread.Start();
+
+        Assert.True(disposeDone.Wait(TimeSpan.FromSeconds(5)),
+            "Dispose must complete within timeout on non-pumping SyncContext");
+    }
+
+    private sealed class NonPumpingSynchronizationContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+        }
+    }
+
     private sealed class CapturingSynchronizationContext : SynchronizationContext
     {
         public int PostCallCount;

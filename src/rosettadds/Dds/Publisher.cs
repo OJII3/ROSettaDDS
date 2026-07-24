@@ -22,6 +22,7 @@ public sealed class Publisher<T> : IDisposable
     internal Action? RemoveFromTracker { get; set; }
     private int _disposed;
     private Task? _advertiseTask;
+    private readonly ManualResetEventSlim _disposeCompleted = new();
 
     public string TopicName { get; }
     public Guid Guid => _writer.Guid;
@@ -168,19 +169,30 @@ public sealed class Publisher<T> : IDisposable
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-
-        if (_advertiseTask is not null)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
-            try { _advertiseTask.ConfigureAwait(false).GetAwaiter().GetResult(); }
-            catch { }
+            _disposeCompleted.Wait();
+            return;
         }
 
-        _writer.Stop();
-        BeforeUnregister?.Invoke();
-        _unregisterEndpoint?.Invoke(Guid, _writer);
-        _writer.Dispose();
-        RemoveFromTracker?.Invoke();
+        try
+        {
+            if (_advertiseTask is not null)
+            {
+                try { _advertiseTask.ConfigureAwait(false).GetAwaiter().GetResult(); }
+                catch { }
+            }
+
+            _writer.Stop();
+            BeforeUnregister?.Invoke();
+            _unregisterEndpoint?.Invoke(Guid, _writer);
+            _writer.Dispose();
+            RemoveFromTracker?.Invoke();
+        }
+        finally
+        {
+            _disposeCompleted.Set();
+        }
     }
 
     private void ThrowIfDisposed()

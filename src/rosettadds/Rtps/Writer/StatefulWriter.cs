@@ -221,6 +221,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     {
         ThrowIfDisposed();
         if (_started) return;
+        _stopping = 0;
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
         _hbLoop = Task.Run(() => HeartbeatLoopAsync(token), token);

@@ -475,15 +475,16 @@ public sealed class Node : IDisposable
             sw.SpinOnce();
         }
 
+        IDisposable[] wrappers;
+        lock (_wrappersLock) wrappers = _trackedWrappers.ToArray();
+        foreach (var w in wrappers)
+        {
+            w.Dispose();
+        }
+        lock (_wrappersLock) _trackedWrappers.Clear();
+
         lock (_disposeGate)
         {
-            IDisposable[] wrappers;
-            lock (_wrappersLock) wrappers = _trackedWrappers.ToArray();
-            foreach (var w in wrappers)
-            {
-                w.Dispose();
-            }
-            lock (_wrappersLock) _trackedWrappers.Clear();
             UnregisterAllLocalEndpoints();
         }
 

@@ -21,10 +21,12 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
     private readonly ILogger _logger;
     private readonly CdrReadLimits _cdrReadLimits;
     private readonly ConcurrentDictionary<SampleIdentity, TaskCompletionSource<TResponse>> _pending = new();
+    private readonly object _pendingLock = new();
     private readonly Action<Guid, IUserReader>? _unregisterReplyEndpoint;
     internal Action? RemoveFromTracker { get; set; }
     private int _disposed;
     private Task? _replyReaderAdvertiseTask;
+    private readonly ManualResetEventSlim _disposeCompleted = new();
 
     /// <summary>request writer の RTPS GUID。相関キーの writer 部に使う。</summary>
     public Guid RequestWriterGuid => _requestPublisher.Guid;
@@ -74,6 +76,7 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
         var tcs = new TaskCompletionSource<TResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         SampleIdentity key = default;
+        bool added = false;
         try
         {
             await _requestPublisher.PublishReturningSequenceNumberAsync(
@@ -81,17 +84,30 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
                 assignedSn =>
                 {
                     key = new SampleIdentity(_requestPublisher.Guid, assignedSn);
-                    _pending[key] = tcs;
+                    lock (_pendingLock)
+                    {
+                        if (_disposed != 0)
+                            throw new ObjectDisposedException(nameof(ServiceClient<TRequest, TResponse>));
+                        _pending[key] = tcs;
+                    }
+                    added = true;
                 },
                 cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (OperationCanceledException)
         {
-            if (key != default) _pending.TryRemove(key, out _);
+            if (added && _pending.TryRemove(key, out var removedTcs))
+                removedTcs.TrySetCanceled(cancellationToken);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (added && _pending.TryRemove(key, out var removedTcs))
+                removedTcs.TrySetException(ex);
             throw;
         }
 
-        using var timeoutCts =CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
         using (timeoutCts.Token.Register(static state =>
         {
@@ -165,27 +181,42 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            _disposeCompleted.Wait();
             return;
-
-        _replyReader.SampleReceived -= OnReplyReceived;
-
-        foreach (var kv in _pending)
-        {
-            kv.Value.TrySetException(new ObjectDisposedException(nameof(ServiceClient<TRequest, TResponse>)));
-        }
-        _pending.Clear();
-
-        if (_replyReaderAdvertiseTask is not null)
-        {
-            try { _replyReaderAdvertiseTask.ConfigureAwait(false).GetAwaiter().GetResult(); }
-            catch { }
         }
 
-        _replyReader.Stop();
-        _unregisterReplyEndpoint?.Invoke(_replyReader.Guid, _replyReader);
-        _requestPublisher.Dispose();
-        _replyReader.Dispose();
-        RemoveFromTracker?.Invoke();
+        try
+        {
+            _replyReader.SampleReceived -= OnReplyReceived;
+
+            KeyValuePair<SampleIdentity, TaskCompletionSource<TResponse>>[] pendingSnapshot;
+            lock (_pendingLock)
+            {
+                pendingSnapshot = _pending.ToArray();
+                _pending.Clear();
+            }
+            foreach (var kv in pendingSnapshot)
+            {
+                kv.Value.TrySetException(new ObjectDisposedException(nameof(ServiceClient<TRequest, TResponse>)));
+            }
+
+            if (_replyReaderAdvertiseTask is not null)
+            {
+                try { _replyReaderAdvertiseTask.ConfigureAwait(false).GetAwaiter().GetResult(); }
+                catch { }
+            }
+
+            _replyReader.Stop();
+            _unregisterReplyEndpoint?.Invoke(_replyReader.Guid, _replyReader);
+            _requestPublisher.Dispose();
+            _replyReader.Dispose();
+            RemoveFromTracker?.Invoke();
+        }
+        finally
+        {
+            _disposeCompleted.Set();
+        }
     }
 
     private void ThrowIfDisposed()
