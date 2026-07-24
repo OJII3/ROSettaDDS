@@ -30,6 +30,8 @@ public sealed class Node : IDisposable
     private readonly List<IDisposable> _trackedWrappers = new();
     private readonly object _wrappersLock = new();
     private readonly object _disposeGate = new();
+    private readonly ManualResetEventSlim _disposeCompletedGate = new();
+    private Exception? _disposeException;
 
     internal Action? BeforeDisposedCheckCallback { get; set; }
     internal Action<int>? PendingRegistrationsWaitLoopEntered { get; set; }
@@ -462,42 +464,65 @@ public sealed class Node : IDisposable
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        var sw = new SpinWait();
-        bool entered = false;
-        while (Volatile.Read(ref _pendingRegistrations) > 0)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
-            if (!entered)
+            _disposeCompletedGate.Wait();
+            if (_disposeException is not null)
             {
-                entered = true;
-                PendingRegistrationsWaitLoopEntered?.Invoke(Volatile.Read(ref _pendingRegistrations));
+                throw new AggregateException(
+                    "Node.Dispose failed on the first call and is propagated here.",
+                    _disposeException);
             }
-            sw.SpinOnce();
+            return;
         }
 
-        IDisposable[] wrappers;
-        lock (_wrappersLock) wrappers = _trackedWrappers.ToArray();
-        foreach (var w in wrappers)
+        try
         {
-            w.Dispose();
-        }
-        lock (_wrappersLock) _trackedWrappers.Clear();
+            var sw = new SpinWait();
+            bool entered = false;
+            while (Volatile.Read(ref _pendingRegistrations) > 0)
+            {
+                if (!entered)
+                {
+                    entered = true;
+                    PendingRegistrationsWaitLoopEntered?.Invoke(Volatile.Read(ref _pendingRegistrations));
+                }
+                sw.SpinOnce();
+            }
 
-        lock (_disposeGate)
+            IDisposable[] wrappers;
+            lock (_wrappersLock) wrappers = _trackedWrappers.ToArray();
+            foreach (var w in wrappers)
+            {
+                w.Dispose();
+            }
+            lock (_wrappersLock) _trackedWrappers.Clear();
+
+            lock (_disposeGate)
+            {
+                UnregisterAllLocalEndpoints();
+            }
+
+            if (_discovery is not null)
+            {
+                _discovery.ReaderDiscovered -= OnRemoteReaderDiscovered;
+                _discovery.WriterDiscovered -= OnRemoteWriterDiscovered;
+                _discovery.EndpointUpdated -= OnRemoteEndpointUpdated;
+                _discovery.ReaderLost -= OnRemoteReaderLost;
+                _discovery.WriterLost -= OnRemoteWriterLost;
+            }
+
+            Context.UnregisterNode(this);
+        }
+        catch (Exception ex)
         {
-            UnregisterAllLocalEndpoints();
+            _disposeException = ex;
+            throw;
         }
-
-        if (_discovery is not null)
+        finally
         {
-            _discovery.ReaderDiscovered -= OnRemoteReaderDiscovered;
-            _discovery.WriterDiscovered -= OnRemoteWriterDiscovered;
-            _discovery.EndpointUpdated -= OnRemoteEndpointUpdated;
-            _discovery.ReaderLost -= OnRemoteReaderLost;
-            _discovery.WriterLost -= OnRemoteWriterLost;
+            _disposeCompletedGate.Set();
         }
-
-        Context.UnregisterNode(this);
     }
 
     private void UnregisterAllLocalEndpoints()

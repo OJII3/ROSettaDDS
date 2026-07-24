@@ -742,6 +742,290 @@ public class NodeTests
             "Dispose must complete within timeout on non-pumping SyncContext");
     }
 
+    [Fact]
+    public void ManualGateでadvertise_delay中にDisposeが完了する()
+    {
+        var advertiseGate = new ManualResetEventSlim();
+        Exception? disposeError = null;
+
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.SedpAdvertiseDelay = () =>
+        {
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                advertiseGate.Wait();
+                tcs.SetResult();
+            });
+            return new ValueTask(tcs.Task);
+        };
+        ctx.Start();
+        var node = new Node(ctx, "manual_gate_test");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var disposeDone = new ManualResetEventSlim();
+        var disposeThread = new Thread(() =>
+        {
+            try
+            {
+                pub.Dispose();
+                node.Dispose();
+            }
+            catch (Exception ex)
+            {
+                disposeError = ex;
+            }
+            finally
+            {
+                disposeDone.Set();
+            }
+        });
+        disposeThread.Start();
+
+        try
+        {
+            Assert.False(disposeDone.Wait(TimeSpan.FromMilliseconds(200)),
+                "Dispose must be blocked while advertise gate is closed");
+
+            advertiseGate.Set();
+            Assert.True(disposeDone.Wait(TimeSpan.FromSeconds(5)),
+                "Dispose must complete after advertise gate is released");
+
+            if (disposeError is not null)
+                Assert.Null(disposeError);
+
+            Assert.True(node.IsDisposed);
+            pub.Writer.IsRunning.Should().BeFalse("writer must be stopped after dispose");
+        }
+        finally
+        {
+            advertiseGate.Set();
+            Assert.True(disposeThread.Join(TimeSpan.FromSeconds(5)),
+                "Dispose thread must join after completion");
+        }
+    }
+
+    [Fact]
+    public void NonPumpingSyncContext上でadvertise_delay中にDisposeが完了する()
+    {
+        var advertiseGate = new ManualResetEventSlim();
+        Exception? disposeError = null;
+
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.SedpAdvertiseDelay = () =>
+        {
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                advertiseGate.Wait();
+                tcs.SetResult();
+            });
+            return new ValueTask(tcs.Task);
+        };
+        ctx.Start();
+        var node = new Node(ctx, "nonpump_gate_test");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var disposeDone = new ManualResetEventSlim();
+        var disposeThread = new Thread(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new NonPumpingSynchronizationContext());
+            try
+            {
+                pub.Dispose();
+                node.Dispose();
+            }
+            catch (Exception ex)
+            {
+                disposeError = ex;
+            }
+            finally
+            {
+                disposeDone.Set();
+            }
+        });
+        disposeThread.Start();
+
+        try
+        {
+            Assert.False(disposeDone.Wait(TimeSpan.FromMilliseconds(200)),
+                "Dispose must be blocked while advertise gate is closed");
+
+            advertiseGate.Set();
+            Assert.True(disposeDone.Wait(TimeSpan.FromSeconds(5)),
+                "Dispose must complete after advertise gate is released");
+
+            if (disposeError is not null)
+                Assert.Null(disposeError);
+
+            Assert.True(node.IsDisposed);
+            pub.Writer.IsRunning.Should().BeFalse("writer must be stopped after dispose");
+        }
+        finally
+        {
+            advertiseGate.Set();
+            Assert.True(disposeThread.Join(TimeSpan.FromSeconds(5)),
+                "Dispose thread must join after completion");
+        }
+    }
+
+    [Fact]
+    public void Barrierで同期した競合Disposeでevent_logの順序が正しい()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        var node = new Node(ctx, "race_barrier_test");
+
+        var recordedEvents = new ConcurrentQueue<string>();
+        node.TestEventRecorder = ev => recordedEvents.Enqueue(ev);
+
+        using var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var barrier = new Barrier(3);
+        Exception? pubDisposeError = null;
+        Exception? nodeDisposeError = null;
+
+        var pubDisposeThread = new Thread(() =>
+        {
+            try
+            {
+                barrier.SignalAndWait();
+                pub.Dispose();
+            }
+            catch (Exception ex) { pubDisposeError = ex; }
+        });
+
+        var nodeDisposeThread = new Thread(() =>
+        {
+            try
+            {
+                barrier.SignalAndWait();
+                node.Dispose();
+            }
+            catch (Exception ex) { nodeDisposeError = ex; }
+        });
+
+        pubDisposeThread.Start();
+        nodeDisposeThread.Start();
+
+        barrier.SignalAndWait();
+
+        try
+        {
+            Assert.True(pubDisposeThread.Join(TimeSpan.FromSeconds(5)),
+                "Publisher dispose thread must complete");
+            Assert.True(nodeDisposeThread.Join(TimeSpan.FromSeconds(5)),
+                "Node dispose thread must complete");
+        }
+        finally
+        {
+            if (pubDisposeThread.IsAlive) pubDisposeThread.Join(TimeSpan.FromSeconds(3));
+            if (nodeDisposeThread.IsAlive) nodeDisposeThread.Join(TimeSpan.FromSeconds(3));
+        }
+
+        Assert.Null(pubDisposeError);
+        Assert.Null(nodeDisposeError);
+        Assert.True(node.IsDisposed);
+
+        var eventsArray = recordedEvents.ToArray();
+        var beforeUnregIdx = Array.IndexOf(eventsArray, "BeforeReceiverUnregisterWriter");
+        var beforeSedpIdx = Array.IndexOf(eventsArray, "BeforeSedpUnregisterWriter");
+        var afterSedpIdx = Array.IndexOf(eventsArray, "AfterSedpUnregisterWriter");
+
+        Assert.True(beforeUnregIdx >= 0,
+            $"BeforeReceiverUnregisterWriter not found in [{string.Join(", ", eventsArray)}]");
+        Assert.True(beforeSedpIdx >= 0,
+            $"BeforeSedpUnregisterWriter not found in [{string.Join(", ", eventsArray)}]");
+        Assert.True(afterSedpIdx >= 0,
+            $"AfterSedpUnregisterWriter not found in [{string.Join(", ", eventsArray)}]");
+        Assert.True(beforeUnregIdx < beforeSedpIdx,
+            $"receiver unregister must precede SEDP unregister; order: {string.Join(" -> ", eventsArray)}");
+    }
+
+    [Fact]
+    public void 並行Node_Disposeで二回目が一回目の完了を待つ()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        var node = new Node(ctx, "race_test");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+        var sub = node.CreateSubscription<StringMessage>(
+            "other", StringMessageSerializer.Instance, _ => { });
+
+        var barrier = new Barrier(3);
+        var disposals = new List<Thread>();
+
+        for (int i = 0; i < 2; i++)
+        {
+            var t = new Thread(() =>
+            {
+                barrier.SignalAndWait();
+                node.Dispose();
+            });
+            disposals.Add(t);
+            t.Start();
+        }
+
+        barrier.SignalAndWait();
+        foreach (var t in disposals)
+        {
+            Assert.True(t.Join(TimeSpan.FromSeconds(5)),
+                "Dispose thread must complete");
+        }
+
+        Assert.True(node.IsDisposed);
+    }
+
+    [Fact]
+    public void Context_Dispose経由のNode_Disposeが並行Dispose完了を待つ()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        var node = new Node(ctx, "ctx_race_test");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var nodeDisposeDone = new ManualResetEventSlim();
+        var nodeDisposeThread = new Thread(() =>
+        {
+            node.Dispose();
+            nodeDisposeDone.Set();
+        });
+
+        var ctxDisposeThread = new Thread(() =>
+        {
+            ctx.Dispose();
+        });
+
+        nodeDisposeThread.Start();
+        Thread.Sleep(50);
+        ctxDisposeThread.Start();
+
+        try
+        {
+            Assert.True(nodeDisposeDone.Wait(TimeSpan.FromSeconds(5)),
+                "Node.Dispose must complete");
+            Assert.True(ctxDisposeThread.Join(TimeSpan.FromSeconds(5)),
+                "Context.Dispose thread must complete after Node dispose");
+            Assert.True(node.IsDisposed);
+            Assert.True(ctx.IsDisposed);
+        }
+        finally
+        {
+            if (nodeDisposeThread.IsAlive) nodeDisposeThread.Join(TimeSpan.FromSeconds(3));
+            if (ctxDisposeThread.IsAlive) ctxDisposeThread.Join(TimeSpan.FromSeconds(3));
+            if (!ctx.IsDisposed) ctx.Dispose();
+        }
+    }
+
     private sealed class NonPumpingSynchronizationContext : SynchronizationContext
     {
         public override void Post(SendOrPostCallback d, object? state)

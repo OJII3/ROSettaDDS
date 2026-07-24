@@ -39,17 +39,20 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     private readonly StatefulWriterPacketSender _sender;
     private readonly BackgroundOperationTracker _tracker;
 
+    private readonly object _lifecycleLock = new();
     private CancellationTokenSource? _cts;
     private Task? _hbLoop;
-    private bool _started;
+    private volatile bool _started;
+    private volatile bool _stopRequested;
+    private volatile int _startInProgress;
     private bool _disposed;
-    private int _stopping;
 
     public Guid Guid { get; }
     public EntityId WriterEntityId => _writerEntityId;
     public WriterHistoryCache History => _history;
     public TimeSpan HeartbeatPeriod => _heartbeatPeriod;
     internal bool IsRunning => _started && !_disposed;
+    internal Action? BeforeStartLockEnter { get; set; }
 
     public StatefulWriter(
         IRtpsTransport sendTransport,
@@ -220,27 +223,46 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     public void Start()
     {
         ThrowIfDisposed();
-        if (_started) return;
-        _stopping = 0;
-        _cts = new CancellationTokenSource();
-        var token = _cts.Token;
-        _hbLoop = Task.Run(() => HeartbeatLoopAsync(token), token);
-        _started = true;
+        _startInProgress = 1;
+        BeforeStartLockEnter?.Invoke();
+        lock (_lifecycleLock)
+        {
+            _startInProgress = 0;
+            if (_started) return;
+            if (_stopRequested)
+            {
+                _stopRequested = false;
+                return;
+            }
+            _cts = new CancellationTokenSource();
+            var token = _cts.Token;
+            _hbLoop = Task.Run(() => HeartbeatLoopAsync(token), token);
+            _started = true;
+        }
     }
 
     public void Stop()
     {
-        if (Interlocked.Exchange(ref _stopping, 1) != 0) return;
-        if (_cts is null) return;
-        _cts.Cancel();
-        try { _hbLoop?.Wait(TimeSpan.FromSeconds(1)); }
-        catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException)) { }
-        catch (Exception ex) { _logger.Warn("StatefulWriter heartbeat loop did not exit cleanly", ex); }
-        WaitForBackgroundTasks();
-        _cts.Dispose();
-        _cts = null;
-        _hbLoop = null;
-        _started = false;
+        lock (_lifecycleLock)
+        {
+            if (_started)
+            {
+                _started = false;
+                if (_cts is null) return;
+                _cts.Cancel();
+                try { _hbLoop?.Wait(TimeSpan.FromSeconds(1)); }
+                catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException)) { }
+                catch (Exception ex) { _logger.Warn("StatefulWriter heartbeat loop did not exit cleanly", ex); }
+                WaitForBackgroundTasks();
+                _cts.Dispose();
+                _cts = null;
+                _hbLoop = null;
+            }
+            else if (_startInProgress != 0)
+            {
+                _stopRequested = true;
+            }
+        }
     }
 
     private void WaitForBackgroundTasks()
