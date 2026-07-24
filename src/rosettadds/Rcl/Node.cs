@@ -34,6 +34,12 @@ public sealed class Node : IDisposable
     internal Action<int>? PendingRegistrationsWaitLoopEntered { get; set; }
     internal Action? BeforeServiceReplyReaderCreateCallback { get; set; }
     internal Action<string>? TestEventRecorder { get; set; }
+    internal Action? AfterWrapperTracked { get; set; }
+
+    internal int TrackedWrapperCount
+    {
+        get { lock (_wrappersLock) return _trackedWrappers.Count; }
+    }
 
     public Node(Context context, string name, NodeOptions? options = null)
     {
@@ -163,7 +169,12 @@ public sealed class Node : IDisposable
                 "Node failed to advertise local reader endpoint");
             subscription.SetAdvertiseTask(advertiseTask);
 
-            lock (_wrappersLock) _trackedWrappers.Add(subscription);
+            lock (_wrappersLock)
+            {
+                _trackedWrappers.Add(subscription);
+                subscription.RemoveFromTracker = () => { lock (_wrappersLock) _trackedWrappers.Remove(subscription); };
+            }
+            AfterWrapperTracked?.Invoke();
             return subscription;
         }
         finally
@@ -243,7 +254,12 @@ public sealed class Node : IDisposable
                 "Node failed to advertise raw reader endpoint");
             rawSub.SetAdvertiseTask(advertiseTask);
 
-            lock (_wrappersLock) _trackedWrappers.Add(rawSub);
+            lock (_wrappersLock)
+            {
+                _trackedWrappers.Add(rawSub);
+                rawSub.RemoveFromTracker = () => { lock (_wrappersLock) _trackedWrappers.Remove(rawSub); };
+            }
+            AfterWrapperTracked?.Invoke();
             return rawSub;
         }
         finally
@@ -275,14 +291,20 @@ public sealed class Node : IDisposable
 
             try
             {
-                var replyReader = CreateReliableReplyReaderInternal(
+                var (replyReader, replyReaderAdvertiseTask) = CreateReliableReplyReaderInternal(
                     TopicNameMangler.MangleServiceReply(serviceName),
                     descriptor.ResponseDdsTypeName);
 
                 var client = new ServiceClient<TRequest, TResponse>(
                     requestPublisher, replyReader, descriptor, Logger, Context.Options.CdrReadLimits,
                     UnregisterLocalReader);
-                lock (_wrappersLock) _trackedWrappers.Add(client);
+                client.SetReplyReaderAdvertiseTask(replyReaderAdvertiseTask);
+                lock (_wrappersLock)
+                {
+                    _trackedWrappers.Add(client);
+                    client.RemoveFromTracker = () => { lock (_wrappersLock) _trackedWrappers.Remove(client); };
+                }
+                AfterWrapperTracked?.Invoke();
                 return client;
             }
             catch
@@ -369,13 +391,19 @@ public sealed class Node : IDisposable
                 writer.Dispose();
                 throw;
             }
-            _ = _sedpAdvertiser.RunAsync(
+            var advertiseTask = _sedpAdvertiser.RunAsync(
                 token => Context.AddPublicationAsync(endpointData, token),
                 "Node failed to advertise local writer endpoint");
 
             var pub = new Publisher<T>(userTopicName, writer, serializer, UnregisterLocalWriter);
+            pub.SetAdvertiseTask(advertiseTask);
             pub.Start();
-            lock (_wrappersLock) _trackedWrappers.Add(pub);
+            lock (_wrappersLock)
+            {
+                _trackedWrappers.Add(pub);
+                pub.RemoveFromTracker = () => { lock (_wrappersLock) _trackedWrappers.Remove(pub); };
+            }
+            AfterWrapperTracked?.Invoke();
             return pub;
         }
         finally
@@ -384,7 +412,7 @@ public sealed class Node : IDisposable
         }
     }
 
-    private ReliableUserReader CreateReliableReplyReaderInternal(string ddsTopic, string ddsTypeName)
+    private (ReliableUserReader Reader, Task AdvertiseTask) CreateReliableReplyReaderInternal(string ddsTopic, string ddsTypeName)
     {
         Interlocked.Increment(ref _pendingRegistrations);
         try
@@ -420,10 +448,10 @@ public sealed class Node : IDisposable
                 reader.Dispose();
                 throw;
             }
-            _ = _sedpAdvertiser.RunAsync(
+            var advertiseTask = _sedpAdvertiser.RunAsync(
                 token => Context.AddSubscriptionAsync(endpointData, token),
                 "Node failed to advertise local service reply reader endpoint");
-            return reader;
+            return (reader, advertiseTask);
         }
         finally
         {

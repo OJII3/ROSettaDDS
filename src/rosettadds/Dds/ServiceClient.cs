@@ -22,7 +22,9 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
     private readonly CdrReadLimits _cdrReadLimits;
     private readonly ConcurrentDictionary<SampleIdentity, TaskCompletionSource<TResponse>> _pending = new();
     private readonly Action<Guid, IUserReader>? _unregisterReplyEndpoint;
+    internal Action? RemoveFromTracker { get; set; }
     private int _disposed;
+    private Task? _replyReaderAdvertiseTask;
 
     /// <summary>request writer の RTPS GUID。相関キーの writer 部に使う。</summary>
     public Guid RequestWriterGuid => _requestPublisher.Guid;
@@ -150,6 +152,8 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
     /// <summary>テスト用: 未解決の保留リクエスト数。</summary>
     internal int PendingRequestCount => _pending.Count;
 
+    internal void SetReplyReaderAdvertiseTask(Task task) => _replyReaderAdvertiseTask = task;
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -163,10 +167,17 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
         }
         _pending.Clear();
 
+        if (_replyReaderAdvertiseTask is not null)
+        {
+            try { _replyReaderAdvertiseTask.ConfigureAwait(false).GetAwaiter().GetResult(); }
+            catch { }
+        }
+
         _replyReader.Stop();
         _unregisterReplyEndpoint?.Invoke(_replyReader.Guid, _replyReader);
         _requestPublisher.Dispose();
         _replyReader.Dispose();
+        RemoveFromTracker?.Invoke();
     }
 
     private void ThrowIfDisposed()

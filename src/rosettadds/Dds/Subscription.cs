@@ -21,6 +21,7 @@ public sealed class Subscription<T> : IDisposable
     private readonly ILogger _logger;
     private readonly CdrReadLimits _cdrReadLimits;
     internal Action? BeforeUnregister { get; set; }
+    internal Action? RemoveFromTracker { get; set; }
     private long _payloadsReceivedFromReader;
     private long _messagesDeserialized;
     private long _deserializeFailures;
@@ -166,6 +167,7 @@ public sealed class Subscription<T> : IDisposable
         BeforeUnregister?.Invoke();
         _unregisterEndpoint?.Invoke(Guid, _reader);
         _reader.Dispose();
+        RemoveFromTracker?.Invoke();
     }
 
     private void ThrowIfDisposed()

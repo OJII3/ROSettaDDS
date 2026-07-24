@@ -497,6 +497,70 @@ public class NodeTests
         node.PendingRegistrationsWaitLoopEntered = null;
     }
 
+    [Fact]
+    public void 明示DisposeされたPublisherが_trackedWrappers_から削除される()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        var node = new Node(ctx, "pub_tracking_test");
+
+        for (int i = 0; i < 5; i++)
+        {
+            var pub = node.CreatePublisher<StringMessage>(
+                $"chatter_{i}", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+            Assert.Equal(1, node.TrackedWrapperCount);
+            pub.Dispose();
+            Assert.Equal(0, node.TrackedWrapperCount);
+        }
+
+        using var pub2 = node.CreatePublisher<StringMessage>(
+            "final", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+        Assert.Equal(1, node.TrackedWrapperCount);
+
+        node.Dispose();
+        Assert.Equal(0, node.TrackedWrapperCount);
+    }
+
+    [Fact]
+    public void Publisherがtracked時にpendingが0より大きい()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        var node = new Node(ctx, "pub_pending_boundary_test");
+
+        var trackedFired = new ManualResetEventSlim();
+        int pendingAtTrackTime = 0;
+        int trackedCountAtTrackTime = 0;
+
+        node.AfterWrapperTracked = () =>
+        {
+            pendingAtTrackTime = GetPendingRegistrationsField(node);
+            trackedCountAtTrackTime = node.TrackedWrapperCount;
+            trackedFired.Set();
+        };
+
+        using var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        Assert.True(trackedFired.Wait(TimeSpan.FromSeconds(5)),
+            "AfterWrapperTracked must fire when publisher is tracked");
+        Assert.True(pendingAtTrackTime > 0,
+            $"pending must be > 0 when tracked (was {pendingAtTrackTime})");
+        Assert.Equal(1, trackedCountAtTrackTime);
+
+        Assert.Equal(1, node.TrackedWrapperCount);
+
+        node.Dispose();
+        Assert.Equal(0, node.TrackedWrapperCount);
+    }
+
+    private static int GetPendingRegistrationsField(Node node)
+    {
+        var field = typeof(Node).GetField("_pendingRegistrations",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        return (int)field!.GetValue(node)!;
+    }
+
     private sealed class SilentTransport : IRtpsTransport
     {
         public Locator LocalLocator => Locator.FromUdpV4(IPAddress.Loopback, 7411);
