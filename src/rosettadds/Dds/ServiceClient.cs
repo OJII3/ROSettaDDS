@@ -74,14 +74,22 @@ public sealed class ServiceClient<TRequest, TResponse> : IDisposable
         var tcs = new TaskCompletionSource<TResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         SampleIdentity key = default;
-        await _requestPublisher.PublishReturningSequenceNumberAsync(
-            request,
-            assignedSn =>
-            {
-                key = new SampleIdentity(_requestPublisher.Guid, assignedSn);
-                _pending[key] = tcs;
-            },
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _requestPublisher.PublishReturningSequenceNumberAsync(
+                request,
+                assignedSn =>
+                {
+                    key = new SampleIdentity(_requestPublisher.Guid, assignedSn);
+                    _pending[key] = tcs;
+                },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (key != default) _pending.TryRemove(key, out _);
+            throw;
+        }
 
         using var timeoutCts =CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);

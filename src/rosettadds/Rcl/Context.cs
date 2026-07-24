@@ -181,15 +181,15 @@ public sealed class Context : IDisposable
     internal async ValueTask AddPublicationAsync(DiscoveredEndpointData endpointData, CancellationToken token)
     {
         if (SedpAdvertiseDelay is not null)
-            await SedpAdvertiseDelay();
-        await _sedpPublicationsWriter.AddEndpointAsync(endpointData, token);
+            await SedpAdvertiseDelay().ConfigureAwait(false);
+        await _sedpPublicationsWriter.AddEndpointAsync(endpointData, token).ConfigureAwait(false);
     }
 
     internal async ValueTask AddSubscriptionAsync(DiscoveredEndpointData endpointData, CancellationToken token)
     {
         if (SedpAdvertiseDelay is not null)
-            await SedpAdvertiseDelay();
-        await _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token);
+            await SedpAdvertiseDelay().ConfigureAwait(false);
+        await _sedpSubscriptionsWriter.AddEndpointAsync(endpointData, token).ConfigureAwait(false);
     }
 
     internal ValueTask UnregisterPublicationAsync(DiscoveredEndpointData endpoint)

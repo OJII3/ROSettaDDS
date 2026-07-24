@@ -43,6 +43,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
     private Task? _hbLoop;
     private bool _started;
     private bool _disposed;
+    private int _stopping;
 
     public Guid Guid { get; }
     public EntityId WriterEntityId => _writerEntityId;
@@ -228,6 +229,7 @@ public sealed class StatefulWriter : IDisposable, IRtpsSubmessageHandler
 
     public void Stop()
     {
+        if (Interlocked.Exchange(ref _stopping, 1) != 0) return;
         if (_cts is null) return;
         _cts.Cancel();
         try { _hbLoop?.Wait(TimeSpan.FromSeconds(1)); }

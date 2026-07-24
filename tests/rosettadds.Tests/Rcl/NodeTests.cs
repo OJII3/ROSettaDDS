@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
@@ -552,6 +553,104 @@ public class NodeTests
 
         node.Dispose();
         Assert.Equal(0, node.TrackedWrapperCount);
+    }
+
+    [Fact]
+    public async Task Publisher_DisposeとNode_Disposeの同時実行が安全()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        var node = new Node(ctx, "race_test");
+
+        var pub = node.CreatePublisher<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, StringMessage.DdsTypeName);
+
+        var race1 = Task.Run(() => pub.Dispose());
+        var race2 = Task.Run(() => node.Dispose());
+
+        await Task.WhenAll(race1, race2);
+        Assert.True(node.IsDisposed);
+    }
+
+    [Fact]
+    public void SubscriptionのhandlerContextがSynchronizationContextを保持する()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        using var node = new Node(ctx, "syncctx_test");
+
+        var syncCtx = new CapturingSynchronizationContext();
+        using var sub = node.CreateSubscription<StringMessage>(
+            "chatter", StringMessageSerializer.Instance, _ => { }, handlerContext: syncCtx);
+
+        var storedCtx = typeof(Subscription<StringMessage>)
+            .GetField("_handlerContext",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?.GetValue(sub);
+        storedCtx.Should().Be(syncCtx);
+    }
+
+    [Fact]
+    public async Task ServiceClient_CallAsync_timeout後にpendingが残らない()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        using var node = new Node(ctx, "svc_pending_test");
+
+        var svcName = $"test_{System.Guid.NewGuid():N}";
+        var descriptor = new ServiceDescriptor<StringMessage, StringMessage>(
+            requestDdsTypeName: StringMessage.DdsTypeName,
+            responseDdsTypeName: StringMessage.DdsTypeName,
+            requestSerializer: StringMessageSerializer.Instance,
+            responseSerializer: StringMessageSerializer.Instance);
+
+        using var client = node.CreateServiceClient(descriptor, svcName);
+
+        Assert.Equal(0, client.PendingRequestCount);
+
+        var timeout = TimeSpan.FromMilliseconds(100);
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            client.CallAsync(new StringMessage("timeout"), timeout));
+        Assert.Equal(0, client.PendingRequestCount);
+    }
+
+    [Fact]
+    public void ServiceClient_Dispose時にpendingがcleanupされる()
+    {
+        using var ctx = new Context(new ContextOptions { LocalhostOnly = true, Logger = NullLogger.Instance });
+        ctx.Start();
+        using var node = new Node(ctx, "svc_dispose_pending");
+
+        var svcName = $"test_{System.Guid.NewGuid():N}";
+        var descriptor = new ServiceDescriptor<StringMessage, StringMessage>(
+            requestDdsTypeName: StringMessage.DdsTypeName,
+            responseDdsTypeName: StringMessage.DdsTypeName,
+            requestSerializer: StringMessageSerializer.Instance,
+            responseSerializer: StringMessageSerializer.Instance);
+
+        var client = node.CreateServiceClient(descriptor, svcName);
+
+        var tcsField = typeof(ServiceClient<StringMessage, StringMessage>)
+            .GetField("_pending",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var pending = (ConcurrentDictionary<SampleIdentity, TaskCompletionSource<StringMessage>>)
+            tcsField.GetValue(client)!;
+        var fakeKey = new SampleIdentity(new ROSettaDDS.Common.Guid(ctx.GuidPrefix, new EntityId(1, EntityKind.Unknown)), new SequenceNumber(99));
+        pending[fakeKey] = new TaskCompletionSource<StringMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Assert.Equal(1, client.PendingRequestCount);
+
+        client.Dispose();
+        Assert.Equal(0, client.PendingRequestCount);
+    }
+
+    private sealed class CapturingSynchronizationContext : SynchronizationContext
+    {
+        public int PostCallCount;
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            Interlocked.Increment(ref PostCallCount);
+            ThreadPool.QueueUserWorkItem(_ => d(state));
+        }
     }
 
     private static int GetPendingRegistrationsField(Node node)
