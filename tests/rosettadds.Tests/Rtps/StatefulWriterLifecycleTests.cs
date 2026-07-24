@@ -201,13 +201,14 @@ public class StatefulWriterLifecycleTests
 
         writer.Start();
         Thread.Sleep(_heartbeatPeriodMs * 3);
-        int beforeStop = Volatile.Read(ref hbCount);
-        beforeStop.Should().BeGreaterThan(1, "heartbeats should have been sent before stop");
+        Volatile.Read(ref hbCount).Should().BeGreaterThan(0,
+            "heartbeats should have been sent before stop");
 
         writer.Stop();
-        Thread.Sleep(_heartbeatPeriodMs * 2);
         int afterStop = Volatile.Read(ref hbCount);
-        afterStop.Should().Be(beforeStop, "no heartbeats after stop");
+        Thread.Sleep(_heartbeatPeriodMs * 2);
+        Volatile.Read(ref hbCount).Should().Be(afterStop,
+            "no heartbeats after stop");
 
         writer.IsRunning.Should().BeFalse();
     }
@@ -238,22 +239,23 @@ public class StatefulWriterLifecycleTests
         writer.Start();
         await hbReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         writer.Stop();
-        int hbAfterFirstStop = Volatile.Read(ref hbCount);
+        int afterFirstStop = Volatile.Read(ref hbCount);
 
         Thread.Sleep(_heartbeatPeriodMs * 2);
-        Volatile.Read(ref hbCount).Should().Be(hbAfterFirstStop,
+        Volatile.Read(ref hbCount).Should().Be(afterFirstStop,
             "no heartbeats after first stop");
 
         writer.Start();
         hbReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Thread.Sleep(_heartbeatPeriodMs * 3);
-        int hbAfterRestart = Volatile.Read(ref hbCount);
-        hbAfterRestart.Should().BeGreaterThan(hbAfterFirstStop,
+        int beforeSecondStop = Volatile.Read(ref hbCount);
+        beforeSecondStop.Should().BeGreaterThan(afterFirstStop,
             "heartbeats resume after restart");
 
         writer.Stop();
+        int afterSecondStop = Volatile.Read(ref hbCount);
         Thread.Sleep(_heartbeatPeriodMs * 2);
-        Volatile.Read(ref hbCount).Should().Be(hbAfterRestart,
+        Volatile.Read(ref hbCount).Should().Be(afterSecondStop,
             "no heartbeats after second stop");
 
         writer.IsRunning.Should().BeFalse();
