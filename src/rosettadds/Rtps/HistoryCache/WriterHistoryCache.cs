@@ -29,6 +29,7 @@ public sealed class WriterHistoryCache : IDisposable
     /// <summary>保持できる最大サンプル数。0 以下なら無制限。</summary>
     public int MaxSamples { get; }
     public Guid WriterGuid => _writerGuid;
+    internal bool IsDisposed => _disposed;
 
     public WriterHistoryCache(Guid writerGuid, int maxSamples = 0)
     {

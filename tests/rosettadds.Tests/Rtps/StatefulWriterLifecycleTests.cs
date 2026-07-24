@@ -3,6 +3,7 @@ using ROSettaDDS.Common;
 using ROSettaDDS.Common.Logging;
 using ROSettaDDS.Rtps;
 using ROSettaDDS.Rtps.HistoryCache;
+using ROSettaDDS.Rtps.Submessages;
 using ROSettaDDS.Rtps.Writer;
 using ROSettaDDS.Transport;
 
@@ -114,44 +115,148 @@ public class StatefulWriterLifecycleTests
     }
 
     [Fact]
-    public void StartとStopの同時競合で最終状態がStopped()
+    public void StartとStartの並行競合で一方だけが起動する()
     {
         var s = CreateSetup();
         using var writer = CreateWriter(s, out _);
 
-        var proceedStart = new ManualResetEventSlim();
-        var stopProceed = new ManualResetEventSlim();
-        Exception? startError = null;
-        Exception? stopError = null;
+        var barrier = new Barrier(2);
+        Exception? error1 = null;
+        Exception? error2 = null;
 
-        writer.BeforeStartLockEnter = () =>
+        var t1 = new Thread(() =>
         {
-            proceedStart.Set();
-            stopProceed.Wait();
-        };
+            barrier.SignalAndWait();
+            try { writer.Start(); }
+            catch (Exception ex) { error1 = ex; }
+        });
+        var t2 = new Thread(() =>
+        {
+            barrier.SignalAndWait();
+            try { writer.Start(); }
+            catch (Exception ex) { error2 = ex; }
+        });
+
+        t1.Start();
+        t2.Start();
+        Assert.True(t1.Join(TimeSpan.FromSeconds(5)));
+        Assert.True(t2.Join(TimeSpan.FromSeconds(5)));
+        Assert.Null(error1);
+        Assert.Null(error2);
+        writer.IsRunning.Should().BeTrue();
+    }
+
+    [Fact]
+    public void DisposeとStartの同時競合でDisposeが優先される()
+    {
+        var s = CreateSetup();
+        var writer = CreateWriter(s, out _);
+
+        var ready = new Barrier(2);
+        Exception? startError = null;
+        Exception? disposeError = null;
 
         var startThread = new Thread(() =>
         {
+            ready.SignalAndWait();
             try { writer.Start(); }
+            catch (ObjectDisposedException) { }
             catch (Exception ex) { startError = ex; }
         });
+        var disposeThread = new Thread(() =>
+        {
+            ready.SignalAndWait();
+            try { writer.Dispose(); }
+            catch (Exception ex) { disposeError = ex; }
+        });
+
         startThread.Start();
-
-        Assert.True(proceedStart.Wait(TimeSpan.FromSeconds(5)),
-            "Start must invoke BeforeStartLockEnter within timeout");
-
-        // Now Start has set _startInProgress = 1 and is blocked before the lock.
-        // Stop will see _startInProgress = 1 and set _stopRequested.
-        writer.Stop();
-        stopProceed.Set();
-
-        Assert.True(startThread.Join(TimeSpan.FromSeconds(5)),
-            "Start thread must complete");
-
+        disposeThread.Start();
+        Assert.True(disposeThread.Join(TimeSpan.FromSeconds(5)));
+        Assert.True(startThread.Join(TimeSpan.FromSeconds(5)));
+        Assert.Null(disposeError);
         Assert.Null(startError);
-        Assert.Null(stopError);
-        writer.IsRunning.Should().BeFalse(
-            "Stop called during Start must not be lost; writer must end up stopped");
+
+        writer.IsRunning.Should().BeFalse();
+        writer.History.IsDisposed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Heartbeatループ終了を実際にassert()
+    {
+        var s = CreateSetup();
+        using var writer = CreateWriter(s, out _);
+
+        int hbCount = 0;
+        s.Transport.Received += (packetData, srcLoc) =>
+        {
+            if (!RtpsHeader.TryRead(packetData.Span, out _, out _, out _)) return;
+            var reader = new RtpsMessageReader(packetData.Span);
+            while (reader.TryReadNext(out var subHeader, out _))
+            {
+                if (subHeader.Kind == SubmessageKind.Heartbeat)
+                    Interlocked.Increment(ref hbCount);
+            }
+        };
+
+        writer.Start();
+        Thread.Sleep(_heartbeatPeriodMs * 3);
+        int beforeStop = Volatile.Read(ref hbCount);
+        beforeStop.Should().BeGreaterThan(1, "heartbeats should have been sent before stop");
+
+        writer.Stop();
+        Thread.Sleep(_heartbeatPeriodMs * 2);
+        int afterStop = Volatile.Read(ref hbCount);
+        afterStop.Should().Be(beforeStop, "no heartbeats after stop");
+
+        writer.IsRunning.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Heartbeatループ再起動後停止を実際にassert()
+    {
+        var s = CreateSetup();
+        using var writer = CreateWriter(s, out _);
+
+        int hbCount = 0;
+        var hbReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        s.Transport.Received += (packetData, srcLoc) =>
+        {
+            if (!RtpsHeader.TryRead(packetData.Span, out _, out _, out _)) return;
+            var reader = new RtpsMessageReader(packetData.Span);
+            while (reader.TryReadNext(out var subHeader, out _))
+            {
+                if (subHeader.Kind == SubmessageKind.Heartbeat)
+                {
+                    int count = Interlocked.Increment(ref hbCount);
+                    if (count >= 3) hbReceived.TrySetResult();
+                }
+            }
+        };
+
+        // Start → Stop → Start → Stop のサイクル
+        writer.Start();
+        await hbReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        writer.Stop();
+        int hbAfterFirstStop = Volatile.Read(ref hbCount);
+
+        Thread.Sleep(_heartbeatPeriodMs * 2);
+        Volatile.Read(ref hbCount).Should().Be(hbAfterFirstStop,
+            "no heartbeats after first stop");
+
+        writer.Start();
+        hbReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Thread.Sleep(_heartbeatPeriodMs * 3);
+        int hbAfterRestart = Volatile.Read(ref hbCount);
+        hbAfterRestart.Should().BeGreaterThan(hbAfterFirstStop,
+            "heartbeats resume after restart");
+
+        writer.Stop();
+        Thread.Sleep(_heartbeatPeriodMs * 2);
+        Volatile.Read(ref hbCount).Should().Be(hbAfterRestart,
+            "no heartbeats after second stop");
+
+        writer.IsRunning.Should().BeFalse();
     }
 
     [Fact]
@@ -160,9 +265,10 @@ public class StatefulWriterLifecycleTests
         var s = CreateSetup();
         var writer = CreateWriter(s, out var history);
         writer.Start();
-
-        var hbExited = new ManualResetEventSlim();
         writer.Dispose();
         writer.IsRunning.Should().BeFalse();
+        history.IsDisposed.Should().BeTrue();
     }
+
+    private static readonly int _heartbeatPeriodMs = 50;
 }
